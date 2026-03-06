@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -11,10 +12,25 @@ from .db import Database
 from .exporters import export_scan
 from .pipeline import run_scan
 from .probe import ProbeError, ensure_ffprobe_available
+from .runtime_paths import configure_qsettings
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="video-duperz", description="Duplicate video finder")
+    parser.add_argument(
+        "--config-dir",
+        dest="config_dir",
+        required=False,
+        default=None,
+        help="Override QSettings INI root directory (takes precedence over CONFIG_DIR).",
+    )
+    parser.add_argument(
+        "--data-dir",
+        dest="data_dir",
+        required=False,
+        default=None,
+        help="Override runtime data root directory (takes precedence over DATA_DIR).",
+    )
     sub = parser.add_subparsers(dest="command")
 
     gui = sub.add_parser("gui", help="Launch desktop UI")
@@ -36,6 +52,14 @@ def _build_parser() -> argparse.ArgumentParser:
     clean.add_argument("--relaunch", action="store_true", help="Relaunch GUI after cleanup")
     clean.set_defaults(func=_cmd_clean)
     return parser
+
+
+def _apply_runtime_overrides(args: argparse.Namespace) -> None:
+    if args.config_dir:
+        os.environ["CONFIG_DIR"] = str(Path(args.config_dir).expanduser())
+    if args.data_dir:
+        os.environ["DATA_DIR"] = str(Path(args.data_dir).expanduser())
+    configure_qsettings()
 
 
 def _cmd_gui(_args: argparse.Namespace) -> int:
@@ -154,9 +178,11 @@ def _cmd_clean(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
-    args = parser.parse_args(argv)
+    argv_list = list(argv) if argv is not None else sys.argv[1:]
+    args = parser.parse_args(argv_list)
     if not args.command:
-        args = parser.parse_args(["gui"])
+        args = parser.parse_args([*argv_list, "gui"])
+    _apply_runtime_overrides(args)
     return int(args.func(args))
 
 

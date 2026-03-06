@@ -7,6 +7,12 @@ from pathlib import Path
 
 from PySide6.QtCore import QSettings
 
+from .runtime_paths import (
+    SETTINGS_APP_NAME,
+    SETTINGS_ORG_NAME,
+    configure_qsettings,
+    resolve_app_data_dir,
+)
 from .models import (
     DEFAULT_THUMBNAIL_SIZE,
     THUMBNAIL_SIZE_CHOICES,
@@ -21,7 +27,7 @@ from .scan_sets import (
     normalize_similarity_profile,
 )
 
-APP_DIR_NAME = "VideoDuperz"
+APP_DIR_NAME = SETTINGS_APP_NAME
 VIDEO_EXTENSION_PRESET_NAMES: tuple[str, str, str] = ("basic", "medium", "broad")
 DEFAULT_VIDEO_EXTENSION_PRESET = "medium"
 VIDEO_EXTENSION_PRESETS: dict[str, tuple[str, ...]] = {
@@ -113,7 +119,7 @@ LEGACY_RESULTS_TABLE_COLUMN_COUNT = 18
 DEFAULT_IDENTICAL_COLUMN_WIDTH = 42
 MAX_RECENT_ROOTS = 20
 MAX_SAVED_SCAN_PROFILES = 200
-SETTINGS_FILE_NAME = f"{APP_DIR_NAME}.ini"
+SETTINGS_FILE_NAME = f"{SETTINGS_APP_NAME}.ini"
 MAX_DRIVE_WORKERS = 64
 PROBE_WORKER_MODES: tuple[str, str] = ("balanced", "burst")
 DEFAULT_SCAN_DB_BATCH_SIZE = 512
@@ -309,16 +315,13 @@ def default_max_workers() -> int:
 
 
 def app_data_dir() -> Path:
-    base = os.environ.get("LOCALAPPDATA")
-    if not base:
-        base = str(Path.home() / "AppData" / "Local")
-    path = Path(base) / APP_DIR_NAME
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+    return resolve_app_data_dir()
 
 
 def settings_path() -> Path:
-    return app_data_dir() / SETTINGS_FILE_NAME
+    settings = _qsettings()
+    settings.sync()
+    return Path(settings.fileName())
 
 
 def db_path() -> Path:
@@ -326,8 +329,15 @@ def db_path() -> Path:
 
 
 def _qsettings(path: Path | None = None) -> QSettings:
-    target = path or settings_path()
-    return QSettings(str(target), QSettings.Format.IniFormat)
+    if path is not None:
+        return QSettings(str(path), QSettings.Format.IniFormat)
+    configure_qsettings()
+    return QSettings(
+        QSettings.Format.IniFormat,
+        QSettings.Scope.UserScope,
+        SETTINGS_ORG_NAME,
+        SETTINGS_APP_NAME,
+    )
 
 
 def _decode_json_value(value: object, fallback: object) -> object:
@@ -540,13 +550,10 @@ def default_settings() -> Settings:
 
 def load_settings() -> Settings:
     defaults = default_settings()
-    ini_path = settings_path()
-
-    if ini_path.exists():
-        qs = _qsettings(ini_path)
-        if qs.allKeys():
-            raw = _read_qsettings_payload(qs, defaults)
-            return _settings_from_raw(raw, defaults)
+    qs = _qsettings()
+    if qs.allKeys():
+        raw = _read_qsettings_payload(qs, defaults)
+        return _settings_from_raw(raw, defaults)
 
     settings = default_settings()
     save_settings(settings)
@@ -555,9 +562,7 @@ def load_settings() -> Settings:
 
 def save_settings(settings: Settings) -> None:
     payload = asdict(settings)
-    path = settings_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    qs = _qsettings(path)
+    qs = _qsettings()
     qs.clear()
     for key, value in payload.items():
         if isinstance(value, (list, dict)):

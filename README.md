@@ -128,12 +128,22 @@ python -m video_duperz clean --full-reset --delay-ms 1500 --relaunch
 
 `File > Full reset` in the GUI closes the app, runs the companion cleaner command, and relaunches after cleanup.
 
+Global runtime overrides are available for all commands:
+
+- `--config-dir <path>` - override QSettings INI root
+- `--data-dir <path>` - override runtime data root (DB/cache/thumbnails)
+
 ## Configuration
 
 Runtime settings are stored via QSettings:
 
-- INI file at: `%LOCALAPPDATA%\VideoDuperz\VideoDuperz.ini`
-- Database: `%LOCALAPPDATA%\VideoDuperz\app.db` (SQLite with WAL mode)
+- Backend: `QSettings(IniFormat, UserScope, "ThreepSoftwz", "video_duperz")`
+- Default INI path: `%APPDATA%\ThreepSoftwz\video_duperz.ini`
+- Default runtime data root: `%LOCALAPPDATA%\ThreepSoftwz\video_duperz\`
+- Database: `%LOCALAPPDATA%\ThreepSoftwz\video_duperz\app.db` (SQLite with WAL mode)
+- OV01 overrides:
+  - `CONFIG_DIR` env var or `--config-dir`
+  - `DATA_DIR` env var or `--data-dir`
 
 ### Key Settings
 

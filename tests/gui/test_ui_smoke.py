@@ -170,6 +170,7 @@ def test_sources_root_buttons_labels_order_and_state(tmp_path: Path) -> None:
 def test_recent_folder_history_button_and_persistence(tmp_path: Path, monkeypatch) -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
     app = QApplication.instance() or QApplication([])
     with Database(tmp_path / "app.db") as db:
         settings = default_settings()
@@ -198,6 +199,7 @@ def test_recent_folder_history_button_and_persistence(tmp_path: Path, monkeypatc
 def test_results_column_widths_persist(tmp_path: Path, monkeypatch) -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
     app = QApplication.instance() or QApplication([])
     with Database(tmp_path / "app.db") as db:
         settings = default_settings()
@@ -389,6 +391,7 @@ def test_results_identical_column_lazy_compare_and_cache(tmp_path: Path) -> None
 def test_view_columns_menu_toggle_and_saved_view(tmp_path: Path, monkeypatch) -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
     app = QApplication.instance() or QApplication([])
     with Database(tmp_path / "app.db") as db:
         settings = default_settings()
@@ -551,6 +554,7 @@ def test_view_sort_menu_and_results_filters(tmp_path: Path) -> None:
 def test_saved_scan_profiles_save_load_and_delete(tmp_path: Path, monkeypatch) -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
     app = QApplication.instance() or QApplication([])
     with Database(tmp_path / "app.db") as db:
         roots = [str(tmp_path / "library")]
@@ -792,6 +796,7 @@ def test_saved_scans_menu_lists_not_started_named_and_cancelled_auto(tmp_path: P
 def test_file_tools_help_menu_actions(tmp_path: Path, monkeypatch) -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
     app = QApplication.instance() or QApplication([])
     with Database(tmp_path / "app.db") as db:
         settings = default_settings()
@@ -985,6 +990,7 @@ def test_sources_tab_drive_table_shows_placeholder_when_no_local_drives(tmp_path
 def test_sources_tab_drive_workers_and_probe_mode_persist_across_reload(tmp_path: Path, monkeypatch) -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
     app = QApplication.instance() or QApplication([])
 
     monkeypatch.setattr(

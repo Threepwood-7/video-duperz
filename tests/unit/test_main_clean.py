@@ -19,6 +19,17 @@ def test_clean_parser_accepts_flags() -> None:
     assert args.relaunch is True
 
 
+def test_parser_accepts_runtime_override_flags() -> None:
+    parser = app_main._build_parser()
+    args = parser.parse_args(
+        ["--config-dir", "C:/cfg", "--data-dir", "C:/data", "clean", "--full-reset"]
+    )
+    assert args.config_dir == "C:/cfg"
+    assert args.data_dir == "C:/data"
+    assert args.command == "clean"
+    assert args.full_reset is True
+
+
 def test_cmd_clean_requires_guard(capsys) -> None:
     rc = app_main._cmd_clean(argparse.Namespace(full_reset=False, delay_ms=0, relaunch=False))
     assert rc == 2
@@ -28,6 +39,7 @@ def test_cmd_clean_requires_guard(capsys) -> None:
 
 def test_run_full_reset_removes_entire_app_data_dir(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
     root = app_data_dir()
     (root / "settings.json").write_text("{}", encoding="utf-8")
     (root / "app.db").write_bytes(b"x")
@@ -42,6 +54,7 @@ def test_run_full_reset_removes_entire_app_data_dir(tmp_path: Path, monkeypatch)
 
 def test_run_full_reset_relaunches_on_success(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
     app_data_dir().mkdir(parents=True, exist_ok=True)
     called: list[list[str]] = []
 
@@ -58,6 +71,7 @@ def test_run_full_reset_relaunches_on_success(tmp_path: Path, monkeypatch) -> No
 
 def test_run_full_reset_failure_does_not_relaunch(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
     app_data_dir().mkdir(parents=True, exist_ok=True)
     called = {"popen": False}
 

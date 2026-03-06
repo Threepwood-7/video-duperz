@@ -6,7 +6,6 @@ from pathlib import Path
 from PySide6.QtCore import QSettings
 
 from video_duperz.config import (
-    APP_DIR_NAME,
     MAX_DRIVE_WORKERS,
     default_settings,
     load_settings,
@@ -16,6 +15,7 @@ from video_duperz.config import (
 from video_duperz.db import Database
 from video_duperz.exporters import export_scan
 from video_duperz.models import DuplicateItem, SavedScanProfilePayload, VideoMeta
+from video_duperz.runtime_paths import SETTINGS_APP_NAME, SETTINGS_ORG_NAME
 
 
 def _set_qsettings_value(path: Path, key: str, value: object) -> None:
@@ -29,6 +29,7 @@ def _set_qsettings_value(path: Path, key: str, value: object) -> None:
 
 def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
     settings = default_settings()
     settings.scan_roots = ["D:/Videos"]
     settings.recent_scan_roots = ["D:/Videos", "E:/Archive"]
@@ -80,13 +81,15 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
 
 def test_settings_path_uses_app_name_ini_under_appdata(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
     path = settings_path()
-    assert path.parent == tmp_path / APP_DIR_NAME
-    assert path.name == f"{APP_DIR_NAME}.ini"
+    assert path.parent == tmp_path / SETTINGS_ORG_NAME
+    assert path.name == f"{SETTINGS_APP_NAME}.ini"
 
 
 def test_settings_invalid_thumbnail_size_falls_back_to_default(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
     settings = default_settings()
     save_settings(settings)
 
@@ -99,6 +102,7 @@ def test_settings_invalid_thumbnail_size_falls_back_to_default(tmp_path: Path, m
 
 def test_settings_recent_roots_are_normalized(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
     settings = default_settings()
     save_settings(settings)
 
@@ -111,6 +115,7 @@ def test_settings_recent_roots_are_normalized(tmp_path: Path, monkeypatch) -> No
 
 def test_settings_invalid_column_widths_fall_back_to_empty(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
     settings = default_settings()
     save_settings(settings)
 
@@ -123,6 +128,7 @@ def test_settings_invalid_column_widths_fall_back_to_empty(tmp_path: Path, monke
 
 def test_settings_thumbnail_frame_pair_normalization(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
     settings = default_settings()
     save_settings(settings)
 
@@ -137,6 +143,7 @@ def test_settings_thumbnail_frame_pair_normalization(tmp_path: Path, monkeypatch
 
 def test_settings_identical_compare_normalization(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
     settings = default_settings()
     save_settings(settings)
 
@@ -162,6 +169,7 @@ def test_settings_identical_compare_normalization(tmp_path: Path, monkeypatch) -
 
 def test_settings_legacy_column_widths_and_visibility_migrate_to_19(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
     settings = default_settings()
     save_settings(settings)
 
@@ -180,6 +188,7 @@ def test_settings_legacy_column_widths_and_visibility_migrate_to_19(tmp_path: Pa
 
 def test_settings_saved_views_normalization(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
     settings = default_settings()
     save_settings(settings)
 
@@ -212,6 +221,7 @@ def test_settings_saved_views_normalization(tmp_path: Path, monkeypatch) -> None
 
 def test_settings_saved_views_legacy_columns_migrate_to_19(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
     settings = default_settings()
     save_settings(settings)
 
@@ -236,6 +246,7 @@ def test_settings_saved_views_legacy_columns_migrate_to_19(tmp_path: Path, monke
 
 def test_settings_saved_scan_profiles_normalization(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
     settings = default_settings()
     save_settings(settings)
 
@@ -268,6 +279,7 @@ def test_settings_saved_scan_profiles_normalization(tmp_path: Path, monkeypatch)
 
 def test_settings_drive_worker_overrides_and_probe_mode_normalization(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
     settings = default_settings()
     save_settings(settings)
 
@@ -295,6 +307,7 @@ def test_settings_drive_worker_overrides_and_probe_mode_normalization(tmp_path: 
 
 def test_settings_scan_tuning_normalization(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
     settings = default_settings()
     save_settings(settings)
 
