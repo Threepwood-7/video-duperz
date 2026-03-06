@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThreadPool
-from PySide6.QtGui import QAction, QActionGroup, QColor
+from PySide6.QtGui import QAction, QActionGroup, QColor, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -141,41 +141,41 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.export_action)
 
         file_menu.addSeparator()
-        self.clear_recent_folders_action = QAction("Clear recent folders", self)
+        self.clear_recent_folders_action = QAction("C&lear Recent Folders", self)
         self.clear_recent_folders_action.triggered.connect(self._clear_recent_roots)
         file_menu.addAction(self.clear_recent_folders_action)
 
-        self.clear_saved_scans_action = QAction("Clear saved scans", self)
+        self.clear_saved_scans_action = QAction("Clear Sa&ved Scans", self)
         self.clear_saved_scans_action.triggered.connect(self._clear_saved_scans)
         file_menu.addAction(self.clear_saved_scans_action)
 
-        self.clear_cached_thumbnails_action = QAction("Clear cached thumbnails", self)
+        self.clear_cached_thumbnails_action = QAction("Clear Cached T&humbnails", self)
         self.clear_cached_thumbnails_action.triggered.connect(self._clear_cached_thumbnails)
         file_menu.addAction(self.clear_cached_thumbnails_action)
 
         file_menu.addSeparator()
-        self.full_reset_action = QAction("Full reset", self)
+        self.full_reset_action = QAction("&Full Reset", self)
         self.full_reset_action.triggered.connect(self._request_full_reset)
         file_menu.addAction(self.full_reset_action)
 
         file_menu.addSeparator()
         self.exit_action = QAction("E&xit", self)
-        self.exit_action.setShortcut("Alt+X")
+        self.exit_action.setShortcuts([QKeySequence("Ctrl+Q"), QKeySequence("Alt+X")])
         self.exit_action.triggered.connect(self.close)
         file_menu.addAction(self.exit_action)
 
         view_menu = self.menuBar().addMenu("&View")
-        columns_menu = view_menu.addMenu("Columns")
+        columns_menu = view_menu.addMenu("&Columns")
 
-        self.fit_columns_action = QAction("Fit Columns", self)
+        self.fit_columns_action = QAction("&Fit Columns", self)
         self.fit_columns_action.triggered.connect(self._fit_columns)
         columns_menu.addAction(self.fit_columns_action)
 
-        self.save_current_view_action = QAction("Save Current View", self)
+        self.save_current_view_action = QAction("&Save Current View", self)
         self.save_current_view_action.triggered.connect(self._save_current_view)
         columns_menu.addAction(self.save_current_view_action)
 
-        self._saved_views_menu = columns_menu.addMenu("Saved Views")
+        self._saved_views_menu = columns_menu.addMenu("Sa&ved Views")
         self._refresh_saved_views_menu()
         columns_menu.addSeparator()
 
@@ -211,46 +211,47 @@ class MainWindow(QMainWindow):
             self._sort_actions[mode] = action
 
         actions_menu = self.menuBar().addMenu("&Actions")
-        self.keep_best_action = QAction("Select all, keep best", self)
+        self.keep_best_action = QAction("&Select all, keep best", self)
         self.keep_best_action.triggered.connect(lambda: self.results_view.apply_keep_strategy("best"))
         actions_menu.addAction(self.keep_best_action)
 
-        self.keep_worst_action = QAction("Select all, keep worst", self)
+        self.keep_worst_action = QAction("Select all, keep &worst", self)
         self.keep_worst_action.triggered.connect(lambda: self.results_view.apply_keep_strategy("worst"))
         actions_menu.addAction(self.keep_worst_action)
 
-        self.keep_larger_action = QAction("Select all, keep larger", self)
+        self.keep_larger_action = QAction("Select all, keep &larger", self)
         self.keep_larger_action.triggered.connect(lambda: self.results_view.apply_keep_strategy("larger"))
         actions_menu.addAction(self.keep_larger_action)
 
-        self.keep_smaller_action = QAction("Select all, keep smaller", self)
+        self.keep_smaller_action = QAction("Select all, keep s&maller", self)
         self.keep_smaller_action.triggered.connect(lambda: self.results_view.apply_keep_strategy("smaller"))
         actions_menu.addAction(self.keep_smaller_action)
 
-        self.keep_newer_action = QAction("Select all, keep newer", self)
+        self.keep_newer_action = QAction("Select all, keep &newer", self)
         self.keep_newer_action.triggered.connect(lambda: self.results_view.apply_keep_strategy("newer"))
         actions_menu.addAction(self.keep_newer_action)
 
-        self.keep_older_action = QAction("Select all, keep older", self)
+        self.keep_older_action = QAction("Select all, keep &older", self)
         self.keep_older_action.triggered.connect(lambda: self.results_view.apply_keep_strategy("older"))
         actions_menu.addAction(self.keep_older_action)
 
         actions_menu.addSeparator()
-        self.delete_selected_action = QAction("Delete Selected", self)
+        self.delete_selected_action = QAction("&Delete Selected", self)
         self.delete_selected_action.triggered.connect(self.results_view.request_soft_delete_selected)
         actions_menu.addAction(self.delete_selected_action)
 
-        self.delete_selected_permanent_action = QAction("Permanently Delete Selected", self)
+        self.delete_selected_permanent_action = QAction("&Permanently Delete Selected", self)
         self.delete_selected_permanent_action.triggered.connect(self.results_view.request_permanent_delete_selected)
         actions_menu.addAction(self.delete_selected_permanent_action)
 
         tools_menu = self.menuBar().addMenu("&Tools")
-        self.edit_ini_action = QAction("Edit ini file", self)
+        self.edit_ini_action = QAction("Edit &.ini File", self)
         self.edit_ini_action.triggered.connect(self._edit_ini_file)
         tools_menu.addAction(self.edit_ini_action)
 
         help_menu = self.menuBar().addMenu("&Help")
-        self.about_action = QAction("About", self)
+        self.about_action = QAction("&Help", self)
+        self.about_action.setShortcut("F1")
         self.about_action.triggered.connect(self._show_about)
         help_menu.addAction(self.about_action)
 

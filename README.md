@@ -173,17 +173,18 @@ Up to 20 recently scanned folders are stored for quick access. Saved scan profil
 | Enter | Open current file in default player |
 | E | Open file location in Explorer |
 | M | Launch MediaInfo for selected file |
-| Alt+X | Exit application |
+| Ctrl+Q / Alt+X | Exit application |
+| F1 | Help |
 
 ## Menus
 
 **File**:
 - Export Current Scan...
-- Clear recent folders
-- Clear saved scans
-- Clear cached thumbnails
-- Full reset (destructive - launches separate cleaner process)
-- Exit (Alt+X)
+- Clear Recent Folders
+- Clear Saved Scans
+- Clear Cached Thumbnails
+- Full Reset (destructive - launches separate cleaner process)
+- Exit (Ctrl+Q, Alt+X)
 
 **View**:
 - Columns submenu:
@@ -204,10 +205,10 @@ Up to 20 recently scanned folders are stored for quick access. Saved scan profil
 - Permanently Delete Selected
 
 **Tools**:
-- Edit ini file
+- Edit .ini File
 
 **Help**:
-- About
+- Help (F1)
 
 ## Project Structure
 

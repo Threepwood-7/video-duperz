@@ -817,19 +817,21 @@ def test_file_tools_help_menu_actions(tmp_path: Path, monkeypatch) -> None:
         menu_titles = [action.text().replace("&", "") for action in window.menuBar().actions()]
         assert menu_titles[:6] == ["File", "View", "Sort", "Actions", "Tools", "Help"]
 
-        assert window.clear_recent_folders_action.text() == "Clear recent folders"
-        assert window.clear_saved_scans_action.text() == "Clear saved scans"
-        assert window.clear_cached_thumbnails_action.text() == "Clear cached thumbnails"
-        assert window.full_reset_action.text() == "Full reset"
-        assert window.edit_ini_action.text() == "Edit ini file"
-        assert window.about_action.text() == "About"
+        assert window.clear_recent_folders_action.text() == "C&lear Recent Folders"
+        assert window.clear_saved_scans_action.text() == "Clear Sa&ved Scans"
+        assert window.clear_cached_thumbnails_action.text() == "Clear Cached T&humbnails"
+        assert window.full_reset_action.text() == "&Full Reset"
+        assert window.edit_ini_action.text() == "Edit &.ini File"
+        assert window.about_action.text() == "&Help"
+        shortcuts = {seq.toString() for seq in window.exit_action.shortcuts()}
+        assert {"Ctrl+Q", "Alt+X"} <= shortcuts
         tools_menu_action = next(
             action for action in window.menuBar().actions() if action.text().replace("&", "") == "Tools"
         )
         tools_menu = tools_menu_action.menu()
         assert tools_menu is not None
         tools_actions = [action.text() for action in tools_menu.actions()]
-        assert "Edit ini file" in tools_actions
+        assert "Edit &.ini File" in tools_actions
         assert "List physical drives" not in tools_actions
 
         cache_file = thumbnail_cache_dir() / "dummy.jpg"
