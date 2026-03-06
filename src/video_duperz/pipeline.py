@@ -47,6 +47,36 @@ def _clamp(value: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, int(value)))
 
 
+def _should_emit_progress(
+    *,
+    stage: str,
+    counter: int,
+    force: bool,
+    last_emit_stage: str,
+    last_emit_counter: int,
+    last_emit_at: float,
+    progress_emit_every_files: int,
+    progress_emit_interval_s: float,
+) -> bool:
+    if force or stage != last_emit_stage:
+        return True
+    if counter - last_emit_counter >= progress_emit_every_files:
+        return True
+    return (time.perf_counter() - last_emit_at) >= progress_emit_interval_s
+
+
+def _flush_row_batches(
+    pending_rows: list[object],
+    batch_size: int,
+    write_fn: Callable[[object], object],
+    timed_write: Callable[..., object],
+) -> None:
+    while pending_rows:
+        chunk = pending_rows[:batch_size]
+        del pending_rows[: len(chunk)]
+        timed_write(write_fn, len(chunk), chunk)
+
+
 @dataclass(slots=True)
 class _AnalyzeOutput:
     meta: object
@@ -274,14 +304,18 @@ def run_scan(
             cached_now = cached_files
             analyze_total = total_analyze_files
         counter = int(file_counter if file_counter is not None else max(prepared_now, analyze_now))
-        now = time.perf_counter()
-        stage_changed = stage != last_emit_stage
-        should_emit = force or stage_changed
-        if not should_emit:
-            if counter - last_emit_counter >= progress_emit_every_files or now - last_emit_at >= progress_emit_interval_s:
-                should_emit = True
-        if not should_emit:
+        if not _should_emit_progress(
+            stage=stage,
+            counter=counter,
+            force=force,
+            last_emit_stage=last_emit_stage,
+            last_emit_counter=last_emit_counter,
+            last_emit_at=last_emit_at,
+            progress_emit_every_files=progress_emit_every_files,
+            progress_emit_interval_s=progress_emit_interval_s,
+        ):
             return
+        now = time.perf_counter()
         last_emit_at = now
         last_emit_stage = stage
         last_emit_counter = counter
@@ -392,18 +426,14 @@ def run_scan(
         now = time.perf_counter()
         if not force and pending_total < db_batch_size and (now - last_pending_write_at) < db_flush_interval_s:
             return
-        while pending_meta_rows:
-            chunk = pending_meta_rows[:db_batch_size]
-            del pending_meta_rows[: len(chunk)]
-            _timed_db_write(db.save_video_meta_batch, len(chunk), chunk)
-        while pending_fp_rows:
-            chunk = pending_fp_rows[:db_batch_size]
-            del pending_fp_rows[: len(chunk)]
-            _timed_db_write(db.save_fingerprints_batch, len(chunk), chunk)
-        while pending_probe_error_rows:
-            chunk = pending_probe_error_rows[:db_batch_size]
-            del pending_probe_error_rows[: len(chunk)]
-            _timed_db_write(db.save_probe_errors_batch, len(chunk), chunk)
+        _flush_row_batches(pending_meta_rows, db_batch_size, db.save_video_meta_batch, _timed_db_write)
+        _flush_row_batches(pending_fp_rows, db_batch_size, db.save_fingerprints_batch, _timed_db_write)
+        _flush_row_batches(
+            pending_probe_error_rows,
+            db_batch_size,
+            db.save_probe_errors_batch,
+            _timed_db_write,
+        )
         last_pending_write_at = now
 
     def _queue_enum_item(item: object) -> None:
