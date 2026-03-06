@@ -4,6 +4,26 @@ Video Duperz is a Windows-first PySide6 app for finding perceptual duplicate vid
 Packaging backend: Hatchling (`hatchling.build`).
 Workflow frontend: uv.
 
+## UI Walkthrough
+
+1. Configure sources and scan profiles before indexing.
+
+   ![Configure sources](docs/images/ui-01-overview.png)
+
+   Sources setup state for defining roots, extension presets, and worker settings.
+
+2. Monitor scan progress and throughput across lanes.
+
+   ![Monitor scan progress](docs/images/ui-02-workflow.png)
+
+   Workflow state for active scan progress, queue depth, and processing lanes.
+
+3. Review duplicate groups and choose a cleanup decision.
+
+   ![Review duplicate groups](docs/images/ui-03-details.png)
+
+   Decision-focused duplicate results state for keep/remove/export actions.
+
 ## Quick start
 
 ```powershell
