@@ -3,7 +3,6 @@
 Video Duperz is a Windows-first PySide6 app for finding perceptual duplicate videos.
 Packaging backend: Hatchling (`hatchling.build`).
 Workflow frontend: uv.
-NOX is intentionally not used in this repository.
 
 ## Quick start
 
