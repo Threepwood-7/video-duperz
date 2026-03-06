@@ -145,7 +145,6 @@ docstring-code-format = true
 
 [tool.deptry]
 known_first_party = ["video_duperz"]
-package_module_name_map = { "PySide6" = "PySide6", "qbittorrent-api" = "qbittorrentapi", "opencv-python" = "cv2" }
 
 [tool.basedpyright]
 pythonVersion = "3.13"
