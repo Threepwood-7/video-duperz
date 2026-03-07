@@ -6,13 +6,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+from threep_commons.paths import configure_qsettings
+
 from .cleaner import FULL_RESET_DEFAULT_DELAY_MS, run_full_reset
 from .config import load_settings
+from .constants import APP_IDENTITY
 from .db import Database
 from .exporters import export_scan
 from .pipeline import run_scan
 from .probe import ProbeError, ensure_ffprobe_available
-from .runtime_paths import configure_qsettings
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -59,7 +61,7 @@ def _apply_runtime_overrides(args: argparse.Namespace) -> None:
         os.environ["CONFIG_DIR"] = str(Path(args.config_dir).expanduser())
     if args.data_dir:
         os.environ["DATA_DIR"] = str(Path(args.data_dir).expanduser())
-    configure_qsettings()
+    configure_qsettings(APP_IDENTITY)
 
 
 def _cmd_gui(_args: argparse.Namespace) -> int:

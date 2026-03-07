@@ -6,12 +6,12 @@ from dataclasses import asdict
 from pathlib import Path
 
 from PySide6.QtCore import QSettings
+from threep_commons.paths import configure_qsettings, resolve_app_data_dir
 
-from .runtime_paths import (
+from .constants import (
+    APP_IDENTITY,
     SETTINGS_APP_NAME,
     SETTINGS_ORG_NAME,
-    configure_qsettings,
-    resolve_app_data_dir,
 )
 from .models import (
     DEFAULT_THUMBNAIL_SIZE,
@@ -315,7 +315,7 @@ def default_max_workers() -> int:
 
 
 def app_data_dir() -> Path:
-    return resolve_app_data_dir()
+    return resolve_app_data_dir(APP_IDENTITY)
 
 
 def settings_path() -> Path:
@@ -331,7 +331,7 @@ def db_path() -> Path:
 def _qsettings(path: Path | None = None) -> QSettings:
     if path is not None:
         return QSettings(str(path), QSettings.Format.IniFormat)
-    configure_qsettings()
+    configure_qsettings(APP_IDENTITY)
     return QSettings(
         QSettings.Format.IniFormat,
         QSettings.Scope.UserScope,

@@ -1348,7 +1348,7 @@ class MainWindow(QMainWindow):
         csv_path, json_path = export_scan(self.db, scan_id=self.current_scan_id, out_dir=out_dir)
         QMessageBox.information(self, "Export Complete", f"CSV: {csv_path}\nJSON: {json_path}")
 
-    def closeEvent(self, event) -> None:  # noqa: N802
+    def closeEvent(self, event) -> None:
         if not self._full_reset_requested:
             self._persist_settings()
         try:

@@ -12,10 +12,10 @@ from video_duperz.config import (
     save_settings,
     settings_path,
 )
+from video_duperz.constants import SETTINGS_APP_NAME, SETTINGS_ORG_NAME
 from video_duperz.db import Database
 from video_duperz.exporters import export_scan
 from video_duperz.models import DuplicateItem, SavedScanProfilePayload, VideoMeta
-from video_duperz.runtime_paths import SETTINGS_APP_NAME, SETTINGS_ORG_NAME
 
 
 def _set_qsettings_value(path: Path, key: str, value: object) -> None:
