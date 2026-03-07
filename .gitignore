@@ -62,4 +62,3 @@ config/*.secrets.toml
 
 # Runtime logs
 *.log
-`r`n
