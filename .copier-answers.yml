@@ -1,5 +1,5 @@
 ﻿_commit: v1.6.0
-_src_path: C:/prj/p2p/ongithub/aatemplate
+_src_path: P:/py/aatemplate
 project_name: video-duperz
 package_name: video_duperz
 description: Windows-first PySide app for perceptual duplicate video detection.
