@@ -3,11 +3,14 @@ from __future__ import annotations
 import argparse
 import sys
 import types
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from video_duperz import __main__ as app_main
 from video_duperz import cleaner
 from video_duperz.config import app_data_dir
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_clean_parser_accepts_flags() -> None:

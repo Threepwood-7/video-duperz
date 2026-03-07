@@ -3,8 +3,10 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from .db import Database
+if TYPE_CHECKING:
+    from .db import Database
 
 
 def export_scan(db: Database, scan_id: int, out_dir: str | Path) -> tuple[Path, Path]:

@@ -6,7 +6,7 @@ from collections import deque
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QSize, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import (
@@ -29,7 +29,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..models import DuplicateGroup, DuplicateItem
 from ..quality import codec_rank
 from .thumbnails import (
     normalize_frame_pair,
@@ -39,6 +38,9 @@ from .thumbnails import (
     thumbnail_pair_cache_paths,
 )
 from .workers import ExactMatchGroupWorker, ThumbnailPairWorker
+
+if TYPE_CHECKING:
+    from ..models import DuplicateGroup, DuplicateItem
 
 RESULTS_HEADERS = [
     "Group ID",
@@ -546,9 +548,7 @@ class ResultsView(QWidget):
             return False
         if self._filter_exclude_name and self._filter_exclude_name in file_name:
             return False
-        if self._filter_exclude_path and self._filter_exclude_path in full_path:
-            return False
-        return True
+        return not (self._filter_exclude_path and self._filter_exclude_path in full_path)
 
     def _sorted_group_items(self, items: list[DuplicateItem], larger_first: bool) -> list[DuplicateItem]:
         if larger_first:

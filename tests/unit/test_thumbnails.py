@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from video_duperz.ui.thumbnails import (
     build_thumbnail_cache_key,
@@ -11,6 +11,9 @@ from video_duperz.ui.thumbnails import (
     thumbnail_dimensions,
     thumbnail_pair_cache_paths,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_cache_key_changes_for_inputs() -> None:

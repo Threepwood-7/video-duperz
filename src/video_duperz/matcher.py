@@ -33,7 +33,7 @@ def resolution_bin(width: int, height: int) -> int:
     pixels = max(0, int(width) * int(height))
     if pixels <= 0:
         return 0
-    return int(round(pixels / 250_000))
+    return round(pixels / 250_000)
 
 
 def fps_bin(value: float) -> float:
@@ -44,7 +44,7 @@ def fps_bin(value: float) -> float:
 
 
 def duration_half_sec(duration_s: float) -> int:
-    return int(round(max(0.0, float(duration_s)) * 2.0))
+    return round(max(0.0, float(duration_s)) * 2.0)
 
 
 def _prefilter_hamming_median(a: list[int], b: list[int]) -> float:

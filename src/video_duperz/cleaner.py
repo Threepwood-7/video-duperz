@@ -4,9 +4,12 @@ import shutil
 import subprocess
 import sys
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .config import app_data_dir
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 FULL_RESET_DEFAULT_DELAY_MS = 1500
 

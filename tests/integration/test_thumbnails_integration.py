@@ -3,11 +3,14 @@ from __future__ import annotations
 import importlib.util
 import shutil
 import subprocess
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from video_duperz.ui.thumbnails import extract_thumbnail, extract_thumbnail_pair
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _tools_available() -> bool:

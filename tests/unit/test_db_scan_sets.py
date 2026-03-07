@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import sqlite3
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from video_duperz.db import Database
 from video_duperz.fingerprint import ALGO_VERSION
 from video_duperz.models import DuplicateGroup, DuplicateItem, VideoMeta
 from video_duperz.scan_sets import build_scan_set_key
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_db_migration_backfills_scan_set_columns(tmp_path: Path) -> None:

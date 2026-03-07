@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from .models import MatchItem
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .models import MatchItem
 
 CODEC_RANK = {
     "hevc": 1.0,

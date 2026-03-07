@@ -3,12 +3,15 @@ from __future__ import annotations
 import importlib.util
 import shutil
 import subprocess
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from video_duperz.db import Database
 from video_duperz.pipeline import run_scan
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _tools_available() -> bool:

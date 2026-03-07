@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import time
 from collections import deque
 from collections.abc import Callable
@@ -8,13 +9,16 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from queue import Empty, Full, Queue
 from threading import Condition, Event, Lock, Thread
+from typing import TYPE_CHECKING
 
-from .db import Database
 from .fingerprint import ALGO_VERSION, FingerprintError, build_fingerprint_record
 from .matcher import build_duplicate_groups, find_duplicate_edges
 from .models import MatchStats, ScanIssue, ScanLaneSnapshot, ScanProgress, ScanResult
 from .probe import ProbeError, ensure_ffprobe_available, probe_video
 from .scanner import build_physical_drive_scan_plan, enumerate_video_files
+
+if TYPE_CHECKING:
+    from .db import Database
 
 ProgressCallback = Callable[[ScanProgress], None]
 _MIB = 1024.0 * 1024.0
@@ -717,18 +721,12 @@ def run_scan(
         }
 
     def _best_effort_end_scan_tx() -> None:
-        try:
+        with contextlib.suppress(Exception):
             _flush_pending_analysis_batches(force=True)
-        except Exception:
-            pass
-        try:
+        with contextlib.suppress(Exception):
             _flush_scan_transaction(force=True)
-        except Exception:
-            pass
-        try:
+        with contextlib.suppress(Exception):
             db.end_scan_transaction()
-        except Exception:
-            pass
 
     db.begin_scan_transaction()
     enum_thread = Thread(target=_run_enumeration, name="video-duperz-enumeration", daemon=True)
@@ -802,9 +800,8 @@ def run_scan(
                 if done_count > 0:
                     made_progress = True
 
-                if not cancel_requested:
-                    if _submit_ready_lanes(executor) > 0:
-                        made_progress = True
+                if not cancel_requested and _submit_ready_lanes(executor) > 0:
+                    made_progress = True
 
                 _flush_pending_analysis_batches(force=cancel_requested)
                 _flush_scan_transaction(force=cancel_requested)

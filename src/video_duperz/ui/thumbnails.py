@@ -138,8 +138,8 @@ def _fit_with_letterbox(frame: np.ndarray, target_w: int, target_h: int) -> np.n
         return np.zeros((target_h, target_w, 3), dtype=np.uint8)
 
     scale = min(target_w / float(src_w), target_h / float(src_h))
-    fit_w = max(1, int(round(src_w * scale)))
-    fit_h = max(1, int(round(src_h * scale)))
+    fit_w = max(1, round(src_w * scale))
+    fit_h = max(1, round(src_h * scale))
     interp = cv2.INTER_AREA if (cv2 is not None and scale < 1.0) else cv2.INTER_LINEAR  # type: ignore[union-attr]
     fitted = cv2.resize(frame, (fit_w, fit_h), interpolation=interp)  # type: ignore[union-attr]
 

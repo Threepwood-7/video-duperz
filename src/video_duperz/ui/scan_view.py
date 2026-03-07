@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
@@ -16,7 +18,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..models import ScanIssue, ScanLaneSnapshot, ScanProgress
+if TYPE_CHECKING:
+    from ..models import ScanIssue, ScanLaneSnapshot, ScanProgress
 
 
 class ScanView(QWidget):

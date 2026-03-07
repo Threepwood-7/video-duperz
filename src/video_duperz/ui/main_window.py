@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import subprocess
@@ -1351,8 +1352,6 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         if not self._full_reset_requested:
             self._persist_settings()
-        try:
+        with contextlib.suppress(Exception):
             self.db.close()
-        except Exception:
-            pass
         super().closeEvent(event)

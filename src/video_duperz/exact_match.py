@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import struct
-from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 _MIB = 1024 * 1024
 _BASE_LABELS: tuple[str, str, str, str] = ("●", "■", "♥", "♦")
@@ -56,8 +59,8 @@ def sample_offsets(file_size: int, block_bytes: int, sample_a_pct: int, sample_b
     raw_offsets = [
         0,
         span,
-        int(round(span * (a / 100.0))),
-        int(round(span * (b / 100.0))),
+        round(span * (a / 100.0)),
+        round(span * (b / 100.0)),
     ]
     normalized = {
         max(0, min(span, int(offset)))

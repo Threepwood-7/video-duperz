@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from video_duperz.exact_match import ExactMatchFile, compare_group_files, sample_offsets
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_compare_group_files_labels_identical_samples(tmp_path: Path) -> None:
@@ -69,7 +72,7 @@ def test_sample_offsets_first_last_and_percent_positions() -> None:
         sample_b_pct=78,
     )
     span = size - block
-    assert offsets == sorted({0, span, int(round(span * 0.23)), int(round(span * 0.78))})
+    assert offsets == sorted({0, span, round(span * 0.23), round(span * 0.78)})
 
 
 def test_compare_group_files_label_overflow_reaches_aa(tmp_path: Path) -> None:

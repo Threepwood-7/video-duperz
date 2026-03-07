@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import subprocess
 import sys
@@ -83,10 +84,8 @@ def _cmd_gui(_args: argparse.Namespace) -> int:
     window.show()
     exit_code = app.exec()
     full_reset_requested = bool(getattr(window, "consume_full_reset_requested", lambda: False)())
-    try:
+    with contextlib.suppress(Exception):
         db.close()
-    except Exception:
-        pass
     if full_reset_requested:
         try:
             subprocess.Popen(

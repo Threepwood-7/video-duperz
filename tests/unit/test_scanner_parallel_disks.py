@@ -1,14 +1,17 @@
 from __future__ import annotations
 
-import os
 import time
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 import pytest
 
 from video_duperz import scanner
+
+if TYPE_CHECKING:
+    import os
 
 
 def _write_video(path: Path) -> None:

@@ -3,9 +3,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import struct
-from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .config import db_path
 from .models import DuplicateGroup, DuplicateItem, MatchItem, VideoMeta, utc_now_iso
@@ -15,6 +14,9 @@ from .scan_sets import (
     normalize_roots_for_display,
     normalize_similarity_profile,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 SCHEMA_VERSION = 3
 
