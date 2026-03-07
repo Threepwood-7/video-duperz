@@ -131,6 +131,14 @@ wheels = [
 ]
 
 [[package]]
+name = "threep-commons"
+version = "0.1.0"
+source = { git = "https://github.com/Threepwood-7/threep-commons?rev=v0.1.0#2e377f74a3084d90ba0a8fade3296c6eaee17d06" }
+dependencies = [
+    { name = "pyside6" },
+]
+
+[[package]]
 name = "video-duperz"
 version = "0.1.0"
 source = { editable = "." }
@@ -138,6 +146,7 @@ dependencies = [
     { name = "numpy" },
     { name = "opencv-python" },
     { name = "pyside6" },
+    { name = "threep-commons" },
 ]
 
 [package.metadata]
@@ -145,4 +154,5 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.4.2" },
     { name = "opencv-python", specifier = ">=4.13.0.92" },
     { name = "pyside6", specifier = ">=6.10.2" },
+    { name = "threep-commons", git = "https://github.com/Threepwood-7/threep-commons?rev=v0.1.0" },
 ]
