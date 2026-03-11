@@ -18,7 +18,7 @@ classifiers = [
 ]
 dependencies = [
 
-  "threep-commons @ git+https://github.com/Threepwood-7/threep-commons@v0.1.0",
+  "threep-commons @ git+https://github.com/Threepwood-7/threep-commons@v0.2.0",
 
 
   "numpy>=2.4.2",

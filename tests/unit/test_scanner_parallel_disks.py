@@ -6,8 +6,6 @@ from threading import Event
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
-import pytest
-
 from video_duperz import scanner
 
 if TYPE_CHECKING:
@@ -54,8 +52,8 @@ def test_candidate_physical_drive_roots_uses_windows_mount_points(monkeypatch) -
     monkeypatch.setattr(scanner.os, "name", "nt", raising=False)
     monkeypatch.setattr(
         scanner,
-        "_windows_mounted_volume_paths",
-        lambda: ["C:\\", "C:\\M\\DISK7\\", "C:\\M\\DISK7\\"],
+        "_list_windows_storage_roots",
+        lambda: [Path("C:\\"), Path("C:\\M\\DISK7"), Path("C:\\M\\DISK7")],
     )
     monkeypatch.setattr(
         scanner,
@@ -262,33 +260,6 @@ def test_build_physical_drive_scan_plan_lane_limit_uses_hardest_cap_with_shared_
     assert plan.lane_volume_identities[0] == ["volume:a", "volume:b"]
     assert plan.lane_worker_limits[0] == 2
     assert plan.effective_total_workers == 2
-
-
-def test_windows_disk_extent_payload_parser_uses_aligned_extents_offset() -> None:
-    if not hasattr(scanner, "_parse_disk_numbers_from_volume_extents_payload"):
-        pytest.skip("Windows disk-extent parser is unavailable on this platform")
-
-    extent_size = 24
-    extents_offset = 8
-    payload = bytearray(extents_offset + (extent_size * 2))
-
-    # Header: NumberOfDiskExtents = 2
-    payload[0:4] = (2).to_bytes(4, "little")
-    # Deliberately set header padding to a non-zero value to ensure parser does not read from offset 4.
-    payload[4:8] = (999).to_bytes(4, "little")
-
-    # First DISK_EXTENT starts at aligned offset 8.
-    payload[8:12] = (7).to_bytes(4, "little")
-    # Second DISK_EXTENT starts at offset 8 + 24.
-    payload[32:36] = (42).to_bytes(4, "little")
-
-    disks = scanner._parse_disk_numbers_from_volume_extents_payload(
-        bytes(payload),
-        2,
-        extent_size=extent_size,
-        extents_offset=extents_offset,
-    )
-    assert disks == {7, 42}
 
 
 def test_enumerate_video_files_stamps_source_root_and_lane(tmp_path: Path, monkeypatch) -> None:

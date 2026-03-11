@@ -8,6 +8,25 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Event, Lock
 
+from threep_commons.platform.windows.storage import (
+    is_local_windows_path,
+)
+from threep_commons.platform.windows.storage import (
+    list_windows_storage_roots as _list_windows_storage_roots,
+)
+from threep_commons.platform.windows.storage import (
+    normalized_path_key as _normalized_path_key,
+)
+from threep_commons.platform.windows.storage import (
+    resolve_physical_disk_tokens as _resolve_physical_disk_tokens,
+)
+from threep_commons.platform.windows.storage import (
+    resolve_volume_identity as _resolve_volume_identity,
+)
+from threep_commons.platform.windows.volumes import (
+    get_volume_mount_point as _get_volume_mount_point,
+)
+
 from .models import ScanIssue, VideoRecord
 
 ProgressFn = Callable[[int, int, str], None]
@@ -45,294 +64,15 @@ class PhysicalDriveScanPlan:
         return int(self.effective_total_workers)
 
 
-if os.name == "nt":
-    import ctypes
-    from ctypes import wintypes
-
-    _KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)
-
-    _GET_VOLUME_PATH_NAME = _KERNEL32.GetVolumePathNameW
-    _GET_VOLUME_PATH_NAME.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
-    _GET_VOLUME_PATH_NAME.restype = wintypes.BOOL
-
-    _GET_LOGICAL_DRIVES = _KERNEL32.GetLogicalDrives
-    _GET_LOGICAL_DRIVES.argtypes = []
-    _GET_LOGICAL_DRIVES.restype = wintypes.DWORD
-
-    _GET_VOLUME_NAME_FOR_MOUNT = _KERNEL32.GetVolumeNameForVolumeMountPointW
-    _GET_VOLUME_NAME_FOR_MOUNT.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
-    _GET_VOLUME_NAME_FOR_MOUNT.restype = wintypes.BOOL
-
-    _GET_VOLUME_PATH_NAMES_FOR_VOLUME_NAME = _KERNEL32.GetVolumePathNamesForVolumeNameW
-    _GET_VOLUME_PATH_NAMES_FOR_VOLUME_NAME.argtypes = [
-        wintypes.LPCWSTR,
-        wintypes.LPWSTR,
-        wintypes.DWORD,
-        ctypes.POINTER(wintypes.DWORD),
-    ]
-    _GET_VOLUME_PATH_NAMES_FOR_VOLUME_NAME.restype = wintypes.BOOL
-
-    _FIND_FIRST_VOLUME = _KERNEL32.FindFirstVolumeW
-    _FIND_FIRST_VOLUME.argtypes = [wintypes.LPWSTR, wintypes.DWORD]
-    _FIND_FIRST_VOLUME.restype = wintypes.HANDLE
-
-    _FIND_NEXT_VOLUME = _KERNEL32.FindNextVolumeW
-    _FIND_NEXT_VOLUME.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD]
-    _FIND_NEXT_VOLUME.restype = wintypes.BOOL
-
-    _FIND_VOLUME_CLOSE = _KERNEL32.FindVolumeClose
-    _FIND_VOLUME_CLOSE.argtypes = [wintypes.HANDLE]
-    _FIND_VOLUME_CLOSE.restype = wintypes.BOOL
-
-    _CREATE_FILE = _KERNEL32.CreateFileW
-    _CREATE_FILE.argtypes = [
-        wintypes.LPCWSTR,
-        wintypes.DWORD,
-        wintypes.DWORD,
-        wintypes.LPVOID,
-        wintypes.DWORD,
-        wintypes.DWORD,
-        wintypes.HANDLE,
-    ]
-    _CREATE_FILE.restype = wintypes.HANDLE
-
-    _DEVICE_IO_CONTROL = _KERNEL32.DeviceIoControl
-    _DEVICE_IO_CONTROL.argtypes = [
-        wintypes.HANDLE,
-        wintypes.DWORD,
-        wintypes.LPVOID,
-        wintypes.DWORD,
-        wintypes.LPVOID,
-        wintypes.DWORD,
-        ctypes.POINTER(wintypes.DWORD),
-        wintypes.LPVOID,
-    ]
-    _DEVICE_IO_CONTROL.restype = wintypes.BOOL
-
-    _CLOSE_HANDLE = _KERNEL32.CloseHandle
-    _CLOSE_HANDLE.argtypes = [wintypes.HANDLE]
-    _CLOSE_HANDLE.restype = wintypes.BOOL
-
-    _FILE_SHARE_READ = 0x00000001
-    _FILE_SHARE_WRITE = 0x00000002
-    _FILE_SHARE_DELETE = 0x00000004
-    _OPEN_EXISTING = 3
-    _INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
-    _ERROR_MORE_DATA = 234
-    _ERROR_INSUFFICIENT_BUFFER = 122
-    _ERROR_NO_MORE_FILES = 18
-    _IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS = 0x00560000
-
-    class _DiskExtent(ctypes.Structure):
-        _fields_ = [
-            ("DiskNumber", wintypes.DWORD),
-            ("StartingOffset", ctypes.c_longlong),
-            ("ExtentLength", ctypes.c_longlong),
-        ]
-
-    class _VolumeDiskExtents(ctypes.Structure):
-        _fields_ = [
-            ("NumberOfDiskExtents", wintypes.DWORD),
-            ("Extents", _DiskExtent * 1),
-        ]
-
-    _VOLUME_DISK_EXTENTS_EXTENTS_OFFSET = _VolumeDiskExtents.Extents.offset
-    _DISK_EXTENT_SIZE = ctypes.sizeof(_DiskExtent)
-    _DWORD_SIZE = ctypes.sizeof(wintypes.DWORD)
-
-    def _parse_disk_numbers_from_volume_extents_payload(
-        payload: bytes,
-        extent_count: int,
-        *,
-        extent_size: int,
-        extents_offset: int,
-    ) -> set[int]:
-        disks: set[int] = set()
-        for idx in range(max(0, int(extent_count))):
-            start = int(extents_offset) + (idx * int(extent_size))
-            end = start + int(_DWORD_SIZE)
-            if end > len(payload):
-                raise OSError("Volume disk extent payload ended unexpectedly")
-            disks.add(int.from_bytes(payload[start:end], "little"))
-        return disks
-
-    def _windows_mount_point_for_path(path: str) -> str:
-        normalized = os.path.abspath(path)
-        mount_point = ctypes.create_unicode_buffer(4096)
-        if not _GET_VOLUME_PATH_NAME(normalized, mount_point, len(mount_point)):
-            raise ctypes.WinError(ctypes.get_last_error())
-        mount = str(mount_point.value)
-        if mount and not mount.endswith("\\"):
-            mount = f"{mount}\\"
-        return mount
-
-    def _windows_volume_name_for_path(path: str) -> str:
-        mount = _windows_mount_point_for_path(path)
-        volume = ctypes.create_unicode_buffer(4096)
-        if not _GET_VOLUME_NAME_FOR_MOUNT(mount, volume, len(volume)):
-            raise ctypes.WinError(ctypes.get_last_error())
-        return str(volume.value)
-
-    def _windows_mount_points_for_volume_name(volume_name: str) -> list[str]:
-        size = 512
-        max_size = 1 << 20  # 1 MiB hard cap for pathological path-multi-string results.
-        while size <= max_size:
-            buffer = ctypes.create_unicode_buffer(size)
-            required = wintypes.DWORD(0)
-            ok = _GET_VOLUME_PATH_NAMES_FOR_VOLUME_NAME(
-                volume_name,
-                buffer,
-                size,
-                ctypes.byref(required),
-            )
-            if ok:
-                raw = ctypes.wstring_at(buffer, size)
-                return [item if item.endswith("\\") else f"{item}\\" for item in raw.split("\x00") if item]
-            err = ctypes.get_last_error()
-            if err in (_ERROR_MORE_DATA, _ERROR_INSUFFICIENT_BUFFER):
-                size = max(size * 2, int(required.value) + 1)
-                continue
-            raise ctypes.WinError(err)
-        raise OSError("Windows mount-point query exceeded supported buffer sizes")
-
-    def _windows_mounted_volume_paths() -> list[str]:
-        volume = ctypes.create_unicode_buffer(4096)
-        handle = _FIND_FIRST_VOLUME(volume, len(volume))
-        if handle == _INVALID_HANDLE_VALUE:
-            raise ctypes.WinError(ctypes.get_last_error())
-        mounts: list[str] = []
-        try:
-            while True:
-                volume_name = str(volume.value)
-                mounts.extend(_windows_mount_points_for_volume_name(volume_name))
-                ok = _FIND_NEXT_VOLUME(handle, volume, len(volume))
-                if ok:
-                    continue
-                err = ctypes.get_last_error()
-                if err == _ERROR_NO_MORE_FILES:
-                    break
-                raise ctypes.WinError(err)
-            return mounts
-        finally:
-            _FIND_VOLUME_CLOSE(handle)
-
-    def _windows_disk_numbers_for_path(path: str) -> set[int]:
-        volume_name = _windows_volume_name_for_path(path).rstrip("\\")
-        handle = _CREATE_FILE(
-            volume_name,
-            0,
-            _FILE_SHARE_READ | _FILE_SHARE_WRITE | _FILE_SHARE_DELETE,
-            None,
-            _OPEN_EXISTING,
-            0,
-            None,
-        )
-        if handle == _INVALID_HANDLE_VALUE:
-            raise ctypes.WinError(ctypes.get_last_error())
-        try:
-            size = 4096
-            max_size = 1 << 20  # 1 MiB hard cap for pathological multi-extent cases.
-            while size <= max_size:
-                out_buffer = ctypes.create_string_buffer(size)
-                bytes_returned = wintypes.DWORD(0)
-                ok = _DEVICE_IO_CONTROL(
-                    handle,
-                    _IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS,
-                    None,
-                    0,
-                    out_buffer,
-                    size,
-                    ctypes.byref(bytes_returned),
-                    None,
-                )
-                if not ok:
-                    err = ctypes.get_last_error()
-                    if err in (_ERROR_MORE_DATA, _ERROR_INSUFFICIENT_BUFFER):
-                        size *= 2
-                        continue
-                    raise ctypes.WinError(err)
-                if bytes_returned.value < int(_VOLUME_DISK_EXTENTS_EXTENTS_OFFSET):
-                    raise OSError("No disk extent data returned")
-                count = int.from_bytes(out_buffer.raw[: int(_DWORD_SIZE)], "little")
-                if count <= 0:
-                    raise OSError("Volume has no disk extents")
-                needed = int(_VOLUME_DISK_EXTENTS_EXTENTS_OFFSET) + (int(_DISK_EXTENT_SIZE) * count)
-                if bytes_returned.value < needed:
-                    size = max(size * 2, needed)
-                    continue
-                disks = _parse_disk_numbers_from_volume_extents_payload(
-                    out_buffer.raw,
-                    count,
-                    extent_size=int(_DISK_EXTENT_SIZE),
-                    extents_offset=int(_VOLUME_DISK_EXTENTS_EXTENTS_OFFSET),
-                )
-                if disks:
-                    return disks
-                raise OSError("Volume disk extent query returned no disk numbers")
-            raise OSError("Volume disk extent query output exceeded supported buffer sizes")
-        finally:
-            _CLOSE_HANDLE(handle)
-
-else:
-    def _windows_mount_point_for_path(path: str) -> str:
-        raise OSError(f"Windows volume API is unavailable on this platform: {path}")
-
-    def _windows_volume_name_for_path(path: str) -> str:
-        raise OSError(f"Windows volume API is unavailable on this platform: {path}")
-
-    def _windows_mount_points_for_volume_name(volume_name: str) -> list[str]:
-        raise OSError(f"Windows mount-point API is unavailable on this platform: {volume_name}")
-
-    def _windows_mounted_volume_paths() -> list[str]:
-        raise OSError("Windows volume enumeration API is unavailable on this platform")
-
-    def _windows_disk_numbers_for_path(path: str) -> set[int]:
-        raise OSError(f"Windows disk extent API is unavailable on this platform: {path}")
-
-
-def is_local_windows_path(path: str) -> bool:
-    # v1 scope is local paths only.
-    return not path.startswith("\\\\")
-
-
-def _normalized_path_key(path: str) -> str:
-    return str(Path(path)).replace("\\", "/").casefold()
-
-
-def _resolve_volume_identity(path: str) -> str:
-    normalized = str(Path(path))
-    if os.name == "nt":
-        try:
-            volume_name = _windows_volume_name_for_path(normalized)
-            return f"volume:{volume_name.casefold()}"
-        except OSError:
-            pass
-    try:
-        return f"dev:{int(os.stat(normalized).st_dev)}"
-    except OSError:
-        anchor = Path(normalized).anchor or normalized
-        return f"path:{anchor.casefold()}"
-
-
-def _resolve_physical_disk_tokens(path: str) -> set[DiskToken]:
-    normalized = str(Path(path))
-    if os.name == "nt":
-        disks = _windows_disk_numbers_for_path(normalized)
-        if not disks:
-            raise OSError("No physical disks found for volume")
-        return {f"disk:{disk}" for disk in sorted(disks)}
-    return {f"dev:{int(os.stat(normalized).st_dev)}"}
+def _windows_mount_point_for_path(path: str) -> str:
+    return str(_get_volume_mount_point(path))
 
 
 def _candidate_physical_drive_roots(roots: list[str] | None = None) -> list[str]:
     if roots:
         candidates = [str(Path(root)) for root in roots if str(root).strip()]
     elif os.name == "nt":
-        try:
-            candidates = _windows_mounted_volume_paths()
-        except OSError:
-            bitmask = int(_GET_LOGICAL_DRIVES())
-            candidates = [f"{chr(ord('A') + idx)}:\\" for idx in range(26) if bitmask & (1 << idx)]
+        candidates = [str(path) for path in _list_windows_storage_roots()]
     else:
         candidates = ["/"]
 
