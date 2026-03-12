@@ -6,13 +6,10 @@ from dataclasses import asdict
 from pathlib import Path
 
 from PySide6.QtCore import QSettings
-from threep_commons.paths import configure_qsettings, resolve_app_data_dir
+from threep_commons.paths import resolve_app_data_dir
+from threep_commons.settings import QSettingsValueStore
 
-from .constants import (
-    APP_IDENTITY,
-    SETTINGS_APP_NAME,
-    SETTINGS_ORG_NAME,
-)
+from .constants import APP_IDENTITY, SETTINGS_APP_NAME
 from .models import (
     DEFAULT_THUMBNAIL_SIZE,
     THUMBNAIL_SIZE_CHOICES,
@@ -312,25 +309,19 @@ def app_data_dir() -> Path:
 
 
 def settings_path() -> Path:
-    settings = _qsettings()
+    settings = _settings_store()
     settings.sync()
-    return Path(settings.fileName())
+    return Path(settings.file_name())
 
 
 def db_path() -> Path:
     return app_data_dir() / "app.db"
 
 
-def _qsettings(path: Path | None = None) -> QSettings:
+def _settings_store(path: Path | None = None) -> QSettingsValueStore:
     if path is not None:
-        return QSettings(str(path), QSettings.Format.IniFormat)
-    configure_qsettings(APP_IDENTITY)
-    return QSettings(
-        QSettings.Format.IniFormat,
-        QSettings.Scope.UserScope,
-        SETTINGS_ORG_NAME,
-        SETTINGS_APP_NAME,
-    )
+        return QSettingsValueStore(QSettings(str(path), QSettings.Format.IniFormat))
+    return QSettingsValueStore.from_identity(APP_IDENTITY)
 
 
 def _decode_json_value(value: object, fallback: object) -> object:
@@ -362,7 +353,7 @@ def _coerce_bool(value: object, default: bool) -> bool:
     return default
 
 
-def _read_qsettings_payload(qs: QSettings, defaults: Settings) -> dict[str, object]:
+def _read_qsettings_payload(qs: QSettingsValueStore, defaults: Settings) -> dict[str, object]:
     payload: dict[str, object] = {
         "scan_roots": _decode_json_value(qs.value("scan_roots"), defaults.scan_roots),
         "recent_scan_roots": _decode_json_value(qs.value("recent_scan_roots"), defaults.recent_scan_roots),
@@ -534,8 +525,8 @@ def default_settings() -> Settings:
 
 def load_settings() -> Settings:
     defaults = default_settings()
-    qs = _qsettings()
-    if qs.allKeys():
+    qs = _settings_store()
+    if qs.qsettings.allKeys():
         raw = _read_qsettings_payload(qs, defaults)
         return _settings_from_raw(raw, defaults)
 
@@ -546,11 +537,11 @@ def load_settings() -> Settings:
 
 def save_settings(settings: Settings) -> None:
     payload = asdict(settings)
-    qs = _qsettings()
-    qs.clear()
+    qs = _settings_store()
+    qs.clear_all()
     for key, value in payload.items():
         if isinstance(value, (list, dict)):
-            qs.setValue(key, json.dumps(value))
+            qs.set_value(key, json.dumps(value))
         else:
-            qs.setValue(key, value)
+            qs.set_value(key, value)
     qs.sync()
