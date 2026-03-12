@@ -6,6 +6,8 @@ import struct
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from threep_commons.fs_paths import is_path_under_root, path_key
+
 from .config import db_path
 from .models import DuplicateGroup, DuplicateItem, MatchItem, VideoMeta, utc_now_iso
 from .scan_sets import (
@@ -607,40 +609,28 @@ class Database:
 
     @staticmethod
     def _canonical_path_match_key(path: str) -> str:
-        text = str(Path(str(path)).expanduser()).strip()
-        if not text:
-            return ""
-        canonical = text.replace("\\", "/").casefold()
-        while len(canonical) > 1 and canonical.endswith("/"):
-            canonical = canonical[:-1]
-        return canonical
+        return path_key(str(path))
 
     @classmethod
     def _path_is_under_root(cls, path: str, root: str) -> bool:
-        path_key = cls._canonical_path_match_key(path)
-        root_key = cls._canonical_path_match_key(root)
-        if not path_key or not root_key:
+        path_match_key = cls._canonical_path_match_key(path)
+        root_match_key = cls._canonical_path_match_key(root)
+        if not path_match_key or not root_match_key:
             return False
-        if path_key == root_key:
-            return True
-        return path_key.startswith(f"{root_key}/")
+        return is_path_under_root(path, root)
 
     def purge_for_fresh_rescan(self, scan_set_key: str, roots: list[str]) -> dict[str, int]:
         key = str(scan_set_key or "").strip()
-        root_keys = [
-            root_key
-            for root_key in {self._canonical_path_match_key(root) for root in roots}
-            if root_key
-        ]
+        normalized_roots = [str(root) for root in roots if self._canonical_path_match_key(root)]
         scan_ids: set[int] = set()
         if key:
             scan_rows = self.conn.execute("SELECT id FROM scans WHERE scan_set_key = ?", (key,)).fetchall()
             scan_ids.update(int(row["id"]) for row in scan_rows)
-        if root_keys:
+        if normalized_roots:
             file_rows = self.conn.execute("SELECT scan_id, path FROM files").fetchall()
             for row in file_rows:
                 file_path = str(row["path"] or "")
-                if any(self._path_is_under_root(file_path, root_key) for root_key in root_keys):
+                if any(self._path_is_under_root(file_path, root) for root in normalized_roots):
                     scan_ids.add(int(row["scan_id"]))
 
         if not scan_ids:

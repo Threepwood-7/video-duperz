@@ -11,6 +11,8 @@ from queue import Empty, Full, Queue
 from threading import Condition, Event, Lock, Thread
 from typing import TYPE_CHECKING
 
+from threep_commons.fs_paths import path_key
+
 from .fingerprint import ALGO_VERSION, FingerprintError, build_fingerprint_record
 from .matcher import build_duplicate_groups, find_duplicate_edges
 from .models import MatchStats, ScanIssue, ScanLaneSnapshot, ScanProgress, ScanResult
@@ -34,10 +36,6 @@ def _emit(
 ) -> None:
     if progress_cb:
         progress_cb(ScanProgress(stage=stage, current=current, total=total, message=message, **extra))
-
-
-def _path_key(path: str) -> str:
-    return str(Path(path)).replace("\\", "/").casefold()
 
 
 def _normalize_probe_worker_mode(value: str) -> str:
@@ -182,7 +180,7 @@ def run_scan(
         )
         lane_queues[lane_idx] = deque()
 
-    root_to_lane = {_path_key(root): lane for root, lane in scan_plan.root_to_group_index.items()}
+    root_to_lane = {path_key(root): lane for root, lane in scan_plan.root_to_group_index.items()}
     ready_lanes: deque[int] = deque()
     ready_set: set[int] = set()
     active_by_lane: dict[int, int] = dict.fromkeys(lane_states, 0)
@@ -454,7 +452,7 @@ def run_scan(
         _notify_event()
 
     def _on_file_discovered(file: object) -> None:
-        key = _path_key(str(getattr(file, "path", "")))
+        key = path_key(str(getattr(file, "path", "")))
         with state_lock:
             if key in streamed_path_keys:
                 return
@@ -471,7 +469,7 @@ def run_scan(
             enumerated_roots = current
             total_roots = max(1, total)
             if root_from_message:
-                lane = root_to_lane.get(_path_key(root_from_message))
+                lane = root_to_lane.get(path_key(root_from_message))
                 if lane is not None:
                     lane_state = _ensure_lane_state_locked(lane, root_from_message)
                     if lane_state.state == "pending":
@@ -498,7 +496,7 @@ def run_scan(
             # Compatibility for callers/tests that monkeypatch enumerate_video_files
             # and ignore the streaming callback.
             for file in enum_files:
-                key = _path_key(str(getattr(file, "path", "")))
+                key = path_key(str(getattr(file, "path", "")))
                 with state_lock:
                     if key in streamed_path_keys:
                         continue

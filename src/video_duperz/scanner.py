@@ -8,14 +8,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Event, Lock
 
+from threep_commons.fs_paths import path_key
 from threep_commons.platform.windows.storage import (
     is_local_windows_path,
 )
 from threep_commons.platform.windows.storage import (
     list_windows_storage_roots as _list_windows_storage_roots,
-)
-from threep_commons.platform.windows.storage import (
-    normalized_path_key as _normalized_path_key,
 )
 from threep_commons.platform.windows.storage import (
     resolve_physical_disk_tokens as _resolve_physical_disk_tokens,
@@ -91,7 +89,7 @@ def _candidate_physical_drive_roots(roots: list[str] | None = None) -> list[str]
                     root = f"{drive}\\"
         if not os.path.isdir(root):
             continue
-        key = _normalized_path_key(root)
+        key = path_key(root)
         if key in seen:
             continue
         seen.add(key)
@@ -133,7 +131,7 @@ def list_physical_drives(roots: list[str] | None = None) -> list[PhysicalDriveIn
             )
         )
 
-    discovered.sort(key=lambda item: _normalized_path_key(item.root))
+    discovered.sort(key=lambda item: path_key(item.root))
     return discovered
 
 
