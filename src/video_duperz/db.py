@@ -4,12 +4,19 @@ import json
 import sqlite3
 import struct
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from threep_commons.fs_paths import is_path_under_root, path_key
 
 from .config import db_path
-from .models import DuplicateGroup, DuplicateItem, MatchItem, VideoMeta, utc_now_iso
+from .models import (
+    ActionKind,
+    DuplicateGroup,
+    DuplicateItem,
+    MatchItem,
+    VideoMeta,
+    utc_now_iso,
+)
 from .scan_sets import (
     build_scan_set_key,
     normalize_extensions,
@@ -18,7 +25,7 @@ from .scan_sets import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping, Sequence
 
 SCHEMA_VERSION = 3
 
@@ -36,6 +43,56 @@ def decode_hashes(blob: bytes | None) -> list[int]:
         return []
     count = len(blob) // 8
     return list(struct.unpack(f">{count}Q", blob))
+
+
+def _coerce_int(value: object, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    return default
+
+
+def _coerce_string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    raw_items = cast("list[object]", value)
+    normalized: list[str] = []
+    for item in raw_items:
+        text = str(item).strip()
+        if text:
+            normalized.append(text)
+    return normalized
+
+
+def _decode_string_list_json(value: object) -> list[str]:
+    if not isinstance(value, str | bytes | bytearray):
+        return []
+    try:
+        payload: object = json.loads(value) if value else []
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    return _coerce_string_list(payload)
+
+
+def _normalize_action_kind(value: object) -> ActionKind:
+    text = str(value).strip().lower()
+    if text in {"keep", "rename", "delete"}:
+        return cast("ActionKind", text)
+    return "keep"
+
+
+def _require_lastrowid(cursor: sqlite3.Cursor) -> int:
+    if cursor.lastrowid is None:
+        raise sqlite3.DatabaseError("sqlite cursor did not return lastrowid")
+    return int(cursor.lastrowid)
 
 
 class Database:
@@ -275,20 +332,8 @@ class Database:
         for row in rows:
             raw_roots = row["roots_json"]
             raw_extensions = row["extensions_json"]
-            try:
-                roots_payload = json.loads(raw_roots) if raw_roots else []
-            except (TypeError, ValueError, json.JSONDecodeError):
-                roots_payload = []
-            if not isinstance(roots_payload, list):
-                roots_payload = []
-            roots = normalize_roots_for_display(roots_payload)
-            try:
-                ext_payload = json.loads(raw_extensions) if raw_extensions else []
-            except (TypeError, ValueError, json.JSONDecodeError):
-                ext_payload = []
-            if not isinstance(ext_payload, list):
-                ext_payload = []
-            extensions = normalize_extensions(ext_payload)
+            roots = normalize_roots_for_display(_decode_string_list_json(raw_roots))
+            extensions = normalize_extensions(_decode_string_list_json(raw_extensions))
             profile = normalize_similarity_profile(str(row["profile"] or "balanced"))
             scan_set_key = build_scan_set_key(
                 roots=roots, similarity_profile=profile, extensions=extensions
@@ -324,7 +369,7 @@ class Database:
             ),
         )
         self._commit_if_needed()
-        return int(cur.lastrowid)
+        return _require_lastrowid(cur)
 
     def complete_scan(self, scan_id: int, status: str = "done") -> None:
         self.conn.execute("UPDATE scans SET status = ? WHERE id = ?", (status, scan_id))
@@ -352,7 +397,9 @@ class Database:
         by_path = self.upsert_files_batch(payload)
         return int(by_path.get(path, 0))
 
-    def upsert_files_batch(self, files: list[dict[str, object]]) -> dict[str, int]:
+    def upsert_files_batch(
+        self, files: Sequence[Mapping[str, object]]
+    ) -> dict[str, int]:
         if not files:
             return {}
         rows: list[tuple[str, int, int, int, str, int]] = []
@@ -364,11 +411,11 @@ class Database:
             rows.append(
                 (
                     path,
-                    int(file.get("size", 0)),
-                    int(file.get("mtime_ns", 0)),
-                    int(file.get("ctime_ns", 0)),
+                    _coerce_int(file.get("size", 0)),
+                    _coerce_int(file.get("mtime_ns", 0)),
+                    _coerce_int(file.get("ctime_ns", 0)),
                     str(file.get("ext", "")),
-                    int(file.get("scan_id", 0)),
+                    _coerce_int(file.get("scan_id", 0)),
                 )
             )
             ordered_paths.append(path)
@@ -454,7 +501,7 @@ class Database:
         return cached.get(path)
 
     def load_cached_artifacts_batch(
-        self, files: list[dict[str, object]]
+        self, files: Sequence[Mapping[str, object]]
     ) -> dict[str, dict[str, Any]]:
         if not files:
             return {}
@@ -463,7 +510,10 @@ class Database:
             path = str(file.get("path", "")).strip()
             if not path:
                 continue
-            requested[path] = (int(file.get("size", 0)), int(file.get("mtime_ns", 0)))
+            requested[path] = (
+                _coerce_int(file.get("size", 0)),
+                _coerce_int(file.get("mtime_ns", 0)),
+            )
         if not requested:
             return {}
 
@@ -785,7 +835,7 @@ class Database:
                 """,
                 (int(scan_id), str(profile), created_at, int(group.total_size_bytes)),
             )
-            group_id = int(cur.lastrowid)
+            group_id = _require_lastrowid(cur)
             group_ids.append(group_id)
             for item in group.items:
                 item_rows.append(
@@ -925,7 +975,7 @@ class Database:
                     is_hdr=bool(ir["is_hdr"]),
                     similarity_score=float(ir["similarity_score"]),
                     keep_default=bool(ir["keep_default"]),
-                    selected_action=str(ir["selected_action"]),
+                    selected_action=_normalize_action_kind(ir["selected_action"]),
                 )
                 for ir in item_rows
             ]
@@ -949,18 +999,8 @@ class Database:
         ).fetchone()
         if not row:
             raise ValueError(f"scan_id {scan_id} not found")
-        try:
-            roots = json.loads(row["roots_json"])
-        except (TypeError, ValueError, json.JSONDecodeError):
-            roots = []
-        if not isinstance(roots, list):
-            roots = []
-        try:
-            extensions = json.loads(row["extensions_json"])
-        except (TypeError, ValueError, json.JSONDecodeError):
-            extensions = []
-        if not isinstance(extensions, list):
-            extensions = []
+        roots = _decode_string_list_json(row["roots_json"])
+        extensions = _decode_string_list_json(row["extensions_json"])
         return {
             "id": int(row["id"]),
             "created_at": str(row["created_at"]),
@@ -1050,18 +1090,8 @@ class Database:
     def _scan_set_rows_to_payload(self, rows: list[Any]) -> list[dict[str, Any]]:
         output: list[dict[str, Any]] = []
         for row in rows:
-            try:
-                roots = json.loads(row["roots_json"])
-            except (TypeError, ValueError, json.JSONDecodeError):
-                roots = []
-            if not isinstance(roots, list):
-                roots = []
-            try:
-                extensions = json.loads(row["extensions_json"])
-            except (TypeError, ValueError, json.JSONDecodeError):
-                extensions = []
-            if not isinstance(extensions, list):
-                extensions = []
+            roots = _decode_string_list_json(row["roots_json"])
+            extensions = _decode_string_list_json(row["extensions_json"])
             output.append(
                 {
                     "scan_id": int(row["id"]),
@@ -1121,7 +1151,7 @@ class Database:
             (scan_id, mode, utc_now_iso(), status),
         )
         self._commit_if_needed()
-        return int(cur.lastrowid)
+        return _require_lastrowid(cur)
 
     def insert_action_item(
         self,

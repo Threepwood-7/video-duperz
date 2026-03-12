@@ -21,6 +21,7 @@ THUMBNAIL_SIZES: dict[str, tuple[int, int]] = {
 }
 DEFAULT_THUMBNAIL_SIZE = "96x54"
 THUMBNAIL_CACHE_VERSION = "v2"
+FramePercentInput = int | float | str | None
 
 
 def opencv_available() -> bool:
@@ -48,7 +49,7 @@ def thumbnail_cache_dir() -> Path:
     return path
 
 
-def normalize_frame_percent(value: int | float | str | None, fallback: int) -> int:
+def normalize_frame_percent(value: FramePercentInput, fallback: int) -> int:
     try:
         parsed = int(float(value if value is not None else fallback))
     except (TypeError, ValueError):
@@ -56,7 +57,9 @@ def normalize_frame_percent(value: int | float | str | None, fallback: int) -> i
     return max(0, min(100, parsed))
 
 
-def normalize_frame_pair(frame_a_pct: object, frame_b_pct: object) -> tuple[int, int]:
+def normalize_frame_pair(
+    frame_a_pct: FramePercentInput, frame_b_pct: FramePercentInput
+) -> tuple[int, int]:
     a = normalize_frame_percent(frame_a_pct, 23)
     b = normalize_frame_percent(frame_b_pct, 77)
     if a == b:
@@ -129,13 +132,13 @@ def _read_preview_frame(
         target_ms = max(0.0, duration_s * pct * 1000.0)
         cap.set(cv2.CAP_PROP_POS_MSEC, target_ms)
         ok, frame = cap.read()
-        if ok and frame is not None:
+        if ok:
             return True, frame, None
 
         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
         for _ in range(60):
             ok, frame = cap.read()
-            if ok and frame is not None:
+            if ok:
                 return True, frame, None
         return False, None, "could not decode frame"
     finally:

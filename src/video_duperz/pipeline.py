@@ -9,13 +9,22 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from queue import Empty, Full, Queue
 from threading import Condition, Event, Lock, Thread
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ParamSpec, TypeVar
 
 from threep_commons.fs_paths import path_key
 
 from .fingerprint import ALGO_VERSION, FingerprintError, build_fingerprint_record
 from .matcher import build_duplicate_groups, find_duplicate_edges
-from .models import MatchStats, ScanIssue, ScanLaneSnapshot, ScanProgress, ScanResult
+from .models import (
+    MatchStats,
+    ProbeWorkerMode,
+    ScanIssue,
+    ScanLaneSnapshot,
+    ScanProgress,
+    ScanResult,
+    VideoMeta,
+    VideoRecord,
+)
 from .probe import ProbeError, ensure_ffprobe_available, probe_video
 from .scanner import build_physical_drive_scan_plan, enumerate_video_files
 
@@ -24,6 +33,8 @@ if TYPE_CHECKING:
 
 ProgressCallback = Callable[[ScanProgress], None]
 _MIB = 1024.0 * 1024.0
+_ReturnT = TypeVar("_ReturnT")
+_P = ParamSpec("_P")
 
 
 def _emit(
@@ -32,17 +43,56 @@ def _emit(
     current: int,
     total: int,
     message: str = "",
-    **extra: object,
+    *,
+    active_workers: int | None = None,
+    worker_limit: int | None = None,
+    enumerated_roots: int | None = None,
+    total_roots: int | None = None,
+    prepared_files: int | None = None,
+    discovered_files: int | None = None,
+    discovered_bytes: int | None = None,
+    analyzed_files: int | None = None,
+    analyzed_bytes: int | None = None,
+    cached_files: int | None = None,
+    discovered_files_per_s: float | None = None,
+    discovered_mib_per_s: float | None = None,
+    analyzed_files_per_s: float | None = None,
+    analyzed_mib_per_s: float | None = None,
+    cache_hit_ratio: float | None = None,
+    elapsed_s: float | None = None,
+    total_analyze_files: int | None = None,
+    lane_snapshots: list[ScanLaneSnapshot] | None = None,
 ) -> None:
     if progress_cb:
         progress_cb(
             ScanProgress(
-                stage=stage, current=current, total=total, message=message, **extra
+                stage=stage,
+                current=current,
+                total=total,
+                message=message,
+                active_workers=active_workers,
+                worker_limit=worker_limit,
+                enumerated_roots=enumerated_roots,
+                total_roots=total_roots,
+                prepared_files=prepared_files,
+                discovered_files=discovered_files,
+                discovered_bytes=discovered_bytes,
+                analyzed_files=analyzed_files,
+                analyzed_bytes=analyzed_bytes,
+                cached_files=cached_files,
+                discovered_files_per_s=discovered_files_per_s,
+                discovered_mib_per_s=discovered_mib_per_s,
+                analyzed_files_per_s=analyzed_files_per_s,
+                analyzed_mib_per_s=analyzed_mib_per_s,
+                cache_hit_ratio=cache_hit_ratio,
+                elapsed_s=elapsed_s,
+                total_analyze_files=total_analyze_files,
+                lane_snapshots=lane_snapshots,
             )
         )
 
 
-def _normalize_probe_worker_mode(value: str) -> str:
+def _normalize_probe_worker_mode(value: str) -> ProbeWorkerMode:
     mode = str(value or "").strip().lower()
     if mode == "burst":
         return "burst"
@@ -71,21 +121,9 @@ def _should_emit_progress(
     return (time.perf_counter() - last_emit_at) >= progress_emit_interval_s
 
 
-def _flush_row_batches(
-    pending_rows: list[object],
-    batch_size: int,
-    write_fn: Callable[[object], object],
-    timed_write: Callable[..., object],
-) -> None:
-    while pending_rows:
-        chunk = pending_rows[:batch_size]
-        del pending_rows[: len(chunk)]
-        timed_write(write_fn, len(chunk), chunk)
-
-
 @dataclass(slots=True)
 class _AnalyzeOutput:
-    meta: object
+    meta: VideoMeta
     hashes: list[int]
     probe_s: float = 0.0
     fingerprint_s: float = 0.0
@@ -93,16 +131,16 @@ class _AnalyzeOutput:
 
 @dataclass(slots=True)
 class _AnalyzeTask:
-    file: object
+    file: VideoRecord
     file_id: int
-    cached_meta: object | None
+    cached_meta: VideoMeta | None
     lane: int
     source_root: str
     path: str
     size: int
 
 
-def _analyze_file(path: str, cached_meta) -> _AnalyzeOutput:
+def _analyze_file(path: str, cached_meta: VideoMeta | None) -> _AnalyzeOutput:
     if cached_meta is None:
         probe_started = time.perf_counter()
         meta = probe_video(path)
@@ -204,8 +242,8 @@ def run_scan(
 
     present_paths: set[str] = set()
     streamed_path_keys: set[str] = set()
-    pending_discovered: list[object] = []
-    pending_meta_rows: list[tuple[int, object]] = []
+    pending_discovered: list[VideoRecord] = []
+    pending_meta_rows: list[tuple[int, VideoMeta]] = []
     pending_fp_rows: list[tuple[int, int, list[int]]] = []
     pending_probe_error_rows: list[tuple[int, str]] = []
 
@@ -238,11 +276,11 @@ def run_scan(
     cancel_requested = False
     cancel_applied = False
 
-    enum_files: list[object] = []
+    enum_files: list[VideoRecord] = []
     enum_issues: list[ScanIssue] = []
     enum_error: Exception | None = None
 
-    enum_queue: Queue[object] = Queue(maxsize=enum_queue_max)
+    enum_queue: Queue[VideoRecord | object] = Queue(maxsize=enum_queue_max)
     enum_sentinel = object()
 
     last_emit_at = 0.0
@@ -416,9 +454,14 @@ def run_scan(
             stage_seconds["db_write"] += max(0.0, float(elapsed_s))
         rows_since_flush += max(0, int(row_count))
 
-    def _timed_db_write(write_fn, row_count: int, *args):
+    def _timed_db_write(
+        write_fn: Callable[_P, _ReturnT],
+        row_count: int,
+        *args: _P.args,
+        **kwargs: _P.kwargs,
+    ) -> _ReturnT:
         started = time.perf_counter()
-        out = write_fn(*args)
+        out = write_fn(*args, **kwargs)
         _record_db_write(time.perf_counter() - started, row_count)
         return out
 
@@ -457,18 +500,18 @@ def run_scan(
             and (now - last_pending_write_at) < db_flush_interval_s
         ):
             return
-        _flush_row_batches(
-            pending_meta_rows, db_batch_size, db.save_video_meta_batch, _timed_db_write
-        )
-        _flush_row_batches(
-            pending_fp_rows, db_batch_size, db.save_fingerprints_batch, _timed_db_write
-        )
-        _flush_row_batches(
-            pending_probe_error_rows,
-            db_batch_size,
-            db.save_probe_errors_batch,
-            _timed_db_write,
-        )
+        while pending_meta_rows:
+            chunk = pending_meta_rows[:db_batch_size]
+            del pending_meta_rows[: len(chunk)]
+            _timed_db_write(db.save_video_meta_batch, len(chunk), chunk)
+        while pending_fp_rows:
+            chunk = pending_fp_rows[:db_batch_size]
+            del pending_fp_rows[: len(chunk)]
+            _timed_db_write(db.save_fingerprints_batch, len(chunk), chunk)
+        while pending_probe_error_rows:
+            chunk = pending_probe_error_rows[:db_batch_size]
+            del pending_probe_error_rows[: len(chunk)]
+            _timed_db_write(db.save_probe_errors_batch, len(chunk), chunk)
         last_pending_write_at = now
 
     def _queue_enum_item(item: object) -> None:
@@ -548,9 +591,9 @@ def run_scan(
                     _refresh_lane_state_locked(lane_id)
             _queue_enum_item(enum_sentinel)
 
-    def _drain_enum_queue() -> list[object]:
+    def _drain_enum_queue() -> list[VideoRecord | object]:
         nonlocal max_queue_depth
-        drained: list[object] = []
+        drained: list[VideoRecord | object] = []
         while True:
             try:
                 drained.append(enum_queue.get_nowait())
@@ -560,14 +603,14 @@ def run_scan(
             max_queue_depth = max(max_queue_depth, int(enum_queue.qsize()))
         return drained
 
-    def _process_discovered_batch(batch: list[object]) -> None:
+    def _process_discovered_batch(batch: list[VideoRecord]) -> None:
         nonlocal cached_files, prepared_files, total_analyze_files
         nonlocal discovered_files, discovered_bytes, last_discovered_batch_at
         if not batch:
             return
         upsert_payload: list[dict[str, object]] = []
         cache_payload: list[dict[str, object]] = []
-        valid: list[tuple[object, int, str, int, str]] = []
+        valid: list[tuple[VideoRecord, int, str, int, str]] = []
         for file in batch:
             lane = int(getattr(file, "parallel_lane", 0))
             source_root = str(getattr(file, "source_root", ""))
@@ -828,6 +871,8 @@ def run_scan(
                     made_progress = True
                 for queued in drained:
                     if queued is enum_sentinel:
+                        continue
+                    if not isinstance(queued, VideoRecord):
                         continue
                     if cancel_requested:
                         continue
