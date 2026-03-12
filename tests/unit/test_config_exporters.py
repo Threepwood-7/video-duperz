@@ -176,7 +176,6 @@ def test_settings_old_column_payloads_are_ignored(tmp_path: Path, monkeypatch) -
     path = settings_path()
     _set_qsettings_value(path, "results_table_column_widths", [80] * 18)
     _set_qsettings_value(path, "results_table_column_visibility", [False] * 18)
-    _set_qsettings_value(path, "files_table_column_widths", [90] * 19)
 
     loaded = load_settings()
     assert loaded.results_table_column_widths == []

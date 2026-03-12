@@ -27,7 +27,6 @@ from .scan_sets import (
     normalize_similarity_profile,
 )
 
-APP_DIR_NAME = SETTINGS_APP_NAME
 VIDEO_EXTENSION_PRESET_NAMES: tuple[str, str, str] = ("basic", "medium", "broad")
 DEFAULT_VIDEO_EXTENSION_PRESET = "medium"
 VIDEO_EXTENSION_PRESETS: dict[str, tuple[str, ...]] = {
