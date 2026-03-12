@@ -3,9 +3,10 @@ from __future__ import annotations
 import contextlib
 import shutil
 from pathlib import Path
+from typing import Callable, TypedDict, cast
 
 from PySide6.QtCore import Qt, QThreadPool
-from PySide6.QtGui import QAction, QActionGroup, QColor, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QColor, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -42,7 +43,14 @@ from ..config import (
 )
 from ..db import Database
 from ..exporters import export_scan
-from ..models import SavedScanProfilePayload, Settings, utc_now_iso
+from ..models import (
+    ProbeWorkerMode,
+    SavedScanProfilePayload,
+    ScanResult,
+    Settings,
+    SimilarityProfile,
+    utc_now_iso,
+)
 from ..scan_sets import (
     build_scan_set_key,
     normalize_extensions,
@@ -72,6 +80,61 @@ THUMBNAIL_SIZE_OPTIONS: tuple[tuple[str, str], ...] = (
     ("Large (160x90)", "160x90"),
 )
 MAX_DRIVE_WORKERS = 64
+
+
+class DeleteTarget(TypedDict):
+    row: int
+    file_id: int
+    group_db_id: int
+    path: str
+
+
+def _payload_dict(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    raw_map = cast("dict[object, object]", value)
+    normalized: dict[str, object] = {}
+    for key, raw in raw_map.items():
+        if isinstance(key, str | int | float | bool):
+            normalized[str(key)] = raw
+    return normalized
+
+
+def _payload_strings(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    raw_items = cast("list[object]", value)
+    return [text for item in raw_items if (text := str(item).strip())]
+
+
+def _metric_float(metrics: dict[str, object], key: str, default: float = 0.0) -> float:
+    value = metrics.get(key, default)
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return default
+    return default
+
+
+def _metric_int(metrics: dict[str, object], key: str, default: int = 0) -> int:
+    value = metrics.get(key, default)
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    return default
 
 
 class MainWindow(QMainWindow):
@@ -194,11 +257,7 @@ class MainWindow(QMainWindow):
             action = QAction(label, self)
             action.setCheckable(True)
             action.setChecked(True)
-            action.toggled.connect(
-                lambda checked, col=index: self._set_column_visibility_from_menu(
-                    col, checked
-                )
-            )
+            action.toggled.connect(self._column_toggle_slot(index))
             columns_menu.addAction(action)
             self._column_toggle_actions.append(action)
 
@@ -486,7 +545,9 @@ class MainWindow(QMainWindow):
             scan_roots=roots,
             recent_scan_roots=list(self._recent_roots),
             extensions=exts,
-            similarity_profile=self.profile_combo.currentText(),
+            similarity_profile=normalize_similarity_profile(
+                self.profile_combo.currentText()
+            ),
             max_workers=self.max_workers_spin.value(),
             preview_autoplay=self.settings.preview_autoplay,  # backward-compat only
             thumbnail_size=normalize_thumbnail_size(
@@ -503,8 +564,7 @@ class MainWindow(QMainWindow):
             saved_scan_profiles=self._normalized_saved_scan_profiles(),
             keep_rule="best_quality",
             drive_worker_overrides=drive_worker_overrides,
-            probe_worker_mode=self.probe_mode_combo.currentText().strip().lower()
-            or "balanced",
+            probe_worker_mode=self._current_probe_worker_mode(),
             scan_db_batch_size=self.settings.scan_db_batch_size,
             scan_db_flush_interval_ms=self.settings.scan_db_flush_interval_ms,
             scan_enum_queue_max=self.settings.scan_enum_queue_max,
@@ -589,18 +649,10 @@ class MainWindow(QMainWindow):
             cleaned_name = str(name).strip()
             if not cleaned_name:
                 continue
-            widths_raw = payload.get("widths", []) if isinstance(payload, dict) else []
-            visibility_raw = (
-                payload.get("visibility", []) if isinstance(payload, dict) else []
-            )
-            widths = (
-                [int(w) for w in widths_raw] if isinstance(widths_raw, list) else []
-            )
-            visibility = (
-                [bool(v) for v in visibility_raw]
-                if isinstance(visibility_raw, list)
-                else []
-            )
+            widths_raw = payload.get("widths", [])
+            visibility_raw = payload.get("visibility", [])
+            widths = [int(w) for w in widths_raw]
+            visibility = [bool(v) for v in visibility_raw]
             if len(widths) != len(self.results_view.column_labels()):
                 continue
             if len(visibility) != len(self.results_view.column_labels()):
@@ -683,20 +735,22 @@ class MainWindow(QMainWindow):
 
     def _apply_saved_view(self, name: str) -> None:
         payload = self._saved_column_views.get(name)
-        if not isinstance(payload, dict):
+        if payload is None:
             return
         widths_raw = payload.get("widths", [])
         visibility_raw = payload.get("visibility", [])
-        widths = [int(w) for w in widths_raw] if isinstance(widths_raw, list) else []
-        visibility = (
-            [bool(v) for v in visibility_raw]
-            if isinstance(visibility_raw, list)
-            else []
-        )
+        widths = [int(w) for w in widths_raw]
+        visibility = [bool(v) for v in visibility_raw]
         self.results_view.set_column_visibility(visibility)
         self.results_view.set_column_widths(widths)
         self._sync_column_toggle_actions()
         self.statusBar().showMessage(f"Applied view '{name}'.")
+
+    def _column_toggle_slot(self, column_index: int) -> Callable[[bool], None]:
+        def _toggle(checked: bool) -> None:
+            self._set_column_visibility_from_menu(column_index, checked)
+
+        return _toggle
 
     def _set_column_visibility_from_menu(
         self, column_index: int, checked: bool
@@ -898,6 +952,12 @@ class MainWindow(QMainWindow):
             return
         self._refresh_sources_physical_drive_view()
 
+    def _drive_worker_slot(self, volume_identity: str) -> Callable[[int], None]:
+        def _update(workers: int) -> None:
+            self._on_drive_worker_override_changed(volume_identity, workers)
+
+        return _update
+
     def _format_byte_count(self, value: int | None) -> str:
         if value is None:
             return "n/a"
@@ -967,12 +1027,7 @@ class MainWindow(QMainWindow):
                         spin.setRange(1, MAX_DRIVE_WORKERS)
                         spin.setValue(max(1, int(workers)))
                         spin.valueChanged.connect(
-                            lambda value, volume=drive.volume_identity: (
-                                self._on_drive_worker_override_changed(
-                                    volume,
-                                    value,
-                                )
-                            )
+                            self._drive_worker_slot(drive.volume_identity)
                         )
                         self.sources_drive_table.setCellWidget(row, 6, spin)
                     else:
@@ -1023,8 +1078,14 @@ class MainWindow(QMainWindow):
         ]
         return normalize_extensions([e for e in raw if e])
 
-    def _current_sources_profile(self) -> str:
+    def _current_sources_profile(self) -> SimilarityProfile:
         return normalize_similarity_profile(self.profile_combo.currentText())
+
+    def _current_probe_worker_mode(self) -> ProbeWorkerMode:
+        cleaned = self.probe_mode_combo.currentText().strip().lower()
+        if cleaned == "burst":
+            return "burst"
+        return "balanced"
 
     def _build_profile_payload_from_sources(self) -> SavedScanProfilePayload | None:
         roots = normalize_roots_for_display(self._current_sources_roots())
@@ -1202,20 +1263,27 @@ class MainWindow(QMainWindow):
             auto_header.setEnabled(False)
             self._saved_scans_menu.addAction(auto_header)
             for scan in auto_scans:
-                roots = normalize_roots_for_display(list(scan.get("roots", [])))
-                profile = normalize_similarity_profile(
-                    str(scan.get("profile", "balanced"))
+                scan_payload = _payload_dict(scan)
+                roots = normalize_roots_for_display(
+                    _payload_strings(scan_payload.get("roots", []))
                 )
-                extensions = normalize_extensions(list(scan.get("extensions", [])))
+                profile = normalize_similarity_profile(
+                    str(scan_payload.get("profile", "balanced"))
+                )
+                extensions = normalize_extensions(
+                    _payload_strings(scan_payload.get("extensions", []))
+                )
                 payload = SavedScanProfilePayload(
-                    scan_set_key=str(scan.get("scan_set_key", "")),
+                    scan_set_key=str(scan_payload.get("scan_set_key", "")),
                     roots=roots,
                     similarity_profile=profile,
                     extensions=extensions,
-                    updated_at=str(scan.get("created_at", "")),
+                    updated_at=str(scan_payload.get("created_at", "")),
                 )
-                scan_id = int(scan.get("scan_id", 0))
-                status_text = self._format_scan_status(str(scan.get("status", "")))
+                scan_id = _metric_int(scan_payload, "scan_id")
+                status_text = self._format_scan_status(
+                    str(scan_payload.get("status", ""))
+                )
                 label = f"Auto: {self._scan_root_summary(roots)} | {profile} | #{scan_id} | {status_text}"
                 action = QAction(label, self)
                 action.triggered.connect(
@@ -1415,7 +1483,7 @@ class MainWindow(QMainWindow):
             self.scan_worker.cancel()
             self.statusBar().showMessage("Cancelling scan...")
 
-    def _scan_finished(self, result) -> None:
+    def _scan_finished(self, result: ScanResult) -> None:
         self.scan_worker = None
         self._set_scan_tab_lock(False)
         self.scan_view.set_running(False)
@@ -1440,13 +1508,13 @@ class MainWindow(QMainWindow):
         self.results_view.load_groups(groups)
         self.results_view.set_scan_context_note("")
         self.tabs.setCurrentWidget(self.results_view)
-        metrics = getattr(result, "metrics", {}) or {}
-        flush_count = int(metrics.get("flush_count", 0))
-        max_queue_depth = int(metrics.get("max_queue_depth", 0))
+        metrics = _payload_dict(result.metrics)
+        flush_count = _metric_int(metrics, "flush_count")
+        max_queue_depth = _metric_int(metrics, "max_queue_depth")
         timing_summary = ""
-        stage_seconds = metrics.get("stage_seconds", {})
-        if isinstance(stage_seconds, dict):
-            matching_s = float(stage_seconds.get("matching", 0.0))
+        stage_seconds = _payload_dict(metrics.get("stage_seconds", {}))
+        if stage_seconds:
+            matching_s = _metric_float(stage_seconds, "matching")
             timing_summary = f", matching {matching_s:.2f}s"
         self.statusBar().showMessage(
             f"Scan {finished_scan_id} complete: {len(groups)} groups, {len(result.issues)} issues"
@@ -1471,7 +1539,7 @@ class MainWindow(QMainWindow):
                 return alt
             index += 1
 
-    def _handle_delete_requested(self, mode: str, targets: list[dict]) -> None:
+    def _handle_delete_requested(self, mode: str, targets: list[DeleteTarget]) -> None:
         if self.current_scan_id is None:
             QMessageBox.warning(self, "No Scan", "Run a scan first.")
             return
@@ -1533,7 +1601,7 @@ class MainWindow(QMainWindow):
             self, "Export Complete", f"CSV: {csv_path}\nJSON: {json_path}"
         )
 
-    def closeEvent(self, event) -> None:
+    def closeEvent(self, event: QCloseEvent) -> None:
         if not self._full_reset_requested:
             self._persist_settings()
         with contextlib.suppress(Exception):

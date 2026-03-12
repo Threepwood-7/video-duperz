@@ -26,6 +26,19 @@ class ExactMatchResult:
     errors: dict[int, str]
 
 
+def _coerce_int(value: int | object, default: int) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    return default
+
+
 def normalize_exact_sample_pair(
     sample_a_pct: int | object,
     sample_b_pct: int | object,
@@ -33,10 +46,7 @@ def normalize_exact_sample_pair(
     default_b: int = 78,
 ) -> tuple[int, int]:
     def _normalize_percent(value: int | object, default: int) -> int:
-        try:
-            parsed = int(value)
-        except (TypeError, ValueError):
-            parsed = default
+        parsed = _coerce_int(value, default)
         return max(0, min(100, parsed))
 
     a = _normalize_percent(sample_a_pct, default_a)

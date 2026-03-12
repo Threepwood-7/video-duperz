@@ -5,17 +5,17 @@ from collections import deque
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from PySide6.QtCore import QSize, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import (
     QBrush,
     QColor,
-    QFont,
     QKeySequence,
     QPainter,
     QPixmap,
     QShortcut,
+    QShowEvent,
 )
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -41,6 +41,40 @@ from .workers import ExactMatchGroupWorker, ThumbnailPairWorker
 
 if TYPE_CHECKING:
     from ..models import DuplicateGroup, DuplicateItem
+
+
+class DeleteTarget(TypedDict):
+    row: int
+    file_id: int
+    group_db_id: int
+    path: str
+
+
+def _payload_dict(value: Any) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    raw_map = cast("dict[object, object]", value)
+    normalized: dict[str, object] = {}
+    for key, raw in raw_map.items():
+        if isinstance(key, str | int | float | bool):
+            normalized[str(key)] = raw
+    return normalized
+
+
+def _coerce_int(value: object, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    return default
+
 
 RESULTS_HEADERS = [
     "Group ID",
@@ -139,6 +173,8 @@ class ResultsView(QWidget):
         self._thumbnail_w, self._thumbnail_h = thumbnail_dimensions(
             self._thumbnail_size_key
         )
+        self._frame_a_pct: int
+        self._frame_b_pct: int
         self._frame_a_pct, self._frame_b_pct = normalize_frame_pair(23, 77)
         self._thumbnail_serial = 0
         self._thumbnail_token = "rows-0"
@@ -237,7 +273,7 @@ class ResultsView(QWidget):
         layout.addWidget(self.filter_toolbar)
         layout.addWidget(self.results_table, stretch=1)
 
-    def showEvent(self, event) -> None:
+    def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
         QTimer.singleShot(0, self._schedule_visible_groups_for_compare)
 
@@ -343,10 +379,7 @@ class ResultsView(QWidget):
 
     @staticmethod
     def _normalize_identical_block_mib(value: object) -> int:
-        try:
-            parsed = int(value)
-        except (TypeError, ValueError):
-            return 1
+        parsed = _coerce_int(value, 1)
         return max(1, min(64, parsed))
 
     @staticmethod
@@ -354,10 +387,7 @@ class ResultsView(QWidget):
         a_value: object, b_value: object
     ) -> tuple[int, int]:
         def _normalize_percent(value: object, default: int) -> int:
-            try:
-                parsed = int(value)
-            except (TypeError, ValueError):
-                parsed = default
+            parsed = _coerce_int(value, default)
             return max(0, min(100, parsed))
 
         a = _normalize_percent(a_value, 23)
@@ -820,36 +850,33 @@ class ResultsView(QWidget):
             return
 
     def _on_group_compare_ready(self, payload: Any) -> None:
-        if not isinstance(payload, dict):
+        payload_map = _payload_dict(payload)
+        if not payload_map:
             return
-        worker_id = int(payload.get("worker_id", 0))
+        worker_id = _coerce_int(payload_map.get("worker_id", 0))
         self._group_compare_workers.pop(worker_id, None)
 
-        token = str(payload.get("token", ""))
+        token = str(payload_map.get("token", ""))
         if token != self._dataset_token:
             return
 
-        group_key = str(payload.get("group_key", ""))
-        raw_labels = payload.get("labels", {})
-        raw_errors = payload.get("errors", {})
+        group_key = str(payload_map.get("group_key", ""))
+        raw_labels = _payload_dict(payload_map.get("labels", {}))
+        raw_errors = _payload_dict(payload_map.get("errors", {}))
         labels: dict[int, str] = {}
         errors: dict[int, str] = {}
-        if isinstance(raw_labels, dict):
-            for raw_file_id, raw_label in raw_labels.items():
-                try:
-                    file_id = int(raw_file_id)
-                except (TypeError, ValueError):
-                    continue
-                labels[file_id] = str(raw_label or "")
-        if isinstance(raw_errors, dict):
-            for raw_file_id, raw_error in raw_errors.items():
-                try:
-                    file_id = int(raw_file_id)
-                except (TypeError, ValueError):
-                    continue
-                error_text = str(raw_error or "").strip()
-                if error_text:
-                    errors[file_id] = error_text
+        for raw_file_id, raw_label in raw_labels.items():
+            file_id = _coerce_int(raw_file_id, -1)
+            if file_id < 0:
+                continue
+            labels[file_id] = str(raw_label or "")
+        for raw_file_id, raw_error in raw_errors.items():
+            file_id = _coerce_int(raw_file_id, -1)
+            if file_id < 0:
+                continue
+            error_text = str(raw_error or "").strip()
+            if error_text:
+                errors[file_id] = error_text
 
         self._group_compare_cached_labels[group_key] = labels
         self._group_compare_cached_errors[group_key] = errors
@@ -859,20 +886,21 @@ class ResultsView(QWidget):
         self._start_next_group_compare()
 
     def _on_group_compare_error(self, payload: Any) -> None:
-        if not isinstance(payload, dict):
+        payload_map = _payload_dict(payload)
+        if not payload_map:
             return
-        worker_id = int(payload.get("worker_id", 0))
+        worker_id = _coerce_int(payload_map.get("worker_id", 0))
         self._group_compare_workers.pop(worker_id, None)
 
-        token = str(payload.get("token", ""))
+        token = str(payload_map.get("token", ""))
         if token != self._dataset_token:
             return
 
-        group_key = str(payload.get("group_key", ""))
+        group_key = str(payload_map.get("group_key", ""))
         self._group_compare_cached_labels[group_key] = {}
         self._group_compare_cached_errors[group_key] = {}
         self._group_compare_cached_group_error[group_key] = str(
-            payload.get("message", "")
+            payload_map.get("message", "")
         ).strip()
         self._group_compare_running_key = None
         self._apply_group_compare_result(group_key)
@@ -948,15 +976,16 @@ class ResultsView(QWidget):
         self._thread_pool.start(worker)
 
     def _on_thumbnail_ready(self, payload: Any) -> None:
-        if not isinstance(payload, dict):
+        payload_map = _payload_dict(payload)
+        if not payload_map:
             return
-        worker_id = int(payload.get("worker_id", 0))
+        worker_id = _coerce_int(payload_map.get("worker_id", 0))
         self._thumbnail_workers.pop(worker_id, None)
 
-        token = str(payload.get("token", ""))
+        token = str(payload_map.get("token", ""))
         if token != self._thumbnail_token:
             return
-        file_id = int(payload.get("file_id", 0))
+        file_id = _coerce_int(payload_map.get("file_id", 0))
         row = self._thumbnail_rows.get(file_id)
         if row is None or row < 0 or row >= self.results_table.rowCount():
             return
@@ -964,8 +993,8 @@ class ResultsView(QWidget):
         if item is None:
             return
 
-        cache_a = str(payload.get("cache_path_a", ""))
-        cache_b = str(payload.get("cache_path_b", ""))
+        cache_a = str(payload_map.get("cache_path_a", ""))
+        cache_b = str(payload_map.get("cache_path_b", ""))
         composed = self._compose_thumbnail_pair(cache_a, cache_b)
         if composed is None:
             self._set_thumbnail_text(row, "Error", "failed to load thumbnails")
@@ -977,19 +1006,20 @@ class ResultsView(QWidget):
         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
     def _on_thumbnail_error(self, payload: Any) -> None:
-        if not isinstance(payload, dict):
+        payload_map = _payload_dict(payload)
+        if not payload_map:
             return
-        worker_id = int(payload.get("worker_id", 0))
+        worker_id = _coerce_int(payload_map.get("worker_id", 0))
         self._thumbnail_workers.pop(worker_id, None)
 
-        token = str(payload.get("token", ""))
+        token = str(payload_map.get("token", ""))
         if token != self._thumbnail_token:
             return
-        file_id = int(payload.get("file_id", 0))
+        file_id = _coerce_int(payload_map.get("file_id", 0))
         row = self._thumbnail_rows.get(file_id)
         if row is None or row < 0 or row >= self.results_table.rowCount():
             return
-        self._set_thumbnail_text(row, "Error", str(payload.get("message", "")))
+        self._set_thumbnail_text(row, "Error", str(payload_map.get("message", "")))
 
     def _compose_thumbnail_pair(self, cache_a: str, cache_b: str) -> QPixmap | None:
         pix_a = QPixmap(cache_a)
@@ -1045,7 +1075,7 @@ class ResultsView(QWidget):
             if item is None:
                 continue
             item.setBackground(brush)
-            font = item.font() if item.font() is not None else QFont()
+            font = item.font()
             font.setBold(bold)
             item.setFont(font)
 
@@ -1187,7 +1217,7 @@ class ResultsView(QWidget):
         self._emit_delete_request(mode="permanent")
 
     def _emit_delete_request(self, mode: str) -> None:
-        targets: list[dict[str, Any]] = []
+        targets: list[DeleteTarget] = []
         for row in self._target_rows_for_delete():
             meta = self._row_meta(row)
             if meta is None:

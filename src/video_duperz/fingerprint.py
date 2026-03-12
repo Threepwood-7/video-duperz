@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from statistics import median
+from typing import cast
 
 import numpy as np
 
@@ -42,9 +43,10 @@ def _resize_nearest(gray: np.ndarray, width: int, height: int) -> np.ndarray:
     src_h, src_w = gray.shape[:2]
     if src_h == 0 or src_w == 0:
         return np.zeros((height, width), dtype=np.uint8)
-    y_idx = (np.linspace(0, src_h - 1, num=height)).astype(int)
-    x_idx = (np.linspace(0, src_w - 1, num=width)).astype(int)
-    return gray[np.ix_(y_idx, x_idx)]
+    y_idx = cast("np.ndarray", np.linspace(0, src_h - 1, num=height)).astype(int)
+    x_idx = cast("np.ndarray", np.linspace(0, src_w - 1, num=width)).astype(int)
+    indexer = cast("tuple[np.ndarray, np.ndarray]", np.ix_(y_idx, x_idx))
+    return gray[indexer]
 
 
 def dhash_from_gray(gray_frame: np.ndarray) -> int:
@@ -87,7 +89,7 @@ def compute_video_hashes(path: str, duration_s: float) -> list[int]:
         for ts in timestamps:
             cap.set(cv2.CAP_PROP_POS_MSEC, max(0.0, ts * 1000.0))
             ok, frame = cap.read()
-            if not ok or frame is None:
+            if not ok:
                 hashes.append(0)
                 continue
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
