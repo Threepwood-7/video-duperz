@@ -121,6 +121,7 @@ ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*" = ["S101", "S105", "S106"]
+"src/video_duperz/pipeline.py" = ["C901"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["video_duperz"]
@@ -128,8 +129,17 @@ known-first-party = ["video_duperz"]
 [tool.ruff.lint.pep8-naming]
 ignore-names = [
   "activateWindow",
+  "angleDelta",
   "closeEvent",
+  "changeEvent",
+  "columnCount",
+  "dragEnterEvent",
+  "drawBackground",
+  "drawForeground",
+  "drawInlineImage",
+  "dropEvent",
   "eventFilter",
+  "filePath",
   "filterAcceptsRow",
   "headerData",
   "highlightBlock",
@@ -137,14 +147,33 @@ ignore-names = [
   "isRunning",
   "keyPressEvent",
   "lessThan",
+  "leaveEvent",
+  "mouseDoubleClickEvent",
+  "mouseMoveEvent",
   "mouseReleaseEvent",
+  "moveEvent",
+  "nameFilters",
   "paintEvent",
+  "rowCount",
   "requestInterruption",
+  "resizeEvent",
+  "setFilter",
   "setApplicationDisplayName",
   "setApplicationName",
+  "setNameFilterDisables",
+  "setNameFilters",
   "setOrganizationName",
+  "setObjectName",
+  "setPageSize",
+  "setProperty",
+  "setReadOnly",
+  "setRootPath",
+  "setText",
+  "showPage",
   "showEvent",
   "showNormal",
+  "stepBy",
+  "wheelEvent",
   "windowState",
 ]
 

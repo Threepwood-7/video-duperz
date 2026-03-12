@@ -120,7 +120,7 @@ def _analyze_file(path: str, cached_meta) -> _AnalyzeOutput:
     )
 
 
-def run_scan(  # noqa: C901 - scan pipeline coordinates discovery, hashing, DB, and progress
+def run_scan(
     db: Database,
     roots: list[str],
     extensions: list[str],
