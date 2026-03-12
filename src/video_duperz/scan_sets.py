@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from .models import SimilarityProfile
 
 
-def normalize_similarity_profile(value: str) -> str:
+def normalize_similarity_profile(value: str) -> SimilarityProfile:
     text = str(value).strip().lower()
     if text in {"balanced", "conservative", "aggressive"}:
-        return text
+        return cast("SimilarityProfile", text)
     return "balanced"
 
 

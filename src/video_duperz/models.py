@@ -7,6 +7,7 @@ from typing import Any, Literal
 ActionKind = Literal["keep", "rename", "delete"]
 SimilarityProfile = Literal["balanced", "conservative", "aggressive"]
 KeepRule = Literal["best_quality"]
+ProbeWorkerMode = Literal["balanced", "burst"]
 THUMBNAIL_SIZE_CHOICES = ("80x45", "96x54", "128x72", "160x90")
 DEFAULT_THUMBNAIL_SIZE = "96x54"
 
@@ -19,7 +20,7 @@ def utc_now_iso() -> str:
 class SavedScanProfilePayload:
     scan_set_key: str
     roots: list[str]
-    similarity_profile: str
+    similarity_profile: SimilarityProfile
     extensions: list[str]
     updated_at: str = field(default_factory=utc_now_iso)
 
@@ -48,7 +49,7 @@ class Settings:
     )
     keep_rule: KeepRule = "best_quality"
     drive_worker_overrides: dict[str, int] = field(default_factory=dict)
-    probe_worker_mode: Literal["balanced", "burst"] = "balanced"
+    probe_worker_mode: ProbeWorkerMode = "balanced"
     scan_db_batch_size: int = 512
     scan_db_flush_interval_ms: int = 200
     scan_enum_queue_max: int = 4096

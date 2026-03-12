@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import cast
 
 from threep_commons.paths import configure_qsettings
 
@@ -18,6 +19,47 @@ from .pipeline import run_scan
 from .probe import ProbeError, ensure_ffprobe_available
 
 
+def _metrics_map(value: object) -> dict[str, object]:
+    if isinstance(value, dict):
+        normalized: dict[str, object] = {}
+        raw_map = cast("dict[object, object]", value)
+        for key, raw in raw_map.items():
+            if isinstance(key, str | int | float | bool):
+                normalized[str(key)] = raw
+        return normalized
+    return {}
+
+
+def _metric_float(metrics: dict[str, object], key: str, default: float = 0.0) -> float:
+    value = metrics.get(key, default)
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return default
+    return default
+
+
+def _metric_int(metrics: dict[str, object], key: str, default: int = 0) -> int:
+    value = metrics.get(key, default)
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    return default
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="video-duperz", description="Duplicate video finder"
@@ -27,7 +69,9 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="config_dir",
         required=False,
         default=None,
-        help="Override QSettings INI root directory (takes precedence over CONFIG_DIR).",
+        help=(
+            "Override QSettings INI root directory (takes precedence over CONFIG_DIR)."
+        ),
     )
     parser.add_argument(
         "--data-dir",
@@ -158,22 +202,22 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         print(f"fingerprinted_files={result.fingerprinted_files}")
         print(f"duplicate_groups={len(result.groups)}")
         print(f"issues={len(result.issues)}")
-        metrics = result.metrics or {}
-        stage_seconds = metrics.get("stage_seconds", {})
-        if isinstance(stage_seconds, dict):
-            enumerate_s = float(stage_seconds.get("enumerate", 0.0))
-            db_write_s = float(stage_seconds.get("db_write", 0.0))
-            probe_s = float(stage_seconds.get("probe", 0.0))
-            fingerprint_s = float(stage_seconds.get("fingerprint", 0.0))
-            matching_s = float(stage_seconds.get("matching", 0.0))
+        metrics = _metrics_map(result.metrics)
+        stage_seconds = _metrics_map(metrics.get("stage_seconds", {}))
+        if stage_seconds:
+            enumerate_s = _metric_float(stage_seconds, "enumerate")
+            db_write_s = _metric_float(stage_seconds, "db_write")
+            probe_s = _metric_float(stage_seconds, "probe")
+            fingerprint_s = _metric_float(stage_seconds, "fingerprint")
+            matching_s = _metric_float(stage_seconds, "matching")
             print(
                 "timings_s="
                 f"enumerate:{enumerate_s:.3f},db_write:{db_write_s:.3f},probe:{probe_s:.3f},"
                 f"fingerprint:{fingerprint_s:.3f},matching:{matching_s:.3f}"
             )
-        print(f"flush_count={int(metrics.get('flush_count', 0))}")
-        print(f"avg_rows_per_flush={float(metrics.get('avg_rows_per_flush', 0.0)):.2f}")
-        print(f"max_queue_depth={int(metrics.get('max_queue_depth', 0))}")
+        print(f"flush_count={_metric_int(metrics, 'flush_count')}")
+        print(f"avg_rows_per_flush={_metric_float(metrics, 'avg_rows_per_flush'):.2f}")
+        print(f"max_queue_depth={_metric_int(metrics, 'max_queue_depth')}")
     return 0
 
 

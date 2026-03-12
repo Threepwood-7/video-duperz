@@ -184,9 +184,12 @@ class ExactMatchGroupWorker(QRunnable):
         try:
             entries: list[ExactMatchFile] = []
             for raw in self._files:
-                file_id = int(raw.get("file_id", 0))
-                path = str(raw.get("path", ""))
-                size = int(raw.get("size", 0))
+                file_id_raw = raw.get("file_id", 0)
+                path_raw = raw.get("path", "")
+                size_raw = raw.get("size", 0)
+                file_id = int(file_id_raw) if isinstance(file_id_raw, int | str) else 0
+                path = str(path_raw).strip()
+                size = int(size_raw) if isinstance(size_raw, int | str) else 0
                 if file_id <= 0 or not path:
                     continue
                 entries.append(

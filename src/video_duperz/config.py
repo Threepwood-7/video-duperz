@@ -4,6 +4,7 @@ import json
 import os
 from dataclasses import asdict
 from pathlib import Path
+from typing import cast
 
 from PySide6.QtCore import QSettings
 from threep_commons.paths import resolve_app_data_dir
@@ -13,6 +14,8 @@ from .constants import APP_IDENTITY, SETTINGS_APP_NAME
 from .models import (
     DEFAULT_THUMBNAIL_SIZE,
     THUMBNAIL_SIZE_CHOICES,
+    KeepRule,
+    ProbeWorkerMode,
     SavedScanProfilePayload,
     Settings,
     utc_now_iso,
@@ -121,18 +124,53 @@ DEFAULT_SCAN_PROGRESS_EMIT_INTERVAL_MS = 200
 DEFAULT_SCAN_PROGRESS_EMIT_EVERY_FILES = 100
 
 
+def _object_list(value: object) -> list[object]:
+    if isinstance(value, list):
+        return cast("list[object]", value)
+    return []
+
+
+def _object_dict(value: object) -> dict[object, object]:
+    if isinstance(value, dict):
+        return cast("dict[object, object]", value)
+    return {}
+
+
+def _string_list(value: object) -> list[str]:
+    normalized: list[str] = []
+    for item in _object_list(value):
+        text = str(item).strip()
+        if text:
+            normalized.append(text)
+    return normalized
+
+
+def _normalize_keep_rule(value: object, default: KeepRule = "best_quality") -> KeepRule:
+    if str(value).strip().lower() == "best_quality":
+        return "best_quality"
+    return default
+
+
+def _coerce_int(value: object, default: int) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    return default
+
+
 def _normalize_column_widths(value: object, expected_count: int) -> list[int]:
-    if not isinstance(value, list):
-        return []
-    raw_values = list(value)
+    raw_values = _object_list(value)
     if len(raw_values) != expected_count:
         return []
     widths: list[int] = []
     for raw in raw_values:
-        try:
-            width = int(raw)
-        except (TypeError, ValueError):
-            return []
+        width = _coerce_int(raw, -1)
         if width < 0:
             return []
         widths.append(width)
@@ -140,9 +178,7 @@ def _normalize_column_widths(value: object, expected_count: int) -> list[int]:
 
 
 def _normalize_column_visibility(value: object, expected_count: int) -> list[bool]:
-    if not isinstance(value, list):
-        return []
-    raw_values = list(value)
+    raw_values = _object_list(value)
     if len(raw_values) != expected_count:
         return []
     visibility: list[bool] = []
@@ -157,18 +193,17 @@ def _normalize_column_visibility(value: object, expected_count: int) -> list[boo
 def _normalize_saved_column_views(
     value: object, expected_count: int
 ) -> dict[str, dict[str, list[int] | list[bool]]]:
-    if not isinstance(value, dict):
-        return {}
     normalized: dict[str, dict[str, list[int] | list[bool]]] = {}
-    for raw_name, raw_payload in value.items():
+    for raw_name, raw_payload in _object_dict(value).items():
         name = str(raw_name).strip()
         if not name or len(name) > 80:
             continue
-        if not isinstance(raw_payload, dict):
+        payload_map = _object_dict(raw_payload)
+        if not payload_map:
             continue
-        widths = _normalize_column_widths(raw_payload.get("widths"), expected_count)
+        widths = _normalize_column_widths(payload_map.get("widths"), expected_count)
         visibility = _normalize_column_visibility(
-            raw_payload.get("visibility"), expected_count
+            payload_map.get("visibility"), expected_count
         )
         if not widths or not visibility:
             continue
@@ -177,14 +212,9 @@ def _normalize_saved_column_views(
 
 
 def _normalize_recent_roots(value: object, limit: int = MAX_RECENT_ROOTS) -> list[str]:
-    if not isinstance(value, list):
-        return []
     seen: set[str] = set()
     normalized: list[str] = []
-    for raw in value:
-        text = str(raw).strip()
-        if not text:
-            continue
+    for text in _string_list(value):
         key = text.casefold()
         if key in seen:
             continue
@@ -196,34 +226,31 @@ def _normalize_recent_roots(value: object, limit: int = MAX_RECENT_ROOTS) -> lis
 
 
 def _normalize_saved_scan_profiles(value: object) -> dict[str, SavedScanProfilePayload]:
-    if not isinstance(value, dict):
-        return {}
     normalized: dict[str, SavedScanProfilePayload] = {}
-    for raw_name, raw_payload in value.items():
+    for raw_name, raw_payload in _object_dict(value).items():
         name = str(raw_name).strip()
         if not name or len(name) > 80:
             continue
-        if not isinstance(raw_payload, dict):
+        payload_map = _object_dict(raw_payload)
+        if not payload_map:
             continue
-        roots_raw = raw_payload.get("roots", [])
-        if not isinstance(roots_raw, list):
+        roots_raw = _string_list(payload_map.get("roots", []))
+        if not roots_raw:
             continue
         roots = normalize_roots_for_display(roots_raw)
         if not roots:
             continue
         profile = normalize_similarity_profile(
-            str(raw_payload.get("similarity_profile", "balanced"))
+            str(payload_map.get("similarity_profile", "balanced"))
         )
-        ext_raw = raw_payload.get("extensions", [])
-        if not isinstance(ext_raw, list):
-            ext_raw = []
+        ext_raw = _string_list(payload_map.get("extensions", []))
         extensions = normalize_extensions(ext_raw)
-        scan_set_key = str(raw_payload.get("scan_set_key", "")).strip()
+        scan_set_key = str(payload_map.get("scan_set_key", "")).strip()
         if not scan_set_key:
             scan_set_key = build_scan_set_key(
                 roots=roots, similarity_profile=profile, extensions=extensions
             )
-        updated_at = str(raw_payload.get("updated_at", "")).strip() or utc_now_iso()
+        updated_at = str(payload_map.get("updated_at", "")).strip() or utc_now_iso()
         normalized[name] = SavedScanProfilePayload(
             scan_set_key=scan_set_key,
             roots=roots,
@@ -237,10 +264,7 @@ def _normalize_saved_scan_profiles(value: object) -> dict[str, SavedScanProfileP
 
 
 def _normalize_percent(value: object, default: int) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return default
+    parsed = _coerce_int(value, default)
     return max(0, min(100, parsed))
 
 
@@ -255,10 +279,7 @@ def _normalize_frame_pair(
 
 
 def _normalize_identical_block_mib(value: object, default: int = 1) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        parsed = int(default)
+    parsed = _coerce_int(value, default)
     return max(1, min(64, parsed))
 
 
@@ -280,37 +301,33 @@ def _normalize_identical_sample_pair(
 def _normalize_drive_worker_overrides(
     value: object, max_workers: int = MAX_DRIVE_WORKERS
 ) -> dict[str, int]:
-    if not isinstance(value, dict):
-        return {}
     normalized: dict[str, int] = {}
     limit = max(1, int(max_workers))
-    for raw_key, raw_value in value.items():
+    for raw_key, raw_value in _object_dict(value).items():
         key = str(raw_key).strip()
         if not key:
             continue
-        try:
-            workers = int(raw_value)
-        except (TypeError, ValueError):
+        workers = _coerce_int(raw_value, 0)
+        if workers <= 0:
             continue
         normalized[key] = max(1, min(limit, workers))
     return normalized
 
 
-def _normalize_probe_worker_mode(value: object, default: str = "balanced") -> str:
+def _normalize_probe_worker_mode(
+    value: object, default: ProbeWorkerMode = "balanced"
+) -> ProbeWorkerMode:
     text = str(value or "").strip().lower()
     if text in PROBE_WORKER_MODES:
-        return text
+        return cast("ProbeWorkerMode", text)
     return default
 
 
 def _normalize_int_range(
     value: object, default: int, minimum: int, maximum: int
 ) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        parsed = int(default)
-    return max(int(minimum), min(int(maximum), parsed))
+    parsed = _coerce_int(value, default)
+    return max(minimum, min(maximum, parsed))
 
 
 def default_max_workers() -> int:
@@ -341,8 +358,10 @@ def _settings_store(path: Path | None = None) -> QSettingsValueStore:
 def _decode_json_value(value: object, fallback: object) -> object:
     if value is None:
         return fallback
-    if isinstance(value, (list, dict)):
-        return value
+    if isinstance(value, list):
+        return cast("list[object]", value)
+    if isinstance(value, dict):
+        return cast("dict[object, object]", value)
     text = str(value).strip()
     if not text:
         return fallback
@@ -454,21 +473,21 @@ def _settings_from_raw(raw: dict[str, object], defaults: Settings) -> Settings:
         defaults.identical_sample_b_pct,
     )
     settings = Settings(
-        scan_roots=list(raw.get("scan_roots", defaults.scan_roots)),
+        scan_roots=_string_list(raw.get("scan_roots", defaults.scan_roots)),
         recent_scan_roots=_normalize_recent_roots(
             raw.get("recent_scan_roots", defaults.recent_scan_roots)
         ),
-        extensions=list(raw.get("extensions", defaults.extensions)),
-        similarity_profile=str(
-            raw.get("similarity_profile", defaults.similarity_profile)
+        extensions=_string_list(raw.get("extensions", defaults.extensions)),
+        similarity_profile=normalize_similarity_profile(
+            str(raw.get("similarity_profile", defaults.similarity_profile))
         ),
-        max_workers=int(raw.get("max_workers", defaults.max_workers)),
+        max_workers=_coerce_int(raw.get("max_workers", defaults.max_workers), 0),
         preview_autoplay=_coerce_bool(
             raw.get("preview_autoplay", defaults.preview_autoplay),
             defaults.preview_autoplay,
         ),
         thumbnail_size=normalize_thumbnail_size(
-            raw.get("thumbnail_size", defaults.thumbnail_size)
+            str(raw.get("thumbnail_size", defaults.thumbnail_size))
         ),
         thumbnail_frame_a_pct=frame_a,
         thumbnail_frame_b_pct=frame_b,
@@ -493,7 +512,7 @@ def _settings_from_raw(raw: dict[str, object], defaults: Settings) -> Settings:
         saved_scan_profiles=_normalize_saved_scan_profiles(
             raw.get("saved_scan_profiles", {})
         ),
-        keep_rule=str(raw.get("keep_rule", defaults.keep_rule)),
+        keep_rule=_normalize_keep_rule(raw.get("keep_rule", defaults.keep_rule)),
         drive_worker_overrides=_normalize_drive_worker_overrides(
             raw.get("drive_worker_overrides", defaults.drive_worker_overrides),
         ),
