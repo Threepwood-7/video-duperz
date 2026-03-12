@@ -1,4 +1,4 @@
-"""Import-level smoke tests for the package."""
+"""Tests for video_duperz."""
 
 import importlib
 

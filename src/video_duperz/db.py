@@ -62,7 +62,7 @@ class Database:
     def __enter__(self) -> Database:
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(self, _exc_type: object, exc: object, _tb: object) -> None:
         self.close()
 
     def _apply_scan_pragmas(self) -> None:
