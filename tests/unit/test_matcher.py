@@ -4,7 +4,9 @@ from video_duperz.matcher import build_duplicate_groups, find_duplicate_edges
 from video_duperz.models import MatchItem
 
 
-def _item(file_id: int, path: str, hashes: list[int], duration: float = 10.0) -> MatchItem:
+def _item(
+    file_id: int, path: str, hashes: list[int], duration: float = 10.0
+) -> MatchItem:
     return MatchItem(
         file_id=file_id,
         path=path,
@@ -36,7 +38,9 @@ def test_find_duplicate_edges_balanced() -> None:
         _item(3, "c.mp4", far),
     ]
     edges, stats = find_duplicate_edges(items, profile="balanced")
-    pairs = {(e.file_a, e.file_b) for e in edges} | {(e.file_b, e.file_a) for e in edges}
+    pairs = {(e.file_a, e.file_b) for e in edges} | {
+        (e.file_b, e.file_a) for e in edges
+    }
     assert (1, 2) in pairs
     assert (1, 3) not in pairs
     assert stats.accepted_pairs >= 1

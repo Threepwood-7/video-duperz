@@ -73,7 +73,9 @@ def _is_candidate(a: MatchItem, b: MatchItem) -> bool:
     return ratio_delta <= 0.2
 
 
-def find_duplicate_edges(items: list[MatchItem], profile: str = "balanced") -> tuple[list[DuplicateEdge], MatchStats]:
+def find_duplicate_edges(
+    items: list[MatchItem], profile: str = "balanced"
+) -> tuple[list[DuplicateEdge], MatchStats]:
     threshold = PROFILE_THRESHOLD.get(profile, PROFILE_THRESHOLD["balanced"])
     buckets: dict[tuple[int, float, int, float], list[MatchItem]] = defaultdict(list)
     for item in items:
@@ -102,7 +104,11 @@ def find_duplicate_edges(items: list[MatchItem], profile: str = "balanced") -> t
             stats.full_distance_pairs += 1
             distance = normalized_median_distance(a.hashes, b.hashes)
             if distance <= threshold:
-                edges.append(DuplicateEdge(file_a=a.file_id, file_b=b.file_id, score=1.0 - distance))
+                edges.append(
+                    DuplicateEdge(
+                        file_a=a.file_id, file_b=b.file_id, score=1.0 - distance
+                    )
+                )
                 stats.accepted_pairs += 1
     return edges, stats
 
@@ -126,7 +132,9 @@ class _UnionFind:
             self.parent[rb] = ra
 
 
-def build_duplicate_groups(items: list[MatchItem], edges: list[DuplicateEdge], profile: str) -> list[DuplicateGroup]:
+def build_duplicate_groups(
+    items: list[MatchItem], edges: list[DuplicateEdge], profile: str
+) -> list[DuplicateGroup]:
     by_id = {i.file_id: i for i in items}
     uf = _UnionFind()
     for edge in edges:

@@ -100,9 +100,17 @@ def test_main_window_launches_with_new_results_table(tmp_path: Path) -> None:
         assert window.add_recent_root_btn.text() == "Add Recent Folder"
         assert window.results_view.results_table.columnCount() == 19
         assert window.results_view.results_table.horizontalHeaderItem(2).text() == "="
-        assert window.results_view.results_table.horizontalHeaderItem(3).text() == "Thumbnail"
-        assert window.results_view.results_table.horizontalHeaderItem(9).text() == "Audio Codec"
-        assert window.results_view.results_table.horizontalHeaderItem(13).text() == "HDR"
+        assert (
+            window.results_view.results_table.horizontalHeaderItem(3).text()
+            == "Thumbnail"
+        )
+        assert (
+            window.results_view.results_table.horizontalHeaderItem(9).text()
+            == "Audio Codec"
+        )
+        assert (
+            window.results_view.results_table.horizontalHeaderItem(13).text() == "HDR"
+        )
 
         group = DuplicateGroup(
             scan_id=1,
@@ -188,7 +196,9 @@ def test_sources_root_buttons_labels_order_and_state(tmp_path: Path) -> None:
         window.close()
 
 
-def test_recent_folder_history_button_and_persistence(tmp_path: Path, monkeypatch) -> None:
+def test_recent_folder_history_button_and_persistence(
+    tmp_path: Path, monkeypatch
+) -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
     monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
@@ -209,12 +219,17 @@ def test_recent_folder_history_button_and_persistence(tmp_path: Path, monkeypatc
 
         window._add_recent_root_selected("D:/Videos")
         app.processEvents()
-        roots = [window.roots_list.item(i).text() for i in range(window.roots_list.count())]
+        roots = [
+            window.roots_list.item(i).text() for i in range(window.roots_list.count())
+        ]
         assert str(Path("D:/Videos")) in roots
         window.close()
 
     loaded = load_settings()
-    assert loaded.recent_scan_roots[:2] == [str(Path("D:/Videos")), str(Path("E:/Archive"))]
+    assert loaded.recent_scan_roots[:2] == [
+        str(Path("D:/Videos")),
+        str(Path("E:/Archive")),
+    ]
 
 
 def test_results_column_widths_persist(tmp_path: Path, monkeypatch) -> None:
@@ -303,8 +318,12 @@ def test_group_formatting_and_keep_strategy(tmp_path: Path) -> None:
         assert window.results_view.results_table.item(0, 0).font().bold()
         assert window.results_view.results_table.item(1, 0).font().bold() is False
 
-        color_a = window.results_view.results_table.item(0, 0).background().color().name()
-        color_b = window.results_view.results_table.item(2, 0).background().color().name()
+        color_a = (
+            window.results_view.results_table.item(0, 0).background().color().name()
+        )
+        color_b = (
+            window.results_view.results_table.item(2, 0).background().color().name()
+        )
         assert color_a != color_b
 
         window.results_view.apply_keep_strategy("larger")
@@ -426,12 +445,18 @@ def test_view_columns_menu_toggle_and_saved_view(tmp_path: Path, monkeypatch) ->
         window.results_view.load_groups([group])
         app.processEvents()
 
-        assert len(window._column_toggle_actions) == window.results_view.results_table.columnCount()
+        assert (
+            len(window._column_toggle_actions)
+            == window.results_view.results_table.columnCount()
+        )
         window._column_toggle_actions[18].setChecked(False)
         app.processEvents()
         assert window.results_view.results_table.isColumnHidden(18)
 
-        monkeypatch.setattr("video_duperz.ui.main_window.QInputDialog.getText", lambda *a, **k: ("Compact", True))
+        monkeypatch.setattr(
+            "video_duperz.ui.main_window.QInputDialog.getText",
+            lambda *a, **k: ("Compact", True),
+        )
         window._save_current_view()
         assert "Compact" in window._saved_column_views
 
@@ -489,9 +514,33 @@ def test_view_sort_menu_and_results_filters(tmp_path: Path) -> None:
             profile="balanced",
             created_at="now",
             items=[
-                _dup_item(13, str(tmp_path / "beta" / "beta_keep_1.mp4"), 640, 360, 1200, 0.97, size=90),
-                _dup_item(14, str(tmp_path / "beta" / "beta_keep_2.mp4"), 640, 360, 1100, 0.96, size=80),
-                _dup_item(15, str(tmp_path / "beta" / "beta_skip_3.mp4"), 640, 360, 1000, 0.95, size=70),
+                _dup_item(
+                    13,
+                    str(tmp_path / "beta" / "beta_keep_1.mp4"),
+                    640,
+                    360,
+                    1200,
+                    0.97,
+                    size=90,
+                ),
+                _dup_item(
+                    14,
+                    str(tmp_path / "beta" / "beta_keep_2.mp4"),
+                    640,
+                    360,
+                    1100,
+                    0.96,
+                    size=80,
+                ),
+                _dup_item(
+                    15,
+                    str(tmp_path / "beta" / "beta_skip_3.mp4"),
+                    640,
+                    360,
+                    1000,
+                    0.95,
+                    size=70,
+                ),
             ],
             total_size_bytes=240,
             group_id=43,
@@ -501,8 +550,24 @@ def test_view_sort_menu_and_results_filters(tmp_path: Path) -> None:
             profile="balanced",
             created_at="now",
             items=[
-                _dup_item(16, str(tmp_path / "gamma" / "gamma_skip_huge.mp4"), 800, 450, 1500, 0.94, size=300),
-                _dup_item(17, str(tmp_path / "gamma" / "gamma_keep_tiny.mp4"), 800, 450, 1400, 0.93, size=20),
+                _dup_item(
+                    16,
+                    str(tmp_path / "gamma" / "gamma_skip_huge.mp4"),
+                    800,
+                    450,
+                    1500,
+                    0.94,
+                    size=300,
+                ),
+                _dup_item(
+                    17,
+                    str(tmp_path / "gamma" / "gamma_keep_tiny.mp4"),
+                    800,
+                    450,
+                    1400,
+                    0.93,
+                    size=20,
+                ),
             ],
             total_size_bytes=320,
             group_id=44,
@@ -534,7 +599,8 @@ def test_view_sort_menu_and_results_filters(tmp_path: Path) -> None:
             if window.results_view.results_table.item(row, 0).text() == first_group
         ]
         first_group_sizes = [
-            int(window.results_view.results_table.item(row, 5).text().replace(",", "")) for row in first_group_rows
+            int(window.results_view.results_table.item(row, 5).text().replace(",", ""))
+            for row in first_group_rows
         ]
         assert first_group_sizes == sorted(first_group_sizes, reverse=True)
 
@@ -542,7 +608,8 @@ def test_view_sort_menu_and_results_filters(tmp_path: Path) -> None:
         app.processEvents()
         assert window.results_view.results_table.rowCount() == 4
         assert all(
-            "keep" in Path(window.results_view.results_table.item(row, 18).text()).name.lower()
+            "keep"
+            in Path(window.results_view.results_table.item(row, 18).text()).name.lower()
             for row in range(window.results_view.results_table.rowCount())
         )
 
@@ -550,7 +617,8 @@ def test_view_sort_menu_and_results_filters(tmp_path: Path) -> None:
         app.processEvents()
         assert window.results_view.results_table.rowCount() == 3
         assert all(
-            "gamma" not in window.results_view.results_table.item(row, 18).text().lower()
+            "gamma"
+            not in window.results_view.results_table.item(row, 18).text().lower()
             for row in range(window.results_view.results_table.rowCount())
         )
 
@@ -622,9 +690,33 @@ def test_saved_scan_profiles_save_load_and_delete(tmp_path: Path, monkeypatch) -
                 is_hdr=False,
             ),
         )
-        group_id = db.insert_duplicate_group(scan_id=scan_id, profile="balanced", total_size_bytes=223)
-        db.insert_duplicate_item(group_id, _dup_item(file_a, str(tmp_path / "library" / "a.mp4"), 1920, 1080, 1000, 1.0, size=111))
-        db.insert_duplicate_item(group_id, _dup_item(file_b, str(tmp_path / "library" / "b.mp4"), 1920, 1080, 900, 0.99, size=112))
+        group_id = db.insert_duplicate_group(
+            scan_id=scan_id, profile="balanced", total_size_bytes=223
+        )
+        db.insert_duplicate_item(
+            group_id,
+            _dup_item(
+                file_a,
+                str(tmp_path / "library" / "a.mp4"),
+                1920,
+                1080,
+                1000,
+                1.0,
+                size=111,
+            ),
+        )
+        db.insert_duplicate_item(
+            group_id,
+            _dup_item(
+                file_b,
+                str(tmp_path / "library" / "b.mp4"),
+                1920,
+                1080,
+                900,
+                0.99,
+                size=112,
+            ),
+        )
         db.complete_scan(scan_id, status="done")
 
         settings = default_settings()
@@ -638,7 +730,10 @@ def test_saved_scan_profiles_save_load_and_delete(tmp_path: Path, monkeypatch) -
         assert window.save_scan_set_btn.text() == "Save Scan Set"
         assert window.load_saved_scan_btn.text() == "Load Saved Scan"
 
-        monkeypatch.setattr("video_duperz.ui.main_window.QInputDialog.getText", lambda *a, **k: ("My Library", True))
+        monkeypatch.setattr(
+            "video_duperz.ui.main_window.QInputDialog.getText",
+            lambda *a, **k: ("My Library", True),
+        )
         window._save_current_scan_set_as()
         app.processEvents()
         assert "My Library" in window._saved_scan_profiles
@@ -649,18 +744,29 @@ def test_saved_scan_profiles_save_load_and_delete(tmp_path: Path, monkeypatch) -
         assert window.current_scan_id == scan_id
         assert window.tabs.currentWidget() == window.results_view
         assert window.results_view.results_table.rowCount() == 2
-        roots_in_widget = [window.roots_list.item(i).text() for i in range(window.roots_list.count())]
+        roots_in_widget = [
+            window.roots_list.item(i).text() for i in range(window.roots_list.count())
+        ]
         assert roots_in_widget == roots
         assert window.profile_combo.currentText() == "balanced"
         assert window.extensions_edit.text() == "mp4"
-        assert "filesystem may have changed" in window.results_view.info_label.text().lower()
+        assert (
+            "filesystem may have changed"
+            in window.results_view.info_label.text().lower()
+        )
 
         window._refresh_saved_scans_menu()
         action_texts = [action.text() for action in window._saved_scans_menu.actions()]
         assert any(text.startswith("My Library | #") for text in action_texts)
-        assert any(text.startswith("My Library | #") and text.endswith("| done") for text in action_texts)
+        assert any(
+            text.startswith("My Library | #") and text.endswith("| done")
+            for text in action_texts
+        )
 
-        monkeypatch.setattr("video_duperz.ui.main_window.QInputDialog.getItem", lambda *a, **k: ("My Library", True))
+        monkeypatch.setattr(
+            "video_duperz.ui.main_window.QInputDialog.getItem",
+            lambda *a, **k: ("My Library", True),
+        )
         monkeypatch.setattr(
             "video_duperz.ui.main_window.QMessageBox.question",
             lambda *a, **k: QMessageBox.StandardButton.Yes,
@@ -675,7 +781,9 @@ def test_saved_scan_profiles_save_load_and_delete(tmp_path: Path, monkeypatch) -
         window.close()
 
 
-def test_load_saved_scan_profile_not_started_restores_sources_and_clears_results(tmp_path: Path) -> None:
+def test_load_saved_scan_profile_not_started_restores_sources_and_clears_results(
+    tmp_path: Path,
+) -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QApplication.instance() or QApplication([])
     with Database(tmp_path / "app.db") as db:
@@ -714,7 +822,9 @@ def test_load_saved_scan_profile_not_started_restores_sources_and_clears_results
         assert window.tabs.currentWidget() == window.sources_tab
         assert window.current_scan_id is None
         assert window.results_view.results_table.rowCount() == 0
-        roots_in_widget = [window.roots_list.item(i).text() for i in range(window.roots_list.count())]
+        roots_in_widget = [
+            window.roots_list.item(i).text() for i in range(window.roots_list.count())
+        ]
         assert roots_in_widget == pending_roots
         assert window.profile_combo.currentText() == "aggressive"
         assert window.extensions_edit.text() == "mkv, mp4"
@@ -722,14 +832,18 @@ def test_load_saved_scan_profile_not_started_restores_sources_and_clears_results
         window.close()
 
 
-def test_load_saved_scan_profile_cancelled_latest_routes_to_sources(tmp_path: Path) -> None:
+def test_load_saved_scan_profile_cancelled_latest_routes_to_sources(
+    tmp_path: Path,
+) -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QApplication.instance() or QApplication([])
     with Database(tmp_path / "app.db") as db:
         roots = [str(tmp_path / "library")]
         done_id = db.create_scan(profile="balanced", roots=roots, extensions=["mp4"])
         db.complete_scan(done_id, status="done")
-        cancelled_id = db.create_scan(profile="balanced", roots=roots, extensions=["mp4"])
+        cancelled_id = db.create_scan(
+            profile="balanced", roots=roots, extensions=["mp4"]
+        )
         db.complete_scan(cancelled_id, status="cancelled")
 
         settings = default_settings()
@@ -771,7 +885,9 @@ def test_load_saved_scan_profile_cancelled_latest_routes_to_sources(tmp_path: Pa
         window.close()
 
 
-def test_saved_scans_menu_lists_not_started_named_and_cancelled_auto(tmp_path: Path) -> None:
+def test_saved_scans_menu_lists_not_started_named_and_cancelled_auto(
+    tmp_path: Path,
+) -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QApplication.instance() or QApplication([])
     with Database(tmp_path / "app.db") as db:
@@ -799,10 +915,15 @@ def test_saved_scans_menu_lists_not_started_named_and_cancelled_auto(tmp_path: P
         actions = window._saved_scans_menu.actions()
         action_texts = [action.text() for action in actions]
 
-        pending_action = next(action for action in actions if action.text().startswith("Pending Named | "))
+        pending_action = next(
+            action for action in actions if action.text().startswith("Pending Named | ")
+        )
         assert pending_action.isEnabled()
         assert pending_action.text().endswith("not started")
-        assert any(text.startswith("Auto:") and text.endswith("| cancelled") for text in action_texts)
+        assert any(
+            text.startswith("Auto:") and text.endswith("| cancelled")
+            for text in action_texts
+        )
         window.close()
 
 
@@ -827,19 +948,25 @@ def test_file_tools_help_menu_actions(tmp_path: Path, monkeypatch) -> None:
         window.show()
         app.processEvents()
 
-        menu_titles = [action.text().replace("&", "") for action in window.menuBar().actions()]
+        menu_titles = [
+            action.text().replace("&", "") for action in window.menuBar().actions()
+        ]
         assert menu_titles[:6] == ["File", "View", "Sort", "Actions", "Tools", "Help"]
 
         assert window.clear_recent_folders_action.text() == "C&lear Recent Folders"
         assert window.clear_saved_scans_action.text() == "Clear Sa&ved Scans"
-        assert window.clear_cached_thumbnails_action.text() == "Clear Cached T&humbnails"
+        assert (
+            window.clear_cached_thumbnails_action.text() == "Clear Cached T&humbnails"
+        )
         assert window.full_reset_action.text() == "&Full Reset"
         assert window.edit_ini_action.text() == "Edit &.ini File"
         assert window.about_action.text() == "&Help"
         shortcuts = {seq.toString() for seq in window.exit_action.shortcuts()}
         assert {"Ctrl+Q", "Alt+X"} <= shortcuts
         tools_menu_action = next(
-            action for action in window.menuBar().actions() if action.text().replace("&", "") == "Tools"
+            action
+            for action in window.menuBar().actions()
+            if action.text().replace("&", "") == "Tools"
         )
         tools_menu = tools_menu_action.menu()
         assert tools_menu is not None
@@ -858,14 +985,18 @@ def test_file_tools_help_menu_actions(tmp_path: Path, monkeypatch) -> None:
         assert window._recent_roots == []
         assert not window.add_recent_root_btn.isEnabled()
 
-        scan_id = window.db.create_scan(profile="balanced", roots=[str(tmp_path)], extensions=["mp4"])
+        scan_id = window.db.create_scan(
+            profile="balanced", roots=[str(tmp_path)], extensions=["mp4"]
+        )
         window.db.complete_scan(scan_id, status="done")
         monkeypatch.setattr(
             "video_duperz.ui.main_window.QMessageBox.question",
             lambda *a, **k: QMessageBox.StandardButton.Yes,
         )
         close_called = {"value": False}
-        monkeypatch.setattr(window, "close", lambda: close_called.__setitem__("value", True))
+        monkeypatch.setattr(
+            window, "close", lambda: close_called.__setitem__("value", True)
+        )
         window._request_full_reset()
         app.processEvents()
         assert close_called["value"] is True
@@ -879,11 +1010,17 @@ def test_file_tools_help_menu_actions(tmp_path: Path, monkeypatch) -> None:
         window.close()
 
 
-def test_sources_tab_drive_table_highlights_matches_and_tracks_parallel_total(tmp_path: Path, monkeypatch) -> None:
+def test_sources_tab_drive_table_highlights_matches_and_tracks_parallel_total(
+    tmp_path: Path, monkeypatch
+) -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QApplication.instance() or QApplication([])
 
-    def _fake_plan(roots: list[str], max_workers: int, drive_worker_overrides: dict[str, int] | None = None):
+    def _fake_plan(
+        roots: list[str],
+        max_workers: int,
+        drive_worker_overrides: dict[str, int] | None = None,
+    ):
         _ = drive_worker_overrides
         matched = {"volume:a", "volume:b"} if roots else set()
         effective_workers = len(matched)
@@ -923,7 +1060,9 @@ def test_sources_tab_drive_table_highlights_matches_and_tracks_parallel_total(tm
             ),
         ],
     )
-    monkeypatch.setattr("video_duperz.ui.main_window.build_physical_drive_scan_plan", _fake_plan)
+    monkeypatch.setattr(
+        "video_duperz.ui.main_window.build_physical_drive_scan_plan", _fake_plan
+    )
 
     with Database(tmp_path / "app.db") as db:
         settings = default_settings()
@@ -962,7 +1101,9 @@ def test_sources_tab_drive_table_highlights_matches_and_tracks_parallel_total(tm
         assert window.sources_drive_table.item(1, 0).font().bold() is True
         assert window.sources_drive_table.item(2, 0).font().bold() is False
         assert window.sources_drive_table.item(2, 2).text() == "volume:c"
-        assert window.sources_drive_table.item(2, 8).text() == "disk extent lookup failed"
+        assert (
+            window.sources_drive_table.item(2, 8).text() == "disk extent lookup failed"
+        )
 
         window.max_workers_spin.setValue(3)
         app.processEvents()
@@ -972,10 +1113,14 @@ def test_sources_tab_drive_table_highlights_matches_and_tracks_parallel_total(tm
         window.close()
 
 
-def test_sources_tab_drive_table_shows_placeholder_when_no_local_drives(tmp_path: Path, monkeypatch) -> None:
+def test_sources_tab_drive_table_shows_placeholder_when_no_local_drives(
+    tmp_path: Path, monkeypatch
+) -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QApplication.instance() or QApplication([])
-    monkeypatch.setattr("video_duperz.ui.main_window.list_physical_drives", lambda roots=None: [])
+    monkeypatch.setattr(
+        "video_duperz.ui.main_window.list_physical_drives", lambda roots=None: []
+    )
     monkeypatch.setattr(
         "video_duperz.ui.main_window.build_physical_drive_scan_plan",
         lambda roots, max_workers, drive_worker_overrides=None: SimpleNamespace(
@@ -994,7 +1139,9 @@ def test_sources_tab_drive_table_shows_placeholder_when_no_local_drives(tmp_path
         app.processEvents()
 
         assert window.sources_drive_table.rowCount() == 1
-        assert window.sources_drive_table.item(0, 0).text() == "(No local drives detected)"
+        assert (
+            window.sources_drive_table.item(0, 0).text() == "(No local drives detected)"
+        )
         assert window.sources_drive_table.item(0, 8).text() == ""
         assert "Matched physical drives: 0" in window.sources_drive_summary_label.text()
         assert "Requested workers: 2" in window.sources_drive_summary_label.text()
@@ -1002,7 +1149,9 @@ def test_sources_tab_drive_table_shows_placeholder_when_no_local_drives(tmp_path
         window.close()
 
 
-def test_sources_tab_drive_workers_and_probe_mode_persist_across_reload(tmp_path: Path, monkeypatch) -> None:
+def test_sources_tab_drive_workers_and_probe_mode_persist_across_reload(
+    tmp_path: Path, monkeypatch
+) -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
     monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
@@ -1030,19 +1179,27 @@ def test_sources_tab_drive_workers_and_probe_mode_persist_across_reload(tmp_path
         ],
     )
 
-    def _fake_plan(roots: list[str], max_workers: int, drive_worker_overrides: dict[str, int] | None = None):
+    def _fake_plan(
+        roots: list[str],
+        max_workers: int,
+        drive_worker_overrides: dict[str, int] | None = None,
+    ):
         matched = {"volume:a", "volume:b"} if roots else set()
         overrides = drive_worker_overrides or {}
         effective = 0
         if roots:
-            effective = max(1, int(overrides.get("volume:a", 1))) + max(1, int(overrides.get("volume:b", 1)))
+            effective = max(1, int(overrides.get("volume:a", 1))) + max(
+                1, int(overrides.get("volume:b", 1))
+            )
         return SimpleNamespace(
             matched_volume_identities=matched,
             requested_worker_target=max(max_workers, effective),
             effective_total_workers=effective,
         )
 
-    monkeypatch.setattr("video_duperz.ui.main_window.build_physical_drive_scan_plan", _fake_plan)
+    monkeypatch.setattr(
+        "video_duperz.ui.main_window.build_physical_drive_scan_plan", _fake_plan
+    )
 
     with Database(tmp_path / "app.db") as db:
         settings = default_settings()
@@ -1084,7 +1241,9 @@ def test_sources_tab_drive_workers_and_probe_mode_persist_across_reload(tmp_path
         reloaded_window.close()
 
 
-def test_scan_running_locks_ui_to_scan_tab_until_finished(tmp_path: Path, monkeypatch) -> None:
+def test_scan_running_locks_ui_to_scan_tab_until_finished(
+    tmp_path: Path, monkeypatch
+) -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QApplication.instance() or QApplication([])
     with Database(tmp_path / "app.db") as db:
@@ -1126,7 +1285,9 @@ def test_scan_running_locks_ui_to_scan_tab_until_finished(tmp_path: Path, monkey
         app.processEvents()
         assert window.tabs.currentWidget() == window.scan_view
 
-        finished_scan_id = db.create_scan(profile="balanced", roots=[str(tmp_path)], extensions=["mp4"])
+        finished_scan_id = db.create_scan(
+            profile="balanced", roots=[str(tmp_path)], extensions=["mp4"]
+        )
         db.complete_scan(finished_scan_id, status="done")
         window._scan_finished(SimpleNamespace(scan_id=finished_scan_id, issues=[]))
         app.processEvents()
@@ -1151,7 +1312,9 @@ def test_scan_finished_cancelled_does_not_switch_to_results_tab(tmp_path: Path) 
         window.show()
         app.processEvents()
 
-        cancelled_scan_id = db.create_scan(profile="balanced", roots=[str(tmp_path)], extensions=["mp4"])
+        cancelled_scan_id = db.create_scan(
+            profile="balanced", roots=[str(tmp_path)], extensions=["mp4"]
+        )
         db.complete_scan(cancelled_scan_id, status="cancelled")
         window.tabs.setCurrentWidget(window.scan_view)
         app.processEvents()
@@ -1165,7 +1328,9 @@ def test_scan_finished_cancelled_does_not_switch_to_results_tab(tmp_path: Path) 
         window.close()
 
 
-def test_rescan_uses_current_sources_and_runs_cleanup_then_start(tmp_path: Path, monkeypatch) -> None:
+def test_rescan_uses_current_sources_and_runs_cleanup_then_start(
+    tmp_path: Path, monkeypatch
+) -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QApplication.instance() or QApplication([])
     with Database(tmp_path / "app.db") as db:
@@ -1207,7 +1372,12 @@ def test_rescan_uses_current_sources_and_runs_cleanup_then_start(tmp_path: Path,
         def _fake_purge(scan_set_key: str, roots: list[str]) -> dict[str, int]:
             called["scan_set_key"] = scan_set_key
             called["roots"] = list(roots)
-            return {"deleted_scans": 3, "deleted_files": 8, "deleted_groups": 2, "deleted_actions": 1}
+            return {
+                "deleted_scans": 3,
+                "deleted_files": 8,
+                "deleted_groups": 2,
+                "deleted_actions": 1,
+            }
 
         starts = {"count": 0}
         monkeypatch.setattr(
@@ -1216,13 +1386,21 @@ def test_rescan_uses_current_sources_and_runs_cleanup_then_start(tmp_path: Path,
         )
         monkeypatch.setattr(window.db, "purge_for_fresh_rescan", _fake_purge)
         monkeypatch.setattr(window, "_clear_cached_thumbnails_internal", lambda: (5, 1))
-        monkeypatch.setattr(window, "_start_scan", lambda: starts.__setitem__("count", int(starts["count"]) + 1))
+        monkeypatch.setattr(
+            window,
+            "_start_scan",
+            lambda: starts.__setitem__("count", int(starts["count"]) + 1),
+        )
 
         window._rescan_scan()
         app.processEvents()
 
         expected_roots = normalize_roots_for_display([root_a, root_b])
-        expected_key = build_scan_set_key(roots=expected_roots, similarity_profile="aggressive", extensions=["mp4", "mkv"])
+        expected_key = build_scan_set_key(
+            roots=expected_roots,
+            similarity_profile="aggressive",
+            extensions=["mp4", "mkv"],
+        )
         assert called["roots"] == expected_roots
         assert called["scan_set_key"] == expected_key
         assert starts["count"] == 1
@@ -1231,7 +1409,9 @@ def test_rescan_uses_current_sources_and_runs_cleanup_then_start(tmp_path: Path,
         window.close()
 
 
-def test_rescan_cancelled_confirmation_does_not_purge_or_start(tmp_path: Path, monkeypatch) -> None:
+def test_rescan_cancelled_confirmation_does_not_purge_or_start(
+    tmp_path: Path, monkeypatch
+) -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QApplication.instance() or QApplication([])
     with Database(tmp_path / "app.db") as db:
@@ -1252,7 +1432,11 @@ def test_rescan_cancelled_confirmation_does_not_purge_or_start(tmp_path: Path, m
             "purge_for_fresh_rescan",
             lambda *args, **kwargs: calls.__setitem__("purge", int(calls["purge"]) + 1),
         )
-        monkeypatch.setattr(window, "_start_scan", lambda: calls.__setitem__("start", int(calls["start"]) + 1))
+        monkeypatch.setattr(
+            window,
+            "_start_scan",
+            lambda: calls.__setitem__("start", int(calls["start"]) + 1),
+        )
 
         window._rescan_scan()
         app.processEvents()
@@ -1287,7 +1471,9 @@ def test_scan_view_progress_keeps_parallel_worker_tokens(tmp_path: Path) -> None
         window.close()
 
 
-def test_scan_view_renders_lane_snapshots_and_worker_utilization(tmp_path: Path) -> None:
+def test_scan_view_renders_lane_snapshots_and_worker_utilization(
+    tmp_path: Path,
+) -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QApplication.instance() or QApplication([])
     with Database(tmp_path / "app.db") as db:
@@ -1297,7 +1483,9 @@ def test_scan_view_renders_lane_snapshots_and_worker_utilization(tmp_path: Path)
         window.show()
         app.processEvents()
 
-        window.scan_view.initialize_lane_plan([["R:/Videos"], ["S:/Archive"]], worker_limit=2)
+        window.scan_view.initialize_lane_plan(
+            [["R:/Videos"], ["S:/Archive"]], worker_limit=2
+        )
         window.scan_view.update_progress(
             ScanProgress(
                 stage="probe",
@@ -1356,7 +1544,10 @@ def test_scan_view_renders_lane_snapshots_and_worker_utilization(tmp_path: Path)
         app.processEvents()
 
         assert not window.scan_view.worker_progress.isVisible()
-        assert "Worker status is shown per lane" in window.scan_view.worker_hint_label.text()
+        assert (
+            "Worker status is shown per lane"
+            in window.scan_view.worker_hint_label.text()
+        )
         assert window.scan_view.lane_table.rowCount() == 2
         assert window.scan_view.lane_table.columnCount() == 12
         assert window.scan_view.lane_table.item(0, 2).text() == "running"
@@ -1365,10 +1556,16 @@ def test_scan_view_renders_lane_snapshots_and_worker_utilization(tmp_path: Path)
         assert window.scan_view.lane_table.item(0, 9).text() == "2.40"
         assert window.scan_view.lane_table.item(0, 10).text() == "0.40"
         assert window.scan_view.lane_table.item(0, 11).text() == "0.80"
-        assert window.scan_view.lane_table.item(0, 0).background().color().name().lower() == "#f0f8ff"
+        assert (
+            window.scan_view.lane_table.item(0, 0).background().color().name().lower()
+            == "#f0f8ff"
+        )
         assert window.scan_view.lane_table.item(1, 2).text() == "idle"
         assert window.scan_view.lane_table.item(1, 5).text() == "2"
-        assert window.scan_view.lane_table.item(1, 0).background().color().name().lower() == "#f5f5f5"
+        assert (
+            window.scan_view.lane_table.item(1, 0).background().color().name().lower()
+            == "#f5f5f5"
+        )
         assert "cache hit 40.0%" in window.scan_view.io_stats_label.text()
         assert window.scan_view.rescan_btn.text() == "Rescan"
         window.close()
@@ -1406,10 +1603,28 @@ def test_scan_view_lane_state_background_colors(tmp_path: Path) -> None:
         )
         app.processEvents()
 
-        assert window.scan_view.lane_table.item(0, 0).background().color().name().lower() == "#f5f5dc"
-        assert window.scan_view.lane_table.item(1, 0).background().color().name().lower() == "#f5f5dc"
-        assert window.scan_view.lane_table.item(2, 0).background().color().name().lower() == "#f0f8ff"
-        assert window.scan_view.lane_table.item(3, 0).background().color().name().lower() == "#f5f5f5"
-        assert window.scan_view.lane_table.item(4, 0).background().color().name().lower() == "#f0fff0"
-        assert window.scan_view.lane_table.item(5, 0).background().color().name().lower() == "#ffe4e1"
+        assert (
+            window.scan_view.lane_table.item(0, 0).background().color().name().lower()
+            == "#f5f5dc"
+        )
+        assert (
+            window.scan_view.lane_table.item(1, 0).background().color().name().lower()
+            == "#f5f5dc"
+        )
+        assert (
+            window.scan_view.lane_table.item(2, 0).background().color().name().lower()
+            == "#f0f8ff"
+        )
+        assert (
+            window.scan_view.lane_table.item(3, 0).background().color().name().lower()
+            == "#f5f5f5"
+        )
+        assert (
+            window.scan_view.lane_table.item(4, 0).background().color().name().lower()
+            == "#f0fff0"
+        )
+        assert (
+            window.scan_view.lane_table.item(5, 0).background().color().name().lower()
+            == "#ffe4e1"
+        )
         window.close()

@@ -19,7 +19,9 @@ from .probe import ProbeError, ensure_ffprobe_available
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="video-duperz", description="Duplicate video finder")
+    parser = argparse.ArgumentParser(
+        prog="video-duperz", description="Duplicate video finder"
+    )
     parser.add_argument(
         "--config-dir",
         dest="config_dir",
@@ -41,18 +43,35 @@ def _build_parser() -> argparse.ArgumentParser:
 
     scan = sub.add_parser("scan", help="Run a headless scan")
     scan.add_argument("--roots", nargs="+", required=True, help="Root folders to scan")
-    scan.add_argument("--profile", default="balanced", choices=["balanced", "conservative", "aggressive"])
+    scan.add_argument(
+        "--profile",
+        default="balanced",
+        choices=["balanced", "conservative", "aggressive"],
+    )
     scan.set_defaults(func=_cmd_scan)
 
     export = sub.add_parser("export", help="Export duplicate groups to CSV and JSON")
-    export.add_argument("--scan-id", type=int, default=None, help="Scan id (latest if omitted)")
+    export.add_argument(
+        "--scan-id", type=int, default=None, help="Scan id (latest if omitted)"
+    )
     export.add_argument("--out", required=True, help="Output directory")
     export.set_defaults(func=_cmd_export)
 
     clean = sub.add_parser("clean", help="Run full reset cleaner")
-    clean.add_argument("--full-reset", action="store_true", help="Required guard for destructive full reset")
-    clean.add_argument("--delay-ms", type=int, default=FULL_RESET_DEFAULT_DELAY_MS, help="Delay before cleanup")
-    clean.add_argument("--relaunch", action="store_true", help="Relaunch GUI after cleanup")
+    clean.add_argument(
+        "--full-reset",
+        action="store_true",
+        help="Required guard for destructive full reset",
+    )
+    clean.add_argument(
+        "--delay-ms",
+        type=int,
+        default=FULL_RESET_DEFAULT_DELAY_MS,
+        help="Delay before cleanup",
+    )
+    clean.add_argument(
+        "--relaunch", action="store_true", help="Relaunch GUI after cleanup"
+    )
     clean.set_defaults(func=_cmd_clean)
     return parser
 
@@ -83,7 +102,9 @@ def _cmd_gui(_args: argparse.Namespace) -> int:
     window = MainWindow(db=db, settings=settings)
     window.show()
     exit_code = app.exec()
-    full_reset_requested = bool(getattr(window, "consume_full_reset_requested", lambda: False)())
+    full_reset_requested = bool(
+        getattr(window, "consume_full_reset_requested", lambda: False)()
+    )
     with contextlib.suppress(Exception):
         db.close()
     if full_reset_requested:

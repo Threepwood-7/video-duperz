@@ -67,7 +67,9 @@ def test_candidate_physical_drive_roots_uses_windows_mount_points(monkeypatch) -
     assert roots == ["C:\\", "C:\\M\\DISK7\\"]
 
 
-def test_lookup_failure_falls_back_to_volume_identity_and_emits_issue(tmp_path: Path, monkeypatch) -> None:
+def test_lookup_failure_falls_back_to_volume_identity_and_emits_issue(
+    tmp_path: Path, monkeypatch
+) -> None:
     root = tmp_path / "root"
     _write_video(root / "clip.mp4")
 
@@ -75,7 +77,9 @@ def test_lookup_failure_falls_back_to_volume_identity_and_emits_issue(tmp_path: 
         raise OSError("disk lookup boom")
 
     monkeypatch.setattr(scanner, "_resolve_physical_disk_tokens", _raise_lookup)
-    monkeypatch.setattr(scanner, "_resolve_volume_identity", lambda _path: "volume:fallback")
+    monkeypatch.setattr(
+        scanner, "_resolve_volume_identity", lambda _path: "volume:fallback"
+    )
 
     found, issues = scanner.enumerate_video_files(
         scan_id=7,
@@ -93,7 +97,9 @@ def test_lookup_failure_falls_back_to_volume_identity_and_emits_issue(tmp_path: 
     )
 
 
-def test_parallel_enumeration_returns_files_from_all_roots_without_global_sort(tmp_path: Path, monkeypatch) -> None:
+def test_parallel_enumeration_returns_files_from_all_roots_without_global_sort(
+    tmp_path: Path, monkeypatch
+) -> None:
     root_z = tmp_path / "z_root"
     root_a = tmp_path / "a_root"
     _write_video(root_z / "z.mp4")
@@ -117,7 +123,9 @@ def test_parallel_enumeration_returns_files_from_all_roots_without_global_sort(t
     assert {Path(item.path).name for item in found} == {"a.mp4", "z.mp4"}
 
 
-def test_parallel_cancellation_returns_partial_results_without_crash(tmp_path: Path, monkeypatch) -> None:
+def test_parallel_cancellation_returns_partial_results_without_crash(
+    tmp_path: Path, monkeypatch
+) -> None:
     root_fast = tmp_path / "fast"
     root_slow = tmp_path / "slow"
     _write_video(root_fast / "fast.mp4")
@@ -163,14 +171,22 @@ def test_parallel_cancellation_returns_partial_results_without_crash(tmp_path: P
 
 
 def test_list_physical_drives_reports_tokens_and_capacity(monkeypatch) -> None:
-    monkeypatch.setattr(scanner, "_candidate_physical_drive_roots", lambda _roots=None: ["C:\\", "D:\\"])
-    monkeypatch.setattr(scanner, "_resolve_volume_identity", lambda path: f"volume:{path.lower()}")
+    monkeypatch.setattr(
+        scanner, "_candidate_physical_drive_roots", lambda _roots=None: ["C:\\", "D:\\"]
+    )
+    monkeypatch.setattr(
+        scanner, "_resolve_volume_identity", lambda path: f"volume:{path.lower()}"
+    )
     monkeypatch.setattr(
         scanner,
         "_resolve_physical_disk_tokens",
-        lambda path: {"disk:0"} if path.upper().startswith("C:") else {"disk:2", "disk:1"},
+        lambda path: (
+            {"disk:0"} if path.upper().startswith("C:") else {"disk:2", "disk:1"}
+        ),
     )
-    monkeypatch.setattr(scanner.shutil, "disk_usage", lambda _path: SimpleNamespace(total=100, free=40))
+    monkeypatch.setattr(
+        scanner.shutil, "disk_usage", lambda _path: SimpleNamespace(total=100, free=40)
+    )
 
     drives = scanner.list_physical_drives()
 
@@ -181,15 +197,21 @@ def test_list_physical_drives_reports_tokens_and_capacity(monkeypatch) -> None:
     assert drives[1].lookup_error is None
 
 
-def test_list_physical_drives_falls_back_to_volume_token_on_lookup_error(monkeypatch) -> None:
-    monkeypatch.setattr(scanner, "_candidate_physical_drive_roots", lambda _roots=None: ["E:\\"])
+def test_list_physical_drives_falls_back_to_volume_token_on_lookup_error(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        scanner, "_candidate_physical_drive_roots", lambda _roots=None: ["E:\\"]
+    )
     monkeypatch.setattr(scanner, "_resolve_volume_identity", lambda _path: "volume:e")
 
     def _raise_lookup(_path: str) -> set[str]:
         raise OSError("no mapping")
 
     monkeypatch.setattr(scanner, "_resolve_physical_disk_tokens", _raise_lookup)
-    monkeypatch.setattr(scanner.shutil, "disk_usage", lambda _path: SimpleNamespace(total=200, free=100))
+    monkeypatch.setattr(
+        scanner.shutil, "disk_usage", lambda _path: SimpleNamespace(total=200, free=100)
+    )
 
     drives = scanner.list_physical_drives()
 
@@ -215,7 +237,11 @@ def test_build_physical_drive_scan_plan_resolves_per_root_tokens_and_emits_looku
     monkeypatch.setattr(
         scanner,
         "_resolve_physical_disk_tokens",
-        lambda path: {"disk:0"} if str(path) == str(root_a) else (_ for _ in ()).throw(OSError("lookup failed")),
+        lambda path: (
+            {"disk:0"}
+            if str(path) == str(root_a)
+            else (_ for _ in ()).throw(OSError("lookup failed"))
+        ),
     )
 
     plan = scanner.build_physical_drive_scan_plan(
@@ -232,7 +258,10 @@ def test_build_physical_drive_scan_plan_resolves_per_root_tokens_and_emits_looku
     assert plan.lane_worker_limits[lane_b] == 2
     assert plan.effective_total_workers == 5
     assert plan.requested_worker_target == 8
-    assert any(issue.path == str(root_b) and "using volume identity fallback" in issue.message for issue in plan.issues)
+    assert any(
+        issue.path == str(root_b) and "using volume identity fallback" in issue.message
+        for issue in plan.issues
+    )
 
 
 def test_build_physical_drive_scan_plan_lane_limit_uses_hardest_cap_with_shared_lane(
@@ -248,7 +277,9 @@ def test_build_physical_drive_scan_plan_lane_limit_uses_hardest_cap_with_shared_
         "_resolve_volume_identity",
         lambda path: "volume:a" if str(path) == str(root_a) else "volume:b",
     )
-    monkeypatch.setattr(scanner, "_resolve_physical_disk_tokens", lambda _path: {"disk:1"})
+    monkeypatch.setattr(
+        scanner, "_resolve_physical_disk_tokens", lambda _path: {"disk:1"}
+    )
 
     plan = scanner.build_physical_drive_scan_plan(
         roots=[str(root_a), str(root_b)],
@@ -262,7 +293,9 @@ def test_build_physical_drive_scan_plan_lane_limit_uses_hardest_cap_with_shared_
     assert plan.effective_total_workers == 2
 
 
-def test_enumerate_video_files_stamps_source_root_and_lane(tmp_path: Path, monkeypatch) -> None:
+def test_enumerate_video_files_stamps_source_root_and_lane(
+    tmp_path: Path, monkeypatch
+) -> None:
     root_a = tmp_path / "lane_a"
     root_b = tmp_path / "lane_b"
     _write_video(root_a / "a.mp4")

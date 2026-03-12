@@ -35,7 +35,11 @@ def _emit(
     **extra: object,
 ) -> None:
     if progress_cb:
-        progress_cb(ScanProgress(stage=stage, current=current, total=total, message=message, **extra))
+        progress_cb(
+            ScanProgress(
+                stage=stage, current=current, total=total, message=message, **extra
+            )
+        )
 
 
 def _normalize_probe_worker_mode(value: str) -> str:
@@ -107,9 +111,13 @@ def _analyze_file(path: str, cached_meta) -> _AnalyzeOutput:
         meta = cached_meta
         probe_s = 0.0
     fp_started = time.perf_counter()
-    fp_record = build_fingerprint_record(file_id=0, duration_s=meta.duration_s, path=path)
+    fp_record = build_fingerprint_record(
+        file_id=0, duration_s=meta.duration_s, path=path
+    )
     fingerprint_s = max(0.0, time.perf_counter() - fp_started)
-    return _AnalyzeOutput(meta=meta, hashes=fp_record.hashes, probe_s=probe_s, fingerprint_s=fingerprint_s)
+    return _AnalyzeOutput(
+        meta=meta, hashes=fp_record.hashes, probe_s=probe_s, fingerprint_s=fingerprint_s
+    )
 
 
 def run_scan(
@@ -149,7 +157,10 @@ def run_scan(
         drive_worker_overrides=drive_worker_overrides,
     )
     issues.extend(scan_plan.issues)
-    configured_lane_limits = {int(lane): max(1, int(limit)) for lane, limit in scan_plan.lane_worker_limits.items()}
+    configured_lane_limits = {
+        int(lane): max(1, int(limit))
+        for lane, limit in scan_plan.lane_worker_limits.items()
+    }
     effective_worker_limit = max(0, int(scan_plan.effective_total_workers))
     executor_worker_limit = max(1, effective_worker_limit)
     mode = _normalize_probe_worker_mode(probe_worker_mode)
@@ -180,7 +191,9 @@ def run_scan(
         )
         lane_queues[lane_idx] = deque()
 
-    root_to_lane = {path_key(root): lane for root, lane in scan_plan.root_to_group_index.items()}
+    root_to_lane = {
+        path_key(root): lane for root, lane in scan_plan.root_to_group_index.items()
+    }
     ready_lanes: deque[int] = deque()
     ready_set: set[int] = set()
     active_by_lane: dict[int, int] = dict.fromkeys(lane_states, 0)
@@ -305,7 +318,9 @@ def run_scan(
             analyze_bytes_now = analyzed_bytes
             cached_now = cached_files
             analyze_total = total_analyze_files
-        counter = int(file_counter if file_counter is not None else max(prepared_now, analyze_now))
+        counter = int(
+            file_counter if file_counter is not None else max(prepared_now, analyze_now)
+        )
         if not _should_emit_progress(
             stage=stage,
             counter=counter,
@@ -321,7 +336,9 @@ def run_scan(
         last_emit_at = now
         last_emit_stage = stage
         last_emit_counter = counter
-        cache_ratio = (float(cached_now) / float(prepared_now)) if prepared_now > 0 else 0.0
+        cache_ratio = (
+            (float(cached_now) / float(prepared_now)) if prepared_now > 0 else 0.0
+        )
         _emit(
             progress_cb,
             stage,
@@ -410,7 +427,11 @@ def run_scan(
         if rows_since_flush <= 0:
             return
         now = time.perf_counter()
-        if not force and rows_since_flush < db_batch_size and (now - last_tx_flush_at) < db_flush_interval_s:
+        if (
+            not force
+            and rows_since_flush < db_batch_size
+            and (now - last_tx_flush_at) < db_flush_interval_s
+        ):
             return
         started = time.perf_counter()
         db.flush_scan_transaction()
@@ -422,14 +443,26 @@ def run_scan(
 
     def _flush_pending_analysis_batches(*, force: bool = False) -> None:
         nonlocal last_pending_write_at
-        pending_total = len(pending_meta_rows) + len(pending_fp_rows) + len(pending_probe_error_rows)
+        pending_total = (
+            len(pending_meta_rows)
+            + len(pending_fp_rows)
+            + len(pending_probe_error_rows)
+        )
         if pending_total <= 0:
             return
         now = time.perf_counter()
-        if not force and pending_total < db_batch_size and (now - last_pending_write_at) < db_flush_interval_s:
+        if (
+            not force
+            and pending_total < db_batch_size
+            and (now - last_pending_write_at) < db_flush_interval_s
+        ):
             return
-        _flush_row_batches(pending_meta_rows, db_batch_size, db.save_video_meta_batch, _timed_db_write)
-        _flush_row_batches(pending_fp_rows, db_batch_size, db.save_fingerprints_batch, _timed_db_write)
+        _flush_row_batches(
+            pending_meta_rows, db_batch_size, db.save_video_meta_batch, _timed_db_write
+        )
+        _flush_row_batches(
+            pending_fp_rows, db_batch_size, db.save_fingerprints_batch, _timed_db_write
+        )
         _flush_row_batches(
             pending_probe_error_rows,
             db_batch_size,
@@ -475,7 +508,9 @@ def run_scan(
                     if lane_state.state == "pending":
                         lane_state.state = "idle"
             discovered_now = discovered_files
-        _emit_progress("enumerate", current, total, message, file_counter=discovered_now)
+        _emit_progress(
+            "enumerate", current, total, message, file_counter=discovered_now
+        )
 
     def _run_enumeration() -> None:
         nonlocal enum_files, enum_issues, enum_error, enum_finished
@@ -570,7 +605,13 @@ def run_scan(
                 }
             )
             valid.append((file, lane, source_root, file_size, path))
-            _emit_progress("prepare", prepared_now, max(1, prepare_total), f"Prepared {path}", file_counter=prepared_now)
+            _emit_progress(
+                "prepare",
+                prepared_now,
+                max(1, prepare_total),
+                f"Prepared {path}",
+                file_counter=prepared_now,
+            )
         if not valid:
             return
 
@@ -669,11 +710,17 @@ def run_scan(
                 output = future.result()
             except ProbeError as exc:
                 pending_probe_error_rows.append((task.file_id, str(exc)))
-                issues.append(ScanIssue(stage="probe", path=task.path, message=str(exc)))
+                issues.append(
+                    ScanIssue(stage="probe", path=task.path, message=str(exc))
+                )
             except FingerprintError as exc:
-                issues.append(ScanIssue(stage="fingerprint", path=task.path, message=str(exc)))
+                issues.append(
+                    ScanIssue(stage="fingerprint", path=task.path, message=str(exc))
+                )
             except Exception as exc:
-                issues.append(ScanIssue(stage="analyze", path=task.path, message=str(exc)))
+                issues.append(
+                    ScanIssue(stage="analyze", path=task.path, message=str(exc))
+                )
             else:
                 if task.cached_meta is None:
                     pending_meta_rows.append((task.file_id, output.meta))
@@ -681,13 +728,17 @@ def run_scan(
                 fingerprinted_files += 1
                 with state_lock:
                     stage_seconds["probe"] += max(0.0, float(output.probe_s))
-                    stage_seconds["fingerprint"] += max(0.0, float(output.fingerprint_s))
+                    stage_seconds["fingerprint"] += max(
+                        0.0, float(output.fingerprint_s)
+                    )
 
             with state_lock:
                 analyzed_files += 1
                 analyzed_bytes += task.size
                 active_workers = max(0, active_workers - 1)
-                active_by_lane[task.lane] = max(0, int(active_by_lane.get(task.lane, 0)) - 1)
+                active_by_lane[task.lane] = max(
+                    0, int(active_by_lane.get(task.lane, 0)) - 1
+                )
                 lane_state = _ensure_lane_state_locked(task.lane, task.source_root)
                 lane_state.analyzed += 1
                 lane_state.analyzed_bytes += task.size
@@ -697,7 +748,13 @@ def run_scan(
                 _refresh_lane_state_locked(task.lane)
                 probe_total = max(1, total_analyze_files)
                 probe_done = analyzed_files
-            _emit_progress("probe", probe_done, probe_total, f"Analyzed {task.path}", file_counter=probe_done)
+            _emit_progress(
+                "probe",
+                probe_done,
+                probe_total,
+                f"Analyzed {task.path}",
+                file_counter=probe_done,
+            )
         return processed
 
     def _apply_cancel_state() -> None:
@@ -709,9 +766,13 @@ def run_scan(
                 _refresh_lane_state_locked(lane_id)
 
     def _collect_metrics(match_stats: MatchStats) -> dict[str, object]:
-        avg_rows_per_flush = (float(flush_rows_total) / float(flush_count)) if flush_count > 0 else 0.0
+        avg_rows_per_flush = (
+            (float(flush_rows_total) / float(flush_count)) if flush_count > 0 else 0.0
+        )
         return {
-            "stage_seconds": {name: round(value, 6) for name, value in stage_seconds.items()},
+            "stage_seconds": {
+                name: round(value, 6) for name, value in stage_seconds.items()
+            },
             "matching": asdict(match_stats),
             "flush_count": int(flush_count),
             "avg_rows_per_flush": float(avg_rows_per_flush),
@@ -727,11 +788,15 @@ def run_scan(
             db.end_scan_transaction()
 
     db.begin_scan_transaction()
-    enum_thread = Thread(target=_run_enumeration, name="video-duperz-enumeration", daemon=True)
+    enum_thread = Thread(
+        target=_run_enumeration, name="video-duperz-enumeration", daemon=True
+    )
     enum_thread.start()
 
     if cancel_event is not None:
-        cancel_thread = Thread(target=lambda: (cancel_event.wait(), _notify_event()), daemon=True)
+        cancel_thread = Thread(
+            target=lambda: (cancel_event.wait(), _notify_event()), daemon=True
+        )
         cancel_thread.start()
 
     if scan_plan.requested_worker_target > scan_plan.effective_total_workers:
@@ -780,14 +845,18 @@ def run_scan(
                     )
                     if should_process:
                         while pending_discovered and (
-                            len(pending_discovered) >= db_batch_size or enum_finished or cancel_requested
+                            len(pending_discovered) >= db_batch_size
+                            or enum_finished
+                            or cancel_requested
                         ):
                             chunk = pending_discovered[:db_batch_size]
                             del pending_discovered[: len(chunk)]
                             _process_discovered_batch(chunk)
                             made_progress = True
                         if pending_discovered and (
-                            not futures or (time.perf_counter() - last_discovered_batch_at) >= db_flush_interval_s
+                            not futures
+                            or (time.perf_counter() - last_discovered_batch_at)
+                            >= db_flush_interval_s
                         ):
                             chunk = pending_discovered[:db_batch_size]
                             del pending_discovered[: len(chunk)]
@@ -807,7 +876,9 @@ def run_scan(
                 with state_lock:
                     waiting_items = any(bool(queue) for queue in lane_queues.values())
                     active_count = len(futures)
-                pending_writes = bool(pending_meta_rows or pending_fp_rows or pending_probe_error_rows)
+                pending_writes = bool(
+                    pending_meta_rows or pending_fp_rows or pending_probe_error_rows
+                )
 
                 if cancel_requested and enum_finished and active_count == 0:
                     _flush_pending_analysis_batches(force=True)
@@ -828,7 +899,11 @@ def run_scan(
                 if not made_progress:
                     with event_cond:
                         if not done_futures and enum_queue.empty():
-                            wait_timeout = db_flush_interval_s if (pending_discovered or pending_writes) else None
+                            wait_timeout = (
+                                db_flush_interval_s
+                                if (pending_discovered or pending_writes)
+                                else None
+                            )
                             event_cond.wait(timeout=wait_timeout)
 
         enum_thread.join(timeout=5.0)
@@ -861,7 +936,9 @@ def run_scan(
                 metrics=_collect_metrics(MatchStats()),
             )
 
-        _timed_db_write(db.mark_missing_for_scan, len(present_paths), scan_id, present_paths)
+        _timed_db_write(
+            db.mark_missing_for_scan, len(present_paths), scan_id, present_paths
+        )
         _flush_scan_transaction(force=True)
         _emit_progress("matching", 0, 1, "Matching duplicates", force=True)
         matching_started = time.perf_counter()
@@ -869,11 +946,15 @@ def run_scan(
         edges, match_stats = find_duplicate_edges(items, profile=profile)
         groups = build_duplicate_groups(items=items, edges=edges, profile=profile)
         with state_lock:
-            stage_seconds["matching"] += max(0.0, time.perf_counter() - matching_started)
+            stage_seconds["matching"] += max(
+                0.0, time.perf_counter() - matching_started
+            )
 
         _timed_db_write(db.clear_duplicate_groups, 0, scan_id)
         group_row_count = len(groups) + sum(len(group.items) for group in groups)
-        _timed_db_write(db.insert_duplicate_groups_batch, group_row_count, scan_id, profile, groups)
+        _timed_db_write(
+            db.insert_duplicate_groups_batch, group_row_count, scan_id, profile, groups
+        )
         _flush_scan_transaction(force=True)
 
         db.end_scan_transaction()

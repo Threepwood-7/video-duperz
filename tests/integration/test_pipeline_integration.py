@@ -15,7 +15,11 @@ if TYPE_CHECKING:
 
 
 def _tools_available() -> bool:
-    return bool(shutil.which("ffmpeg") and shutil.which("ffprobe") and importlib.util.find_spec("cv2"))
+    return bool(
+        shutil.which("ffmpeg")
+        and shutil.which("ffprobe")
+        and importlib.util.find_spec("cv2")
+    )
 
 
 def _run_ffmpeg(cmd: list[str]) -> None:

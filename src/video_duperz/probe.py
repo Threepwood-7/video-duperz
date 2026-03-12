@@ -15,7 +15,9 @@ class ProbeError(RuntimeError):
 def ensure_ffprobe_available() -> str:
     path = shutil.which("ffprobe")
     if not path:
-        raise ProbeError("ffprobe not found on PATH. Install ffmpeg and add it to PATH.")
+        raise ProbeError(
+            "ffprobe not found on PATH. Install ffmpeg and add it to PATH."
+        )
     return path
 
 
@@ -69,7 +71,9 @@ def probe_video(path: str) -> VideoMeta:
     height = int(video.get("height") or 0)
     fps = _parse_fps(str(video.get("r_frame_rate", "0/0")))
     codec = str(video.get("codec_name") or "").lower()
-    audio_codec = str(audio_streams[0].get("codec_name") or "").lower() if audio_streams else ""
+    audio_codec = (
+        str(audio_streams[0].get("codec_name") or "").lower() if audio_streams else ""
+    )
     audio_bitrate = int(
         sum(float(s.get("bit_rate") or 0.0) for s in audio_streams)
         or (float(audio_streams[0].get("bit_rate") or 0.0) if audio_streams else 0.0)
@@ -94,7 +98,11 @@ def probe_video(path: str) -> VideoMeta:
     )
     transfer = str(video.get("color_transfer") or "").lower()
     primaries = str(video.get("color_primaries") or "").lower()
-    is_hdr = transfer in {"smpte2084", "arib-std-b67"} or primaries in {"bt2020", "bt2020nc", "bt2020c"}
+    is_hdr = transfer in {"smpte2084", "arib-std-b67"} or primaries in {
+        "bt2020",
+        "bt2020nc",
+        "bt2020c",
+    }
 
     if duration_s <= 0 or width <= 0 or height <= 0:
         raise ProbeError("Invalid video metadata")

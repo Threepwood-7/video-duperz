@@ -29,4 +29,3 @@ def test_scan_set_key_changes_with_profile() -> None:
         extensions=["mp4"],
     )
     assert balanced != aggressive
-

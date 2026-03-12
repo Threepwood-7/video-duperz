@@ -16,7 +16,9 @@ class _FakeDb:
         self.status = "running"
         self._path_to_id: dict[str, int] = {}
 
-    def create_scan(self, profile: str, roots: list[str], extensions: list[str] | None = None) -> int:
+    def create_scan(
+        self, profile: str, roots: list[str], extensions: list[str] | None = None
+    ) -> int:
         return self._scan_id
 
     def begin_scan_transaction(self) -> None:
@@ -57,7 +59,9 @@ class _FakeDb:
         self._next_file_id += 1
         return self._next_file_id
 
-    def load_cached_artifacts_batch(self, files: list[dict[str, object]]) -> dict[str, dict]:
+    def load_cached_artifacts_batch(
+        self, files: list[dict[str, object]]
+    ) -> dict[str, dict]:
         _ = files
         return {}
 
@@ -82,7 +86,9 @@ class _FakeDb:
         _ = rows
         return None
 
-    def save_fingerprint(self, file_id: int, algo_version: int, hashes: list[int]) -> None:
+    def save_fingerprint(
+        self, file_id: int, algo_version: int, hashes: list[int]
+    ) -> None:
         return None
 
     def list_match_items_for_scan(self, scan_id: int, algo_version: int) -> list:
@@ -91,10 +97,14 @@ class _FakeDb:
     def clear_duplicate_groups(self, scan_id: int) -> None:
         return None
 
-    def insert_duplicate_group(self, scan_id: int, profile: str, total_size_bytes: int) -> int:
+    def insert_duplicate_group(
+        self, scan_id: int, profile: str, total_size_bytes: int
+    ) -> int:
         return 1
 
-    def insert_duplicate_groups_batch(self, scan_id: int, profile: str, groups: list[object]) -> list[int]:
+    def insert_duplicate_groups_batch(
+        self, scan_id: int, profile: str, groups: list[object]
+    ) -> list[int]:
         return list(range(1, len(groups) + 1))
 
     def insert_duplicate_item(self, group_id: int, item: object) -> None:
@@ -130,14 +140,22 @@ def _lane_plan_for_roots(
     for lane, root in enumerate(roots):
         root_groups.append([root])
         root_to_group_index[root] = lane
-    effective_total_workers = sum(max(1, int(value)) for value in lane_worker_limits.values())
-    requested = int(requested_worker_target) if requested_worker_target is not None else effective_total_workers
+    effective_total_workers = sum(
+        max(1, int(value)) for value in lane_worker_limits.values()
+    )
+    requested = (
+        int(requested_worker_target)
+        if requested_worker_target is not None
+        else effective_total_workers
+    )
     return SimpleNamespace(
         root_tokens=[],
         root_groups=root_groups,
         root_to_group_index=root_to_group_index,
         matched_volume_identities=set(),
-        lane_worker_limits={int(k): max(1, int(v)) for k, v in lane_worker_limits.items()},
+        lane_worker_limits={
+            int(k): max(1, int(v)) for k, v in lane_worker_limits.items()
+        },
         lane_volume_identities={int(k): [] for k in lane_worker_limits},
         requested_worker_target=max(1, requested),
         effective_total_workers=effective_total_workers,
@@ -157,7 +175,9 @@ def test_run_scan_probe_parallel_lanes_and_telemetry(monkeypatch) -> None:
     lane_by_path = {file.path: file.parallel_lane for file in files}
 
     monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
-    monkeypatch.setattr(pipeline, "enumerate_video_files", lambda **kwargs: (list(files), []))
+    monkeypatch.setattr(
+        pipeline, "enumerate_video_files", lambda **kwargs: (list(files), [])
+    )
     monkeypatch.setattr(
         pipeline,
         "build_physical_drive_scan_plan",
@@ -166,8 +186,12 @@ def test_run_scan_probe_parallel_lanes_and_telemetry(monkeypatch) -> None:
             lane_worker_limits={0: 3, 1: 2, 2: 1},
         ),
     )
-    monkeypatch.setattr(pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats()))
-    monkeypatch.setattr(pipeline, "build_duplicate_groups", lambda items, edges, profile: [])
+    monkeypatch.setattr(
+        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
+    )
+    monkeypatch.setattr(
+        pipeline, "build_duplicate_groups", lambda items, edges, profile: []
+    )
 
     lock = Lock()
     active_total = 0
@@ -182,12 +206,16 @@ def test_run_scan_probe_parallel_lanes_and_telemetry(monkeypatch) -> None:
             active_total += 1
             max_active_total = max(max_active_total, active_total)
             active_by_lane[lane] += 1
-            max_active_by_lane[lane] = max(max_active_by_lane[lane], active_by_lane[lane])
+            max_active_by_lane[lane] = max(
+                max_active_by_lane[lane], active_by_lane[lane]
+            )
         time.sleep(0.01)
         with lock:
             active_by_lane[lane] -= 1
             active_total -= 1
-        return pipeline._AnalyzeOutput(meta=SimpleNamespace(duration_s=1.0), hashes=[11, 22, 33])
+        return pipeline._AnalyzeOutput(
+            meta=SimpleNamespace(duration_s=1.0), hashes=[11, 22, 33]
+        )
 
     monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)
 
@@ -211,11 +239,24 @@ def test_run_scan_probe_parallel_lanes_and_telemetry(monkeypatch) -> None:
     assert result.fingerprinted_files == 6
     assert max_active_total == 3
     assert all(count <= 1 for count in max_active_by_lane.values())
-    assert any(step.worker_limit == 6 for step in progress if step.stage in {"prepare", "probe"})
+    assert any(
+        step.worker_limit == 6
+        for step in progress
+        if step.stage in {"prepare", "probe"}
+    )
     assert any(step.stage == "probe" for step in progress)
-    assert any(step.worker_limit is not None and step.active_workers is not None for step in progress)
-    assert any(step.lane_snapshots for step in progress if step.stage in {"prepare", "probe"})
-    telemetry_frames = [step for step in progress if step.stage in {"prepare", "probe"} and step.lane_snapshots]
+    assert any(
+        step.worker_limit is not None and step.active_workers is not None
+        for step in progress
+    )
+    assert any(
+        step.lane_snapshots for step in progress if step.stage in {"prepare", "probe"}
+    )
+    telemetry_frames = [
+        step
+        for step in progress
+        if step.stage in {"prepare", "probe"} and step.lane_snapshots
+    ]
     assert telemetry_frames
     assert any((step.discovered_files_per_s or 0.0) >= 0.0 for step in telemetry_frames)
     assert any((step.discovered_mib_per_s or 0.0) >= 0.0 for step in telemetry_frames)
@@ -226,14 +267,17 @@ def test_run_scan_probe_parallel_lanes_and_telemetry(monkeypatch) -> None:
     assert any((step.discovered_bytes or 0) > 0 for step in telemetry_frames)
     assert any(
         all(
-            snapshot.discovered_files_per_s >= 0.0 and snapshot.analyzed_files_per_s >= 0.0
+            snapshot.discovered_files_per_s >= 0.0
+            and snapshot.analyzed_files_per_s >= 0.0
             for snapshot in (step.lane_snapshots or [])
         )
         for step in telemetry_frames
     )
 
 
-def test_run_scan_burst_mode_allows_multiple_workers_per_lane_up_to_caps(monkeypatch) -> None:
+def test_run_scan_burst_mode_allows_multiple_workers_per_lane_up_to_caps(
+    monkeypatch,
+) -> None:
     files = [
         _video("lane0-a.mp4", lane=0),
         _video("lane0-b.mp4", lane=0),
@@ -246,7 +290,9 @@ def test_run_scan_burst_mode_allows_multiple_workers_per_lane_up_to_caps(monkeyp
     lane_by_path = {file.path: file.parallel_lane for file in files}
 
     monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
-    monkeypatch.setattr(pipeline, "enumerate_video_files", lambda **kwargs: (list(files), []))
+    monkeypatch.setattr(
+        pipeline, "enumerate_video_files", lambda **kwargs: (list(files), [])
+    )
     monkeypatch.setattr(
         pipeline,
         "build_physical_drive_scan_plan",
@@ -255,8 +301,12 @@ def test_run_scan_burst_mode_allows_multiple_workers_per_lane_up_to_caps(monkeyp
             lane_worker_limits={0: 3, 1: 1},
         ),
     )
-    monkeypatch.setattr(pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats()))
-    monkeypatch.setattr(pipeline, "build_duplicate_groups", lambda items, edges, profile: [])
+    monkeypatch.setattr(
+        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
+    )
+    monkeypatch.setattr(
+        pipeline, "build_duplicate_groups", lambda items, edges, profile: []
+    )
 
     lock = Lock()
     active_total = 0
@@ -271,12 +321,16 @@ def test_run_scan_burst_mode_allows_multiple_workers_per_lane_up_to_caps(monkeyp
             active_total += 1
             max_active_total = max(max_active_total, active_total)
             active_by_lane[lane] += 1
-            max_active_by_lane[lane] = max(max_active_by_lane[lane], active_by_lane[lane])
+            max_active_by_lane[lane] = max(
+                max_active_by_lane[lane], active_by_lane[lane]
+            )
         time.sleep(0.01)
         with lock:
             active_by_lane[lane] -= 1
             active_total -= 1
-        return pipeline._AnalyzeOutput(meta=SimpleNamespace(duration_s=1.0), hashes=[11, 22, 33])
+        return pipeline._AnalyzeOutput(
+            meta=SimpleNamespace(duration_s=1.0), hashes=[11, 22, 33]
+        )
 
     monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)
 
@@ -302,14 +356,18 @@ def test_run_scan_burst_mode_allows_multiple_workers_per_lane_up_to_caps(monkeyp
     assert max_active_total <= 4
 
 
-def test_run_scan_reports_worker_capacity_reduction_when_hard_caps_apply(monkeypatch) -> None:
+def test_run_scan_reports_worker_capacity_reduction_when_hard_caps_apply(
+    monkeypatch,
+) -> None:
     files = [
         _video("lane0-a.mp4", lane=0),
         _video("lane1-a.mp4", lane=1),
     ]
 
     monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
-    monkeypatch.setattr(pipeline, "enumerate_video_files", lambda **kwargs: (list(files), []))
+    monkeypatch.setattr(
+        pipeline, "enumerate_video_files", lambda **kwargs: (list(files), [])
+    )
     monkeypatch.setattr(
         pipeline,
         "build_physical_drive_scan_plan",
@@ -319,8 +377,12 @@ def test_run_scan_reports_worker_capacity_reduction_when_hard_caps_apply(monkeyp
             requested_worker_target=6,
         ),
     )
-    monkeypatch.setattr(pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats()))
-    monkeypatch.setattr(pipeline, "build_duplicate_groups", lambda items, edges, profile: [])
+    monkeypatch.setattr(
+        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
+    )
+    monkeypatch.setattr(
+        pipeline, "build_duplicate_groups", lambda items, edges, profile: []
+    )
     monkeypatch.setattr(
         pipeline,
         "_analyze_file",
@@ -348,10 +410,15 @@ def test_run_scan_reports_worker_capacity_reduction_when_hard_caps_apply(monkeyp
 
     assert any(
         issue.stage == "probe"
-        and "Requested worker capacity (6) reduced to 2 by per-drive hard caps." in issue.message
+        and "Requested worker capacity (6) reduced to 2 by per-drive hard caps."
+        in issue.message
         for issue in result.issues
     )
-    reduction_messages = [step.message for step in progress if "reduced to 2 by per-drive hard caps" in step.message]
+    reduction_messages = [
+        step.message
+        for step in progress
+        if "reduced to 2 by per-drive hard caps" in step.message
+    ]
     assert len(reduction_messages) == 1
 
 
@@ -364,8 +431,12 @@ def test_run_scan_streams_enumeration_into_analysis(monkeypatch) -> None:
     analyze_starts: list[float] = []
 
     monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
-    monkeypatch.setattr(pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats()))
-    monkeypatch.setattr(pipeline, "build_duplicate_groups", lambda items, edges, profile: [])
+    monkeypatch.setattr(
+        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
+    )
+    monkeypatch.setattr(
+        pipeline, "build_duplicate_groups", lambda items, edges, profile: []
+    )
 
     def _fake_enumerate(**kwargs):
         on_file_discovered = kwargs.get("on_file_discovered")
@@ -381,7 +452,9 @@ def test_run_scan_streams_enumeration_into_analysis(monkeypatch) -> None:
     def _fake_analyze(path: str, cached_meta: object | None) -> pipeline._AnalyzeOutput:
         analyze_starts.append(time.perf_counter())
         time.sleep(0.01)
-        return pipeline._AnalyzeOutput(meta=SimpleNamespace(duration_s=1.0), hashes=[11, 22, 33])
+        return pipeline._AnalyzeOutput(
+            meta=SimpleNamespace(duration_s=1.0), hashes=[11, 22, 33]
+        )
 
     monkeypatch.setattr(pipeline, "enumerate_video_files", _fake_enumerate)
     monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)
@@ -413,8 +486,12 @@ def test_run_scan_cancellation_during_streaming_overlap(monkeypatch) -> None:
     cancel_event = Event()
 
     monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
-    monkeypatch.setattr(pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats()))
-    monkeypatch.setattr(pipeline, "build_duplicate_groups", lambda items, edges, profile: [])
+    monkeypatch.setattr(
+        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
+    )
+    monkeypatch.setattr(
+        pipeline, "build_duplicate_groups", lambda items, edges, profile: []
+    )
 
     def _fake_enumerate(**kwargs):
         on_file_discovered = kwargs.get("on_file_discovered")
@@ -431,7 +508,9 @@ def test_run_scan_cancellation_during_streaming_overlap(monkeypatch) -> None:
 
     def _fake_analyze(path: str, cached_meta: object | None) -> pipeline._AnalyzeOutput:
         time.sleep(0.01)
-        return pipeline._AnalyzeOutput(meta=SimpleNamespace(duration_s=1.0), hashes=[11, 22, 33])
+        return pipeline._AnalyzeOutput(
+            meta=SimpleNamespace(duration_s=1.0), hashes=[11, 22, 33]
+        )
 
     monkeypatch.setattr(pipeline, "enumerate_video_files", _fake_enumerate)
     monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)

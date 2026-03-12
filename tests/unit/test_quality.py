@@ -4,7 +4,15 @@ from video_duperz.models import MatchItem
 from video_duperz.quality import choose_keep_file_id, quality_score
 
 
-def _item(file_id: int, width: int, height: int, bitrate: int, codec: str, mtime_ns: int, path: str) -> MatchItem:
+def _item(
+    file_id: int,
+    width: int,
+    height: int,
+    bitrate: int,
+    codec: str,
+    mtime_ns: int,
+    path: str,
+) -> MatchItem:
     return MatchItem(
         file_id=file_id,
         path=path,

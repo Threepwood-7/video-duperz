@@ -109,7 +109,9 @@ class ThumbnailPairWorker(QRunnable):
         self._cache_path_b = cache_path_b
         self._width = width
         self._height = height
-        self._frame_a_pct, self._frame_b_pct = normalize_frame_pair(frame_a_pct, frame_b_pct)
+        self._frame_a_pct, self._frame_b_pct = normalize_frame_pair(
+            frame_a_pct, frame_b_pct
+        )
 
     def run(self) -> None:
         payload = {
@@ -142,7 +144,9 @@ class ThumbnailPairWorker(QRunnable):
         if ok:
             self.signals.ready.emit(payload)
             return
-        self.signals.error.emit({**payload, "message": err or "thumbnail generation failed"})
+        self.signals.error.emit(
+            {**payload, "message": err or "thumbnail generation failed"}
+        )
 
 
 class ExactMatchWorkerSignals(QObject):
@@ -167,7 +171,9 @@ class ExactMatchGroupWorker(QRunnable):
         self._group_key = str(group_key)
         self._files = list(files)
         self._block_mib = max(1, int(block_mib))
-        self._sample_a_pct, self._sample_b_pct = normalize_exact_sample_pair(sample_a_pct, sample_b_pct)
+        self._sample_a_pct, self._sample_b_pct = normalize_exact_sample_pair(
+            sample_a_pct, sample_b_pct
+        )
 
     def run(self) -> None:
         payload = {
@@ -183,7 +189,9 @@ class ExactMatchGroupWorker(QRunnable):
                 size = int(raw.get("size", 0))
                 if file_id <= 0 or not path:
                     continue
-                entries.append(ExactMatchFile(file_id=file_id, path=path, size=max(0, size)))
+                entries.append(
+                    ExactMatchFile(file_id=file_id, path=path, size=max(0, size))
+                )
 
             result = compare_group_files(
                 files=entries,

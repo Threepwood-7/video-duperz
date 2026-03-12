@@ -83,10 +83,20 @@ def test_compare_group_files_label_overflow_reaches_aa(tmp_path: Path) -> None:
         b_path = tmp_path / f"c{cluster:02d}_b.mp4"
         a_path.write_bytes(payload)
         b_path.write_bytes(payload)
-        files.append(ExactMatchFile(file_id=(cluster * 2) + 1, path=str(a_path), size=len(payload)))
-        files.append(ExactMatchFile(file_id=(cluster * 2) + 2, path=str(b_path), size=len(payload)))
+        files.append(
+            ExactMatchFile(
+                file_id=(cluster * 2) + 1, path=str(a_path), size=len(payload)
+            )
+        )
+        files.append(
+            ExactMatchFile(
+                file_id=(cluster * 2) + 2, path=str(b_path), size=len(payload)
+            )
+        )
 
-    result = compare_group_files(files=files, block_mib=1, sample_a_pct=23, sample_b_pct=78)
+    result = compare_group_files(
+        files=files, block_mib=1, sample_a_pct=23, sample_b_pct=78
+    )
     labels = set(result.labels.values())
     assert "●" in labels
     assert "■" in labels

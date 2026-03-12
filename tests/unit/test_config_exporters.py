@@ -79,7 +79,9 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     assert loaded.saved_scan_profiles["My Set"].roots == [str(Path("D:/Videos"))]
 
 
-def test_settings_path_uses_app_name_ini_under_appdata(tmp_path: Path, monkeypatch) -> None:
+def test_settings_path_uses_app_name_ini_under_appdata(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setenv("APPDATA", str(tmp_path))
     path = settings_path()
@@ -87,7 +89,9 @@ def test_settings_path_uses_app_name_ini_under_appdata(tmp_path: Path, monkeypat
     assert path.name == f"{SETTINGS_APP_NAME}.ini"
 
 
-def test_settings_invalid_thumbnail_size_falls_back_to_default(tmp_path: Path, monkeypatch) -> None:
+def test_settings_invalid_thumbnail_size_falls_back_to_default(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setenv("APPDATA", str(tmp_path))
     settings = default_settings()
@@ -107,26 +111,34 @@ def test_settings_recent_roots_are_normalized(tmp_path: Path, monkeypatch) -> No
     save_settings(settings)
 
     path = settings_path()
-    _set_qsettings_value(path, "recent_scan_roots", ["  D:/Videos ", "", "d:/videos", "E:/Archive"])
+    _set_qsettings_value(
+        path, "recent_scan_roots", ["  D:/Videos ", "", "d:/videos", "E:/Archive"]
+    )
 
     loaded = load_settings()
     assert loaded.recent_scan_roots == ["D:/Videos", "E:/Archive"]
 
 
-def test_settings_invalid_column_widths_fall_back_to_empty(tmp_path: Path, monkeypatch) -> None:
+def test_settings_invalid_column_widths_fall_back_to_empty(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setenv("APPDATA", str(tmp_path))
     settings = default_settings()
     save_settings(settings)
 
     path = settings_path()
-    _set_qsettings_value(path, "results_table_column_widths", [100, -2, 80, 90, 70, 60, 50, 40])
+    _set_qsettings_value(
+        path, "results_table_column_widths", [100, -2, 80, 90, 70, 60, 50, 40]
+    )
 
     loaded = load_settings()
     assert loaded.results_table_column_widths == []
 
 
-def test_settings_thumbnail_frame_pair_normalization(tmp_path: Path, monkeypatch) -> None:
+def test_settings_thumbnail_frame_pair_normalization(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setenv("APPDATA", str(tmp_path))
     settings = default_settings()
@@ -193,18 +205,18 @@ def test_settings_saved_views_normalization(tmp_path: Path, monkeypatch) -> None
         path,
         "saved_column_views",
         {
-        "good": {
-            "widths": [80] * 19,
-            "visibility": [True] * 19,
-        },
-        "bad_short": {
-            "widths": [80] * 3,
-            "visibility": [True] * 19,
-        },
-        "bad_all_hidden": {
-            "widths": [80] * 19,
-            "visibility": [False] * 19,
-        },
+            "good": {
+                "widths": [80] * 19,
+                "visibility": [True] * 19,
+            },
+            "bad_short": {
+                "widths": [80] * 3,
+                "visibility": [True] * 19,
+            },
+            "bad_all_hidden": {
+                "widths": [80] * 19,
+                "visibility": [False] * 19,
+            },
         },
     )
 
@@ -215,7 +227,9 @@ def test_settings_saved_views_normalization(tmp_path: Path, monkeypatch) -> None
     assert all(loaded.saved_column_views["bad_all_hidden"]["visibility"])
 
 
-def test_settings_saved_views_with_old_column_counts_are_ignored(tmp_path: Path, monkeypatch) -> None:
+def test_settings_saved_views_with_old_column_counts_are_ignored(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setenv("APPDATA", str(tmp_path))
     settings = default_settings()
@@ -237,7 +251,9 @@ def test_settings_saved_views_with_old_column_counts_are_ignored(tmp_path: Path,
     assert "legacy" not in loaded.saved_column_views
 
 
-def test_settings_saved_scan_profiles_normalization(tmp_path: Path, monkeypatch) -> None:
+def test_settings_saved_scan_profiles_normalization(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setenv("APPDATA", str(tmp_path))
     settings = default_settings()
@@ -248,15 +264,23 @@ def test_settings_saved_scan_profiles_normalization(tmp_path: Path, monkeypatch)
         path,
         "saved_scan_profiles",
         {
-        "  Good  ": {
-            "scan_set_key": "",
-            "roots": [" D:/Videos ", "d:/videos"],
-            "similarity_profile": "BALANCED",
-            "extensions": ["MP4", ".mkv", "mp4"],
-            "updated_at": "",
-        },
-        "": {"roots": ["D:/Videos"], "similarity_profile": "balanced", "extensions": ["mp4"]},
-        "BadRootsType": {"roots": "D:/Videos", "similarity_profile": "balanced", "extensions": ["mp4"]},
+            "  Good  ": {
+                "scan_set_key": "",
+                "roots": [" D:/Videos ", "d:/videos"],
+                "similarity_profile": "BALANCED",
+                "extensions": ["MP4", ".mkv", "mp4"],
+                "updated_at": "",
+            },
+            "": {
+                "roots": ["D:/Videos"],
+                "similarity_profile": "balanced",
+                "extensions": ["mp4"],
+            },
+            "BadRootsType": {
+                "roots": "D:/Videos",
+                "similarity_profile": "balanced",
+                "extensions": ["mp4"],
+            },
         },
     )
 
@@ -270,7 +294,9 @@ def test_settings_saved_scan_profiles_normalization(tmp_path: Path, monkeypatch)
     assert "BadRootsType" not in loaded.saved_scan_profiles
 
 
-def test_settings_drive_worker_overrides_and_probe_mode_normalization(tmp_path: Path, monkeypatch) -> None:
+def test_settings_drive_worker_overrides_and_probe_mode_normalization(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setenv("APPDATA", str(tmp_path))
     settings = default_settings()
@@ -290,7 +316,10 @@ def test_settings_drive_worker_overrides_and_probe_mode_normalization(tmp_path: 
     _set_qsettings_value(path, "probe_worker_mode", "INVALID")
 
     loaded = load_settings()
-    assert loaded.drive_worker_overrides == {"volume:a": 1, "volume:c": MAX_DRIVE_WORKERS}
+    assert loaded.drive_worker_overrides == {
+        "volume:a": 1,
+        "volume:c": MAX_DRIVE_WORKERS,
+    }
     assert loaded.probe_worker_mode == "balanced"
 
     _set_qsettings_value(path, "probe_worker_mode", "burst")
@@ -316,7 +345,9 @@ def test_settings_scan_tuning_normalization(tmp_path: Path, monkeypatch) -> None
     assert loaded.scan_db_flush_interval_ms == 2000
     assert loaded.scan_enum_queue_max == 256
     assert loaded.scan_progress_emit_interval_ms == 50
-    assert loaded.scan_progress_emit_every_files == settings.scan_progress_emit_every_files
+    assert (
+        loaded.scan_progress_emit_every_files == settings.scan_progress_emit_every_files
+    )
 
 
 def test_export_scan_outputs_csv_and_json(tmp_path: Path) -> None:
@@ -376,7 +407,9 @@ def test_export_scan_outputs_csv_and_json(tmp_path: Path) -> None:
         db.save_fingerprint(file_id=file_id, algo_version=1, hashes=[1] * 12)
         db.save_fingerprint(file_id=file_id_2, algo_version=1, hashes=[1] * 12)
 
-        group_id = db.insert_duplicate_group(scan_id=scan_id, profile="balanced", total_size_bytes=123)
+        group_id = db.insert_duplicate_group(
+            scan_id=scan_id, profile="balanced", total_size_bytes=123
+        )
         db.insert_duplicate_item(
             group_id,
             DuplicateItem(

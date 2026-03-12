@@ -110,7 +110,11 @@ def list_physical_drives(roots: list[str] | None = None) -> list[PhysicalDriveIn
             usage = shutil.disk_usage(root)
             total_bytes = int(usage.total)
             free_bytes = int(usage.free)
-            used_percent = (((total_bytes - free_bytes) / total_bytes) * 100.0) if total_bytes > 0 else 0.0
+            used_percent = (
+                (((total_bytes - free_bytes) / total_bytes) * 100.0)
+                if total_bytes > 0
+                else 0.0
+            )
         except OSError:
             pass
 
@@ -212,7 +216,9 @@ def build_physical_drive_scan_plan(
         )
         lane_volume_identities[lane_idx] = lane_identities
         if lane_identities:
-            lane_caps = [normalized_overrides.get(identity, 1) for identity in lane_identities]
+            lane_caps = [
+                normalized_overrides.get(identity, 1) for identity in lane_identities
+            ]
             lane_limit = min(lane_caps) if lane_caps else 1
         else:
             lane_limit = 1
@@ -234,7 +240,9 @@ def build_physical_drive_scan_plan(
     )
 
 
-def _group_roots_by_token_connectivity(root_tokens: list[RootTokens]) -> list[list[str]]:
+def _group_roots_by_token_connectivity(
+    root_tokens: list[RootTokens],
+) -> list[list[str]]:
     if not root_tokens:
         return []
     parents = list(range(len(root_tokens)))
@@ -280,13 +288,23 @@ def _enumerate_root(
     found: list[VideoRecord] = []
     issues: list[ScanIssue] = []
     if not is_local_windows_path(root):
-        issues.append(ScanIssue(stage="enumerate", path=root, message="Network paths are not supported in v1"))
+        issues.append(
+            ScanIssue(
+                stage="enumerate",
+                path=root,
+                message="Network paths are not supported in v1",
+            )
+        )
         return found, issues
     if not os.path.exists(root):
-        issues.append(ScanIssue(stage="enumerate", path=root, message="Path does not exist"))
+        issues.append(
+            ScanIssue(stage="enumerate", path=root, message="Path does not exist")
+        )
         return found, issues
     if not os.path.isdir(root):
-        issues.append(ScanIssue(stage="enumerate", path=root, message="Path is not a directory"))
+        issues.append(
+            ScanIssue(stage="enumerate", path=root, message="Path is not a directory")
+        )
         return found, issues
 
     stack: list[str] = [root]
@@ -321,7 +339,13 @@ def _enumerate_root(
                     try:
                         st = entry.stat(follow_symlinks=False)
                     except OSError as exc:
-                        issues.append(ScanIssue(stage="enumerate", path=entry.path, message=f"Unreadable file: {exc}"))
+                        issues.append(
+                            ScanIssue(
+                                stage="enumerate",
+                                path=entry.path,
+                                message=f"Unreadable file: {exc}",
+                            )
+                        )
                         continue
                     found.append(
                         VideoRecord(
@@ -386,14 +410,20 @@ def enumerate_video_files(
             current = completed_roots
             active = active_workers
         if progress_cb:
-            progress_cb(current, root_count, f"Enumerated {root} [workers {active}/{worker_count}]")
+            progress_cb(
+                current,
+                root_count,
+                f"Enumerated {root} [workers {active}/{worker_count}]",
+            )
 
     def _set_worker_delta(delta: int) -> None:
         nonlocal active_workers
         with progress_lock:
             active_workers = max(0, active_workers + delta)
 
-    def _enumerate_group(lane_index: int, group_roots: list[str]) -> tuple[list[VideoRecord], list[ScanIssue]]:
+    def _enumerate_group(
+        lane_index: int, group_roots: list[str]
+    ) -> tuple[list[VideoRecord], list[ScanIssue]]:
         group_found: list[VideoRecord] = []
         group_issues: list[ScanIssue] = []
         _set_worker_delta(1)
@@ -424,7 +454,9 @@ def enumerate_video_files(
             issues.extend(group_issues)
     else:
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            futures: dict[Future[tuple[list[VideoRecord], list[ScanIssue]]], tuple[int, list[str]]] = {
+            futures: dict[
+                Future[tuple[list[VideoRecord], list[ScanIssue]]], tuple[int, list[str]]
+            ] = {
                 executor.submit(_enumerate_group, lane_idx, group): (lane_idx, group)
                 for lane_idx, group in enumerate(groups)
             }
@@ -434,7 +466,13 @@ def enumerate_video_files(
                     group_found, group_issues = future.result()
                 except Exception as exc:
                     group_path = ", ".join(group)
-                    issues.append(ScanIssue(stage="enumerate", path=group_path, message=f"Worker failed: {exc}"))
+                    issues.append(
+                        ScanIssue(
+                            stage="enumerate",
+                            path=group_path,
+                            message=f"Worker failed: {exc}",
+                        )
+                    )
                     continue
                 found.extend(group_found)
                 issues.extend(group_issues)

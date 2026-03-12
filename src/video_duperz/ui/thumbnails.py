@@ -37,7 +37,9 @@ def normalize_thumbnail_size_key(size_key: str | None) -> str:
 
 
 def thumbnail_dimensions(size_key: str) -> tuple[int, int]:
-    return THUMBNAIL_SIZES.get(normalize_thumbnail_size_key(size_key), THUMBNAIL_SIZES[DEFAULT_THUMBNAIL_SIZE])
+    return THUMBNAIL_SIZES.get(
+        normalize_thumbnail_size_key(size_key), THUMBNAIL_SIZES[DEFAULT_THUMBNAIL_SIZE]
+    )
 
 
 def thumbnail_cache_dir() -> Path:
@@ -77,7 +79,9 @@ def build_thumbnail_cache_key(
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
 
-def thumbnail_cache_path(path: str, size: int, mtime_ns: int, size_key: str, frame_pct: int, slot: str) -> Path:
+def thumbnail_cache_path(
+    path: str, size: int, mtime_ns: int, size_key: str, frame_pct: int, slot: str
+) -> Path:
     cache_key = build_thumbnail_cache_key(
         path=path,
         size=size,
@@ -98,12 +102,18 @@ def thumbnail_pair_cache_paths(
     frame_b_pct: int,
 ) -> tuple[Path, Path]:
     a, b = normalize_frame_pair(frame_a_pct, frame_b_pct)
-    cache_a = thumbnail_cache_path(path, size=size, mtime_ns=mtime_ns, size_key=size_key, frame_pct=a, slot="a")
-    cache_b = thumbnail_cache_path(path, size=size, mtime_ns=mtime_ns, size_key=size_key, frame_pct=b, slot="b")
+    cache_a = thumbnail_cache_path(
+        path, size=size, mtime_ns=mtime_ns, size_key=size_key, frame_pct=a, slot="a"
+    )
+    cache_b = thumbnail_cache_path(
+        path, size=size, mtime_ns=mtime_ns, size_key=size_key, frame_pct=b, slot="b"
+    )
     return cache_a, cache_b
 
 
-def _read_preview_frame(path: str, frame_pct: int) -> tuple[bool, np.ndarray | None, str | None]:
+def _read_preview_frame(
+    path: str, frame_pct: int
+) -> tuple[bool, np.ndarray | None, str | None]:
     if cv2 is None:
         return False, None, "opencv unavailable"
 
@@ -185,10 +195,14 @@ def extract_thumbnail_pair(
     frame_b_pct: int,
 ) -> tuple[bool, str | None]:
     a, b = normalize_frame_pair(frame_a_pct, frame_b_pct)
-    ok_a, err_a = extract_thumbnail_at(path, output_path_a, target_w=target_w, target_h=target_h, frame_pct=a)
+    ok_a, err_a = extract_thumbnail_at(
+        path, output_path_a, target_w=target_w, target_h=target_h, frame_pct=a
+    )
     if not ok_a:
         return False, err_a
-    ok_b, err_b = extract_thumbnail_at(path, output_path_b, target_w=target_w, target_h=target_h, frame_pct=b)
+    ok_b, err_b = extract_thumbnail_at(
+        path, output_path_b, target_w=target_w, target_h=target_h, frame_pct=b
+    )
     if not ok_b:
         return False, err_b
     return True, None

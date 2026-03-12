@@ -136,7 +136,9 @@ class ResultsView(QWidget):
         self._filter_exclude_name = ""
         self._filter_exclude_path = ""
         self._thumbnail_size_key = "96x54"
-        self._thumbnail_w, self._thumbnail_h = thumbnail_dimensions(self._thumbnail_size_key)
+        self._thumbnail_w, self._thumbnail_h = thumbnail_dimensions(
+            self._thumbnail_size_key
+        )
         self._frame_a_pct, self._frame_b_pct = normalize_frame_pair(23, 77)
         self._thumbnail_serial = 0
         self._thumbnail_token = "rows-0"
@@ -151,7 +153,9 @@ class ResultsView(QWidget):
         self._rebuilding_table = False
         self._scan_context_note = ""
         self._identical_block_mib = 1
-        self._identical_sample_a_pct, self._identical_sample_b_pct = self._normalize_identical_sample_pair(23, 78)
+        self._identical_sample_a_pct, self._identical_sample_b_pct = (
+            self._normalize_identical_sample_pair(23, 78)
+        )
         self._dataset_serial = 0
         self._dataset_token = "groups-0"
         self._group_compare_payloads: dict[str, list[dict[str, object]]] = {}
@@ -169,7 +173,9 @@ class ResultsView(QWidget):
         self.thumbnail_note = QLabel("", self)
         self.thumbnail_note.setVisible(False)
         if not self._thumbnails_enabled:
-            self.thumbnail_note.setText("Thumbnail previews disabled: opencv-python is not installed.")
+            self.thumbnail_note.setText(
+                "Thumbnail previews disabled: opencv-python is not installed."
+            )
             self.thumbnail_note.setVisible(True)
 
         self.filter_toolbar = QWidget(self)
@@ -200,12 +206,22 @@ class ResultsView(QWidget):
 
         self.results_table = QTableWidget(0, len(RESULTS_HEADERS), self)
         self.results_table.setHorizontalHeaderLabels(RESULTS_HEADERS)
-        self.results_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.results_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+        self.results_table.setSelectionBehavior(
+            QTableWidget.SelectionBehavior.SelectRows
+        )
+        self.results_table.setSelectionMode(
+            QTableWidget.SelectionMode.ExtendedSelection
+        )
         self.results_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.results_table.setIconSize(QSize(self._combined_thumbnail_width(), self._thumbnail_h))
-        self.results_table.horizontalHeader().sectionResized.connect(self._on_column_resized)
-        self.results_table.verticalScrollBar().valueChanged.connect(self._on_results_scrolled)
+        self.results_table.setIconSize(
+            QSize(self._combined_thumbnail_width(), self._thumbnail_h)
+        )
+        self.results_table.horizontalHeader().sectionResized.connect(
+            self._on_column_resized
+        )
+        self.results_table.verticalScrollBar().valueChanged.connect(
+            self._on_results_scrolled
+        )
         self.results_table.itemChanged.connect(self._on_item_changed)
 
         self.filter_include_name_edit.textChanged.connect(self._on_filter_changed)
@@ -228,8 +244,12 @@ class ResultsView(QWidget):
     def _install_shortcuts(self) -> None:
         self._shortcut_delete = QShortcut(QKeySequence("Delete"), self.results_table)
         self._shortcut_delete.activated.connect(self.request_soft_delete_selected)
-        self._shortcut_shift_delete = QShortcut(QKeySequence("Shift+Delete"), self.results_table)
-        self._shortcut_shift_delete.activated.connect(self.request_permanent_delete_selected)
+        self._shortcut_shift_delete = QShortcut(
+            QKeySequence("Shift+Delete"), self.results_table
+        )
+        self._shortcut_shift_delete.activated.connect(
+            self.request_permanent_delete_selected
+        )
         self._shortcut_enter = QShortcut(QKeySequence("Return"), self.results_table)
         self._shortcut_enter.activated.connect(self.open_current_in_default_player)
         self._shortcut_enter_num = QShortcut(QKeySequence("Enter"), self.results_table)
@@ -240,7 +260,9 @@ class ResultsView(QWidget):
         self._shortcut_mediainfo.activated.connect(self.launch_mediainfo)
 
     def set_column_widths(self, widths: list[int]) -> None:
-        self._column_widths = self._normalize_column_widths(widths, expected_count=self.results_table.columnCount())
+        self._column_widths = self._normalize_column_widths(
+            widths, expected_count=self.results_table.columnCount()
+        )
         if self._column_widths:
             self._set_table_column_widths(self._column_widths)
 
@@ -255,14 +277,19 @@ class ResultsView(QWidget):
         return list(RESULTS_HEADERS)
 
     def set_column_visibility(self, visibility: list[bool]) -> None:
-        normalized = self._normalize_column_visibility(visibility, expected_count=self.results_table.columnCount())
+        normalized = self._normalize_column_visibility(
+            visibility, expected_count=self.results_table.columnCount()
+        )
         if not normalized:
             return
         for index, visible in enumerate(normalized):
             self.results_table.setColumnHidden(index, not visible)
 
     def column_visibility(self) -> list[bool]:
-        return [not self.results_table.isColumnHidden(index) for index in range(self.results_table.columnCount())]
+        return [
+            not self.results_table.isColumnHidden(index)
+            for index in range(self.results_table.columnCount())
+        ]
 
     def set_column_visible(self, index: int, visible: bool) -> None:
         if index < 0 or index >= self.results_table.columnCount():
@@ -279,7 +306,9 @@ class ResultsView(QWidget):
             return
         self._thumbnail_size_key = normalized
         self._thumbnail_w, self._thumbnail_h = thumbnail_dimensions(normalized)
-        self.results_table.setIconSize(QSize(self._combined_thumbnail_width(), self._thumbnail_h))
+        self.results_table.setIconSize(
+            QSize(self._combined_thumbnail_width(), self._thumbnail_h)
+        )
         if self._groups:
             self._rebuild_results_table()
 
@@ -291,9 +320,13 @@ class ResultsView(QWidget):
         if self._groups:
             self._rebuild_results_table()
 
-    def set_identical_compare_config(self, block_mib: int, sample_a_pct: int, sample_b_pct: int) -> None:
+    def set_identical_compare_config(
+        self, block_mib: int, sample_a_pct: int, sample_b_pct: int
+    ) -> None:
         normalized_block = self._normalize_identical_block_mib(block_mib)
-        normalized_a, normalized_b = self._normalize_identical_sample_pair(sample_a_pct, sample_b_pct)
+        normalized_a, normalized_b = self._normalize_identical_sample_pair(
+            sample_a_pct, sample_b_pct
+        )
         if (
             normalized_block == self._identical_block_mib
             and normalized_a == self._identical_sample_a_pct
@@ -317,7 +350,9 @@ class ResultsView(QWidget):
         return max(1, min(64, parsed))
 
     @staticmethod
-    def _normalize_identical_sample_pair(a_value: object, b_value: object) -> tuple[int, int]:
+    def _normalize_identical_sample_pair(
+        a_value: object, b_value: object
+    ) -> tuple[int, int]:
         def _normalize_percent(value: object, default: int) -> int:
             try:
                 parsed = int(value)
@@ -358,10 +393,18 @@ class ResultsView(QWidget):
         self._update_info_label()
 
     def _on_filter_changed(self, _text: str) -> None:
-        self._filter_include_name = self.filter_include_name_edit.text().strip().casefold()
-        self._filter_include_path = self.filter_include_path_edit.text().strip().casefold()
-        self._filter_exclude_name = self.filter_exclude_name_edit.text().strip().casefold()
-        self._filter_exclude_path = self.filter_exclude_path_edit.text().strip().casefold()
+        self._filter_include_name = (
+            self.filter_include_name_edit.text().strip().casefold()
+        )
+        self._filter_include_path = (
+            self.filter_include_path_edit.text().strip().casefold()
+        )
+        self._filter_exclude_name = (
+            self.filter_exclude_name_edit.text().strip().casefold()
+        )
+        self._filter_exclude_path = (
+            self.filter_exclude_path_edit.text().strip().casefold()
+        )
         self._rebuild_results_table()
 
     def _rebuild_results_table(self) -> None:
@@ -378,7 +421,9 @@ class ResultsView(QWidget):
                 group_key = self._group_key(group)
                 cached_labels = self._group_compare_cached_labels.get(group_key, {})
                 cached_errors = self._group_compare_cached_errors.get(group_key, {})
-                cached_group_error = self._group_compare_cached_group_error.get(group_key, "")
+                cached_group_error = self._group_compare_cached_group_error.get(
+                    group_key, ""
+                )
                 self._group_rows_visible.setdefault(group_key, [])
                 for item in group.items:
                     row = self.results_table.rowCount()
@@ -405,10 +450,14 @@ class ResultsView(QWidget):
 
                     check_item = QTableWidgetItem("")
                     check_item.setFlags(
-                        Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsUserCheckable
+                        Qt.ItemFlag.ItemIsEnabled
+                        | Qt.ItemFlag.ItemIsSelectable
+                        | Qt.ItemFlag.ItemIsUserCheckable
                     )
                     check_item.setCheckState(
-                        Qt.CheckState.Checked if item.file_id in self._checked_file_ids else Qt.CheckState.Unchecked
+                        Qt.CheckState.Checked
+                        if item.file_id in self._checked_file_ids
+                        else Qt.CheckState.Unchecked
                     )
                     self.results_table.setItem(row, COL_CHECK, check_item)
 
@@ -420,31 +469,77 @@ class ResultsView(QWidget):
                         identical_item.setToolTip(tooltip)
                     self.results_table.setItem(row, COL_IDENTICAL, identical_item)
 
-                    thumb_item = QTableWidgetItem("Loading..." if self._thumbnails_enabled else "N/A")
+                    thumb_item = QTableWidgetItem(
+                        "Loading..." if self._thumbnails_enabled else "N/A"
+                    )
                     thumb_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                     self.results_table.setItem(row, COL_THUMB, thumb_item)
 
                     file_path = Path(item.path)
-                    self.results_table.setItem(row, COL_FILE_NAME, QTableWidgetItem(file_path.name))
-                    self.results_table.setItem(row, COL_SIZE, QTableWidgetItem(f"{item.size:,}"))
-                    self.results_table.setItem(row, COL_RESOLUTION, QTableWidgetItem(f"{item.width}x{item.height}"))
-                    self.results_table.setItem(row, COL_DURATION, QTableWidgetItem(f"{item.duration_s:.1f}s"))
-                    self.results_table.setItem(row, COL_VIDEO_CODEC, QTableWidgetItem(item.codec))
-                    self.results_table.setItem(row, COL_AUDIO_CODEC, QTableWidgetItem(item.audio_codec or ""))
-                    self.results_table.setItem(row, COL_AUDIO_BITRATE, QTableWidgetItem(str(item.audio_bitrate)))
-                    self.results_table.setItem(row, COL_AUDIO_LANGS, QTableWidgetItem(item.audio_languages or ""))
-                    self.results_table.setItem(row, COL_SUB_LANGS, QTableWidgetItem(item.subtitle_languages or ""))
-                    self.results_table.setItem(row, COL_HDR, QTableWidgetItem("Yes" if item.is_hdr else "No"))
-                    self.results_table.setItem(row, COL_BITRATE, QTableWidgetItem(str(item.bitrate)))
-                    self.results_table.setItem(row, COL_SIMILARITY, QTableWidgetItem(f"{item.similarity_score:.3f}"))
-                    self.results_table.setItem(row, COL_LAST_MODIFIED, QTableWidgetItem(self._fmt_mtime(item.mtime_ns)))
-                    self.results_table.setItem(row, COL_PARENT_DIR, QTableWidgetItem(str(file_path.parent)))
-                    self.results_table.setItem(row, COL_FULL_PATH, QTableWidgetItem(item.path))
+                    self.results_table.setItem(
+                        row, COL_FILE_NAME, QTableWidgetItem(file_path.name)
+                    )
+                    self.results_table.setItem(
+                        row, COL_SIZE, QTableWidgetItem(f"{item.size:,}")
+                    )
+                    self.results_table.setItem(
+                        row,
+                        COL_RESOLUTION,
+                        QTableWidgetItem(f"{item.width}x{item.height}"),
+                    )
+                    self.results_table.setItem(
+                        row, COL_DURATION, QTableWidgetItem(f"{item.duration_s:.1f}s")
+                    )
+                    self.results_table.setItem(
+                        row, COL_VIDEO_CODEC, QTableWidgetItem(item.codec)
+                    )
+                    self.results_table.setItem(
+                        row, COL_AUDIO_CODEC, QTableWidgetItem(item.audio_codec or "")
+                    )
+                    self.results_table.setItem(
+                        row,
+                        COL_AUDIO_BITRATE,
+                        QTableWidgetItem(str(item.audio_bitrate)),
+                    )
+                    self.results_table.setItem(
+                        row,
+                        COL_AUDIO_LANGS,
+                        QTableWidgetItem(item.audio_languages or ""),
+                    )
+                    self.results_table.setItem(
+                        row,
+                        COL_SUB_LANGS,
+                        QTableWidgetItem(item.subtitle_languages or ""),
+                    )
+                    self.results_table.setItem(
+                        row, COL_HDR, QTableWidgetItem("Yes" if item.is_hdr else "No")
+                    )
+                    self.results_table.setItem(
+                        row, COL_BITRATE, QTableWidgetItem(str(item.bitrate))
+                    )
+                    self.results_table.setItem(
+                        row,
+                        COL_SIMILARITY,
+                        QTableWidgetItem(f"{item.similarity_score:.3f}"),
+                    )
+                    self.results_table.setItem(
+                        row,
+                        COL_LAST_MODIFIED,
+                        QTableWidgetItem(self._fmt_mtime(item.mtime_ns)),
+                    )
+                    self.results_table.setItem(
+                        row, COL_PARENT_DIR, QTableWidgetItem(str(file_path.parent))
+                    )
+                    self.results_table.setItem(
+                        row, COL_FULL_PATH, QTableWidgetItem(item.path)
+                    )
 
                     self._row_group_keys[row] = group_key
                     self._group_rows_visible[group_key].append(row)
 
-                    self._apply_row_style(row=row, group_index=group_index, bold=item.keep_default)
+                    self._apply_row_style(
+                        row=row, group_index=group_index, bold=item.keep_default
+                    )
                     self._thumbnail_rows[item.file_id] = row
                     self._queue_thumbnail(
                         row_token=self._thumbnail_token,
@@ -504,9 +599,21 @@ class ResultsView(QWidget):
                 ),
             )
         if self._sort_mode == SORT_ROW_SIZE_DESC:
-            return [replace(group, items=self._sorted_group_items(group.items, larger_first=True)) for group in filtered]
+            return [
+                replace(
+                    group,
+                    items=self._sorted_group_items(group.items, larger_first=True),
+                )
+                for group in filtered
+            ]
         if self._sort_mode == SORT_ROW_SIZE_ASC:
-            return [replace(group, items=self._sorted_group_items(group.items, larger_first=False)) for group in filtered]
+            return [
+                replace(
+                    group,
+                    items=self._sorted_group_items(group.items, larger_first=False),
+                )
+                for group in filtered
+            ]
         if self._sort_mode == SORT_GROUP_SPREAD_DESC:
             return sorted(
                 filtered,
@@ -548,9 +655,13 @@ class ResultsView(QWidget):
             return False
         if self._filter_exclude_name and self._filter_exclude_name in file_name:
             return False
-        return not (self._filter_exclude_path and self._filter_exclude_path in full_path)
+        return not (
+            self._filter_exclude_path and self._filter_exclude_path in full_path
+        )
 
-    def _sorted_group_items(self, items: list[DuplicateItem], larger_first: bool) -> list[DuplicateItem]:
+    def _sorted_group_items(
+        self, items: list[DuplicateItem], larger_first: bool
+    ) -> list[DuplicateItem]:
         if larger_first:
             return sorted(
                 items,
@@ -595,7 +706,9 @@ class ResultsView(QWidget):
         file_ids = sorted(int(item.file_id) for item in group.items)
         return "files:" + ",".join(str(file_id) for file_id in file_ids)
 
-    def _build_group_compare_payloads(self, groups: list[DuplicateGroup]) -> dict[str, list[dict[str, object]]]:
+    def _build_group_compare_payloads(
+        self, groups: list[DuplicateGroup]
+    ) -> dict[str, list[dict[str, object]]]:
         payloads: dict[str, list[dict[str, object]]] = {}
         for group in groups:
             group_key = self._group_key(group)
@@ -654,9 +767,15 @@ class ResultsView(QWidget):
             group_key = self._row_group_keys.get(row)
             if not group_key:
                 continue
-            if group_key in self._group_compare_cached_labels or group_key in self._group_compare_cached_group_error:
+            if (
+                group_key in self._group_compare_cached_labels
+                or group_key in self._group_compare_cached_group_error
+            ):
                 continue
-            if group_key == self._group_compare_running_key or group_key in self._group_compare_pending_set:
+            if (
+                group_key == self._group_compare_running_key
+                or group_key in self._group_compare_pending_set
+            ):
                 continue
             payload = self._group_compare_payloads.get(group_key, [])
             if len(payload) < 2:
@@ -674,7 +793,10 @@ class ResultsView(QWidget):
         while self._group_compare_pending:
             group_key = self._group_compare_pending.popleft()
             self._group_compare_pending_set.discard(group_key)
-            if group_key in self._group_compare_cached_labels or group_key in self._group_compare_cached_group_error:
+            if (
+                group_key in self._group_compare_cached_labels
+                or group_key in self._group_compare_cached_group_error
+            ):
                 continue
             payload = self._group_compare_payloads.get(group_key, [])
             if len(payload) < 2:
@@ -749,7 +871,9 @@ class ResultsView(QWidget):
         group_key = str(payload.get("group_key", ""))
         self._group_compare_cached_labels[group_key] = {}
         self._group_compare_cached_errors[group_key] = {}
-        self._group_compare_cached_group_error[group_key] = str(payload.get("message", "")).strip()
+        self._group_compare_cached_group_error[group_key] = str(
+            payload.get("message", "")
+        ).strip()
         self._group_compare_running_key = None
         self._apply_group_compare_result(group_key)
         self._start_next_group_compare()
@@ -959,13 +1083,19 @@ class ResultsView(QWidget):
             self._checked_file_ids.discard(meta.file_id)
 
     def _quality_score_for_row(self, meta: RowMeta) -> float:
-        return self._quality_score_for_dimensions(meta.width, meta.height, meta.bitrate, meta.codec)
+        return self._quality_score_for_dimensions(
+            meta.width, meta.height, meta.bitrate, meta.codec
+        )
 
     def _quality_score_for_item(self, item: DuplicateItem) -> float:
-        return self._quality_score_for_dimensions(item.width, item.height, item.bitrate, item.codec)
+        return self._quality_score_for_dimensions(
+            item.width, item.height, item.bitrate, item.codec
+        )
 
     @staticmethod
-    def _quality_score_for_dimensions(width: int, height: int, bitrate: int, codec: str) -> float:
+    def _quality_score_for_dimensions(
+        width: int, height: int, bitrate: int, codec: str
+    ) -> float:
         # Same scoring model used in duplicate "keep best" decision.
         pixels = float(width * height)
         return 0.65 * pixels + 0.25 * float(bitrate) + 0.10 * codec_rank(codec)
@@ -1046,7 +1176,9 @@ class ResultsView(QWidget):
             check_item = self.results_table.item(row, COL_CHECK)
             if check_item is None:
                 continue
-            check_item.setCheckState(Qt.CheckState.Unchecked if row in keep_rows else Qt.CheckState.Checked)
+            check_item.setCheckState(
+                Qt.CheckState.Unchecked if row in keep_rows else Qt.CheckState.Checked
+            )
 
     def request_soft_delete_selected(self) -> None:
         self._emit_delete_request(mode="rename")
@@ -1077,7 +1209,10 @@ class ResultsView(QWidget):
         checked_rows: list[int] = []
         for row in range(self.results_table.rowCount()):
             check_item = self.results_table.item(row, COL_CHECK)
-            if check_item is not None and check_item.checkState() == Qt.CheckState.Checked:
+            if (
+                check_item is not None
+                and check_item.checkState() == Qt.CheckState.Checked
+            ):
                 checked_rows.append(row)
         if checked_rows:
             return checked_rows
@@ -1134,7 +1269,9 @@ class ResultsView(QWidget):
             self.status_message.emit("Launched MediaInfo.")
         except FileNotFoundError:
             if not self._mediainfo_missing_notified:
-                QMessageBox.warning(self, "MediaInfo Missing", "mediainfo executable not found on PATH.")
+                QMessageBox.warning(
+                    self, "MediaInfo Missing", "mediainfo executable not found on PATH."
+                )
                 self._mediainfo_missing_notified = True
             self.status_message.emit("mediainfo is not installed or not on PATH.")
         except Exception as exc:
@@ -1191,7 +1328,10 @@ class ResultsView(QWidget):
             self._applying_column_widths = False
 
     def _capture_column_widths(self) -> list[int]:
-        return [self.results_table.columnWidth(index) for index in range(self.results_table.columnCount())]
+        return [
+            self.results_table.columnWidth(index)
+            for index in range(self.results_table.columnCount())
+        ]
 
     @staticmethod
     def _normalize_column_widths(widths: list[int], expected_count: int) -> list[int]:
@@ -1209,7 +1349,9 @@ class ResultsView(QWidget):
         return normalized
 
     @staticmethod
-    def _normalize_column_visibility(visibility: list[bool], expected_count: int) -> list[bool]:
+    def _normalize_column_visibility(
+        visibility: list[bool], expected_count: int
+    ) -> list[bool]:
         if len(visibility) != expected_count:
             return []
         normalized = [bool(v) for v in visibility]

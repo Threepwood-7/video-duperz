@@ -15,7 +15,9 @@ if TYPE_CHECKING:
 
 def test_clean_parser_accepts_flags() -> None:
     parser = app_main._build_parser()
-    args = parser.parse_args(["clean", "--full-reset", "--delay-ms", "250", "--relaunch"])
+    args = parser.parse_args(
+        ["clean", "--full-reset", "--delay-ms", "250", "--relaunch"]
+    )
     assert args.command == "clean"
     assert args.full_reset is True
     assert args.delay_ms == 250
@@ -34,13 +36,17 @@ def test_parser_accepts_runtime_override_flags() -> None:
 
 
 def test_cmd_clean_requires_guard(capsys) -> None:
-    rc = app_main._cmd_clean(argparse.Namespace(full_reset=False, delay_ms=0, relaunch=False))
+    rc = app_main._cmd_clean(
+        argparse.Namespace(full_reset=False, delay_ms=0, relaunch=False)
+    )
     assert rc == 2
     captured = capsys.readouterr()
     assert "--full-reset is required" in captured.err
 
 
-def test_run_full_reset_removes_entire_app_data_dir(tmp_path: Path, monkeypatch) -> None:
+def test_run_full_reset_removes_entire_app_data_dir(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setenv("APPDATA", str(tmp_path))
     root = app_data_dir()
@@ -131,7 +137,9 @@ def test_cmd_gui_spawns_cleaner_when_full_reset_requested(monkeypatch) -> None:
             return True
 
     fake_main_window_module.MainWindow = _FakeMainWindow  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "video_duperz.ui.main_window", fake_main_window_module)
+    monkeypatch.setitem(
+        sys.modules, "video_duperz.ui.main_window", fake_main_window_module
+    )
 
     called: list[list[str]] = []
 
@@ -144,5 +152,11 @@ def test_cmd_gui_spawns_cleaner_when_full_reset_requested(monkeypatch) -> None:
     rc = app_main._cmd_gui(argparse.Namespace())
     assert rc == 0
     assert called
-    assert called[0][:5] == [sys.executable, "-m", "video_duperz", "clean", "--full-reset"]
+    assert called[0][:5] == [
+        sys.executable,
+        "-m",
+        "video_duperz",
+        "clean",
+        "--full-reset",
+    ]
     assert "--relaunch" in called[0]

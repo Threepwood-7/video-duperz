@@ -51,7 +51,9 @@ def normalize_exact_sample_pair(
     return a, b
 
 
-def sample_offsets(file_size: int, block_bytes: int, sample_a_pct: int, sample_b_pct: int) -> list[int]:
+def sample_offsets(
+    file_size: int, block_bytes: int, sample_a_pct: int, sample_b_pct: int
+) -> list[int]:
     size = max(0, int(file_size))
     block = max(1, int(block_bytes))
     a, b = normalize_exact_sample_pair(sample_a_pct, sample_b_pct)
@@ -62,10 +64,7 @@ def sample_offsets(file_size: int, block_bytes: int, sample_a_pct: int, sample_b
         round(span * (a / 100.0)),
         round(span * (b / 100.0)),
     ]
-    normalized = {
-        max(0, min(span, int(offset)))
-        for offset in raw_offsets
-    }
+    normalized = {max(0, min(span, int(offset))) for offset in raw_offsets}
     return sorted(normalized)
 
 
@@ -84,7 +83,9 @@ def _cluster_label(cluster_index: int) -> str:
     return _alpha_label(cluster_index - len(_BASE_LABELS))
 
 
-def _sampled_file_digest(file: ExactMatchFile, block_bytes: int, sample_a_pct: int, sample_b_pct: int) -> str:
+def _sampled_file_digest(
+    file: ExactMatchFile, block_bytes: int, sample_a_pct: int, sample_b_pct: int
+) -> str:
     path = Path(file.path)
     if not path.exists():
         raise FileNotFoundError("source file missing")

@@ -40,8 +40,12 @@ class Settings:
     identical_sample_b_pct: int = 78
     results_table_column_widths: list[int] = field(default_factory=list)
     results_table_column_visibility: list[bool] = field(default_factory=list)
-    saved_column_views: dict[str, dict[str, list[int] | list[bool]]] = field(default_factory=dict)
-    saved_scan_profiles: dict[str, SavedScanProfilePayload] = field(default_factory=dict)
+    saved_column_views: dict[str, dict[str, list[int] | list[bool]]] = field(
+        default_factory=dict
+    )
+    saved_scan_profiles: dict[str, SavedScanProfilePayload] = field(
+        default_factory=dict
+    )
     keep_rule: KeepRule = "best_quality"
     drive_worker_overrides: dict[str, int] = field(default_factory=dict)
     probe_worker_mode: Literal["balanced", "burst"] = "balanced"

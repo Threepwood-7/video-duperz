@@ -39,7 +39,9 @@ class ScanView(QWidget):
         self.worker_progress.setValue(0)
         self.worker_progress.setFormat("Workers 0/0")
         self.worker_progress.setVisible(False)
-        self.worker_hint_label = QLabel("Worker status is shown per lane in the Parallel Lanes table.", self)
+        self.worker_hint_label = QLabel(
+            "Worker status is shown per lane in the Parallel Lanes table.", self
+        )
         self.io_stats_label = QLabel(
             "I/O Stats: discovered 0 @ 0.00/s, 0.00 MiB/s | analyzed 0 @ 0.00/s, 0.00 MiB/s | cache hit 0.0%",
             self,
@@ -62,7 +64,9 @@ class ScanView(QWidget):
             ]
         )
         self.lane_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-        self.lane_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.lane_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
         self.lane_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.lane_table.verticalHeader().setVisible(False)
         lane_header = self.lane_table.horizontalHeader()
@@ -134,7 +138,9 @@ class ScanView(QWidget):
         self._lane_rows = {}
         self._worker_limit = 0
 
-    def initialize_lane_plan(self, root_groups: list[list[str]], worker_limit: int) -> None:
+    def initialize_lane_plan(
+        self, root_groups: list[list[str]], worker_limit: int
+    ) -> None:
         self.lane_table.setRowCount(0)
         self._lane_rows = {}
         for lane, roots in enumerate(root_groups):
@@ -142,7 +148,9 @@ class ScanView(QWidget):
             self.lane_table.insertRow(row)
             self._lane_rows[lane] = row
             self.lane_table.setItem(row, 0, QTableWidgetItem(str(lane + 1)))
-            self.lane_table.setItem(row, 1, QTableWidgetItem(", ".join(roots) if roots else ""))
+            self.lane_table.setItem(
+                row, 1, QTableWidgetItem(", ".join(roots) if roots else "")
+            )
             self.lane_table.setItem(row, 2, QTableWidgetItem("pending"))
             self.lane_table.setItem(row, 3, QTableWidgetItem("0"))
             self.lane_table.setItem(row, 4, QTableWidgetItem("0"))
@@ -160,7 +168,9 @@ class ScanView(QWidget):
         bounded_limit = max(0, int(worker_limit))
         self._worker_limit = bounded_limit
         self.worker_progress.setRange(0, max(1, bounded_limit))
-        self.worker_progress.setValue(max(0, min(int(active_workers), max(1, bounded_limit))))
+        self.worker_progress.setValue(
+            max(0, min(int(active_workers), max(1, bounded_limit)))
+        )
         self.worker_progress.setFormat(f"Workers {int(active_workers)}/{bounded_limit}")
 
     def _row_background_for_state(self, state: str) -> QColor:
@@ -192,7 +202,11 @@ class ScanView(QWidget):
             self.lane_table.insertRow(row)
             self._lane_rows[lane] = row
         roots_text = ", ".join(snapshot.roots) if snapshot.roots else ""
-        workers_text = f"{int(snapshot.workers)}/{self._worker_limit}" if self._worker_limit else str(int(snapshot.workers))
+        workers_text = (
+            f"{int(snapshot.workers)}/{self._worker_limit}"
+            if self._worker_limit
+            else str(int(snapshot.workers))
+        )
         self.lane_table.setItem(row, 0, QTableWidgetItem(str(lane + 1)))
         self.lane_table.setItem(row, 1, QTableWidgetItem(roots_text))
         self.lane_table.setItem(row, 2, QTableWidgetItem(snapshot.state))
@@ -201,10 +215,18 @@ class ScanView(QWidget):
         self.lane_table.setItem(row, 5, QTableWidgetItem(str(int(snapshot.completed))))
         self.lane_table.setItem(row, 6, QTableWidgetItem(snapshot.active_file))
         self.lane_table.setItem(row, 7, QTableWidgetItem(workers_text))
-        self.lane_table.setItem(row, 8, QTableWidgetItem(f"{float(snapshot.discovered_files_per_s):.2f}"))
-        self.lane_table.setItem(row, 9, QTableWidgetItem(f"{float(snapshot.discovered_mib_per_s):.2f}"))
-        self.lane_table.setItem(row, 10, QTableWidgetItem(f"{float(snapshot.analyzed_files_per_s):.2f}"))
-        self.lane_table.setItem(row, 11, QTableWidgetItem(f"{float(snapshot.analyzed_mib_per_s):.2f}"))
+        self.lane_table.setItem(
+            row, 8, QTableWidgetItem(f"{float(snapshot.discovered_files_per_s):.2f}")
+        )
+        self.lane_table.setItem(
+            row, 9, QTableWidgetItem(f"{float(snapshot.discovered_mib_per_s):.2f}")
+        )
+        self.lane_table.setItem(
+            row, 10, QTableWidgetItem(f"{float(snapshot.analyzed_files_per_s):.2f}")
+        )
+        self.lane_table.setItem(
+            row, 11, QTableWidgetItem(f"{float(snapshot.analyzed_mib_per_s):.2f}")
+        )
         self._apply_row_background(row, snapshot.state)
 
     def _update_io_stats(self, progress: ScanProgress) -> None:
@@ -245,8 +267,12 @@ class ScanView(QWidget):
                 self._upsert_lane_snapshot(snapshot)
         self._update_io_stats(progress)
         message = progress.message.strip() or progress.stage
-        self.status_label.setText(f"{progress.stage}: {message} ({progress.current}/{progress.total})")
-        progress_row = f"[{progress.stage}] {progress.current}/{progress.total} -> {message}"
+        self.status_label.setText(
+            f"{progress.stage}: {message} ({progress.current}/{progress.total})"
+        )
+        progress_row = (
+            f"[{progress.stage}] {progress.current}/{progress.total} -> {message}"
+        )
         if progress_row != self._last_progress_row:
             self.progress_list.addItem(progress_row)
             if self.progress_list.count() > self._max_progress_rows:
@@ -259,4 +285,6 @@ class ScanView(QWidget):
         if not issues:
             self.issues_list.addItem("No issues.")
             return
-        self.issues_list.addItems([f"[{i.stage}] {i.path} -> {i.message}" for i in issues])
+        self.issues_list.addItems(
+            [f"[{i.stage}] {i.path} -> {i.message}" for i in issues]
+        )

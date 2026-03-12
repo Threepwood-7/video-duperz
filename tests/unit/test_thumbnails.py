@@ -17,7 +17,9 @@ if TYPE_CHECKING:
 
 
 def test_cache_key_changes_for_inputs() -> None:
-    base = build_thumbnail_cache_key("C:/vid/a.mp4", size=100, mtime_ns=10, size_key="96x54", frame_pct=23, slot="a")
+    base = build_thumbnail_cache_key(
+        "C:/vid/a.mp4", size=100, mtime_ns=10, size_key="96x54", frame_pct=23, slot="a"
+    )
     changed_path = build_thumbnail_cache_key(
         "C:/vid/b.mp4", size=100, mtime_ns=10, size_key="96x54", frame_pct=23, slot="a"
     )
@@ -48,7 +50,9 @@ def test_cache_key_changes_for_inputs() -> None:
 def test_cache_path_uses_app_data_dir(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setenv("APPDATA", str(tmp_path))
-    out = thumbnail_cache_path("C:/vid/a.mp4", size=100, mtime_ns=10, size_key="96x54", frame_pct=23, slot="a")
+    out = thumbnail_cache_path(
+        "C:/vid/a.mp4", size=100, mtime_ns=10, size_key="96x54", frame_pct=23, slot="a"
+    )
     cache_root = thumbnail_cache_dir()
 
     assert str(out).startswith(str(cache_root))

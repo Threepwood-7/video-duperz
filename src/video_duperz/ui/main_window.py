@@ -75,7 +75,9 @@ MAX_DRIVE_WORKERS = 64
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, db: Database, settings: Settings, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, db: Database, settings: Settings, parent: QWidget | None = None
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Video Duperz")
         self.resize(1600, 920)
@@ -90,8 +92,12 @@ class MainWindow(QMainWindow):
         self._scan_tab_locked = False
         self._recent_roots: list[str] = list(settings.recent_scan_roots)
         self._recent_roots_menu: QMenu | None = None
-        self._saved_column_views: dict[str, dict[str, list[int] | list[bool]]] = dict(settings.saved_column_views)
-        self._saved_scan_profiles: dict[str, SavedScanProfilePayload] = dict(settings.saved_scan_profiles)
+        self._saved_column_views: dict[str, dict[str, list[int] | list[bool]]] = dict(
+            settings.saved_column_views
+        )
+        self._saved_scan_profiles: dict[str, SavedScanProfilePayload] = dict(
+            settings.saved_scan_profiles
+        )
         self._column_toggle_actions: list[QAction] = []
         self._saved_views_menu: QMenu | None = None
         self._sort_action_group: QActionGroup | None = None
@@ -112,7 +118,9 @@ class MainWindow(QMainWindow):
         self.scan_view = ScanView(self)
         self.results_view = ResultsView(self)
         self.results_view.set_thumbnail_size(settings.thumbnail_size)
-        self.results_view.set_thumbnail_frame_positions(settings.thumbnail_frame_a_pct, settings.thumbnail_frame_b_pct)
+        self.results_view.set_thumbnail_frame_positions(
+            settings.thumbnail_frame_a_pct, settings.thumbnail_frame_b_pct
+        )
         self.results_view.set_identical_compare_config(
             block_mib=settings.identical_block_mib,
             sample_a_pct=settings.identical_sample_a_pct,
@@ -150,7 +158,9 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.clear_saved_scans_action)
 
         self.clear_cached_thumbnails_action = QAction("Clear Cached T&humbnails", self)
-        self.clear_cached_thumbnails_action.triggered.connect(self._clear_cached_thumbnails)
+        self.clear_cached_thumbnails_action.triggered.connect(
+            self._clear_cached_thumbnails
+        )
         file_menu.addAction(self.clear_cached_thumbnails_action)
 
         file_menu.addSeparator()
@@ -184,7 +194,11 @@ class MainWindow(QMainWindow):
             action = QAction(label, self)
             action.setCheckable(True)
             action.setChecked(True)
-            action.toggled.connect(lambda checked, col=index: self._set_column_visibility_from_menu(col, checked))
+            action.toggled.connect(
+                lambda checked, col=index: self._set_column_visibility_from_menu(
+                    col, checked
+                )
+            )
             columns_menu.addAction(action)
             self._column_toggle_actions.append(action)
 
@@ -199,49 +213,77 @@ class MainWindow(QMainWindow):
             ("&4 Least duplicates first", SORT_GROUP_COUNT_ASC),
             ("&5 Larger files in group first", SORT_ROW_SIZE_DESC),
             ("&6 Smaller files in group first", SORT_ROW_SIZE_ASC),
-            ("&7 Size difference between largest and smallest in group first", SORT_GROUP_SPREAD_DESC),
-            ("&8 Size difference between largest and smallest in group last", SORT_GROUP_SPREAD_ASC),
+            (
+                "&7 Size difference between largest and smallest in group first",
+                SORT_GROUP_SPREAD_DESC,
+            ),
+            (
+                "&8 Size difference between largest and smallest in group last",
+                SORT_GROUP_SPREAD_ASC,
+            ),
         ]
         for label, mode in sort_specs:
             action = QAction(label, self)
             action.setCheckable(True)
-            action.triggered.connect(lambda _checked=False, value=mode: self.results_view.set_sort_mode(value))
+            action.triggered.connect(
+                lambda _checked=False, value=mode: self.results_view.set_sort_mode(
+                    value
+                )
+            )
             self._sort_action_group.addAction(action)
             sort_menu.addAction(action)
             self._sort_actions[mode] = action
 
         actions_menu = self.menuBar().addMenu("&Actions")
         self.keep_best_action = QAction("&Select all, keep best", self)
-        self.keep_best_action.triggered.connect(lambda: self.results_view.apply_keep_strategy("best"))
+        self.keep_best_action.triggered.connect(
+            lambda: self.results_view.apply_keep_strategy("best")
+        )
         actions_menu.addAction(self.keep_best_action)
 
         self.keep_worst_action = QAction("Select all, keep &worst", self)
-        self.keep_worst_action.triggered.connect(lambda: self.results_view.apply_keep_strategy("worst"))
+        self.keep_worst_action.triggered.connect(
+            lambda: self.results_view.apply_keep_strategy("worst")
+        )
         actions_menu.addAction(self.keep_worst_action)
 
         self.keep_larger_action = QAction("Select all, keep &larger", self)
-        self.keep_larger_action.triggered.connect(lambda: self.results_view.apply_keep_strategy("larger"))
+        self.keep_larger_action.triggered.connect(
+            lambda: self.results_view.apply_keep_strategy("larger")
+        )
         actions_menu.addAction(self.keep_larger_action)
 
         self.keep_smaller_action = QAction("Select all, keep s&maller", self)
-        self.keep_smaller_action.triggered.connect(lambda: self.results_view.apply_keep_strategy("smaller"))
+        self.keep_smaller_action.triggered.connect(
+            lambda: self.results_view.apply_keep_strategy("smaller")
+        )
         actions_menu.addAction(self.keep_smaller_action)
 
         self.keep_newer_action = QAction("Select all, keep &newer", self)
-        self.keep_newer_action.triggered.connect(lambda: self.results_view.apply_keep_strategy("newer"))
+        self.keep_newer_action.triggered.connect(
+            lambda: self.results_view.apply_keep_strategy("newer")
+        )
         actions_menu.addAction(self.keep_newer_action)
 
         self.keep_older_action = QAction("Select all, keep &older", self)
-        self.keep_older_action.triggered.connect(lambda: self.results_view.apply_keep_strategy("older"))
+        self.keep_older_action.triggered.connect(
+            lambda: self.results_view.apply_keep_strategy("older")
+        )
         actions_menu.addAction(self.keep_older_action)
 
         actions_menu.addSeparator()
         self.delete_selected_action = QAction("&Delete Selected", self)
-        self.delete_selected_action.triggered.connect(self.results_view.request_soft_delete_selected)
+        self.delete_selected_action.triggered.connect(
+            self.results_view.request_soft_delete_selected
+        )
         actions_menu.addAction(self.delete_selected_action)
 
-        self.delete_selected_permanent_action = QAction("&Permanently Delete Selected", self)
-        self.delete_selected_permanent_action.triggered.connect(self.results_view.request_permanent_delete_selected)
+        self.delete_selected_permanent_action = QAction(
+            "&Permanently Delete Selected", self
+        )
+        self.delete_selected_permanent_action.triggered.connect(
+            self.results_view.request_permanent_delete_selected
+        )
         actions_menu.addAction(self.delete_selected_permanent_action)
 
         tools_menu = self.menuBar().addMenu("&Tools")
@@ -282,9 +324,13 @@ class MainWindow(QMainWindow):
 
         self.extensions_preset_combo = QComboBox(self.sources_tab)
         self.extensions_preset_combo.addItems(VIDEO_EXTENSION_PRESET_NAMES)
-        default_preset_index = self.extensions_preset_combo.findText(DEFAULT_VIDEO_EXTENSION_PRESET)
+        default_preset_index = self.extensions_preset_combo.findText(
+            DEFAULT_VIDEO_EXTENSION_PRESET
+        )
         self.extensions_preset_combo.setCurrentIndex(max(0, default_preset_index))
-        self.extensions_preset_combo.currentTextChanged.connect(self._extensions_preset_changed)
+        self.extensions_preset_combo.currentTextChanged.connect(
+            self._extensions_preset_changed
+        )
         self.extensions_edit = QLineEdit(self.sources_tab)
         self.extensions_edit.textEdited.connect(self._extensions_text_edited)
         self.profile_combo = QComboBox(self.sources_tab)
@@ -292,25 +338,47 @@ class MainWindow(QMainWindow):
 
         self.max_workers_spin = QSpinBox(self.sources_tab)
         self.max_workers_spin.setRange(1, 16)
-        self.max_workers_spin.valueChanged.connect(self._refresh_sources_physical_drive_view)
+        self.max_workers_spin.valueChanged.connect(
+            self._refresh_sources_physical_drive_view
+        )
         self.probe_mode_combo = QComboBox(self.sources_tab)
         self.probe_mode_combo.addItems(["balanced", "burst"])
-        self.probe_mode_combo.currentTextChanged.connect(self._refresh_sources_physical_drive_view)
+        self.probe_mode_combo.currentTextChanged.connect(
+            self._refresh_sources_physical_drive_view
+        )
         self.thumbnail_size_combo = QComboBox(self.sources_tab)
         for label, size_key in THUMBNAIL_SIZE_OPTIONS:
             self.thumbnail_size_combo.addItem(label, size_key)
-        self.thumbnail_size_combo.currentIndexChanged.connect(self._thumbnail_size_changed)
+        self.thumbnail_size_combo.currentIndexChanged.connect(
+            self._thumbnail_size_changed
+        )
         self.sources_drive_summary_label = QLabel(
             "Matched physical drives: 0 | Requested workers: 1 | Effective workers: 0",
             self.sources_tab,
         )
         self.sources_drive_table = QTableWidget(0, 9, self.sources_tab)
         self.sources_drive_table.setHorizontalHeaderLabels(
-            ["Root", "Disk token(s)", "Volume identity", "Total", "Free", "Used %", "Workers", "Matched", "Lookup note"]
+            [
+                "Root",
+                "Disk token(s)",
+                "Volume identity",
+                "Total",
+                "Free",
+                "Used %",
+                "Workers",
+                "Matched",
+                "Lookup note",
+            ]
         )
-        self.sources_drive_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-        self.sources_drive_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.sources_drive_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.sources_drive_table.setSelectionMode(
+            QAbstractItemView.SelectionMode.NoSelection
+        )
+        self.sources_drive_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.sources_drive_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers
+        )
         self.sources_drive_table.setAlternatingRowColors(True)
         self.sources_drive_table.verticalHeader().setVisible(False)
         drives_header = self.sources_drive_table.horizontalHeader()
@@ -360,7 +428,10 @@ class MainWindow(QMainWindow):
         self._refresh_recent_roots_menu()
         normalized_extensions = normalize_extensions(list(self.settings.extensions))
         self.extensions_edit.setText(", ".join(normalized_extensions))
-        preset_name = detect_video_extension_preset(normalized_extensions) or DEFAULT_VIDEO_EXTENSION_PRESET
+        preset_name = (
+            detect_video_extension_preset(normalized_extensions)
+            or DEFAULT_VIDEO_EXTENSION_PRESET
+        )
         preset_index = self.extensions_preset_combo.findText(preset_name)
         self.extensions_preset_combo.blockSignals(True)
         self.extensions_preset_combo.setCurrentIndex(max(0, preset_index))
@@ -405,7 +476,10 @@ class MainWindow(QMainWindow):
 
     def _settings_from_widgets(self) -> Settings:
         roots = [self.roots_list.item(i).text() for i in range(self.roots_list.count())]
-        exts = [e.strip().lower().lstrip(".") for e in self.extensions_edit.text().split(",")]
+        exts = [
+            e.strip().lower().lstrip(".")
+            for e in self.extensions_edit.text().split(",")
+        ]
         exts = [e for e in exts if e]
         drive_worker_overrides = self._normalized_drive_worker_overrides()
         return Settings(
@@ -415,7 +489,9 @@ class MainWindow(QMainWindow):
             similarity_profile=self.profile_combo.currentText(),
             max_workers=self.max_workers_spin.value(),
             preview_autoplay=self.settings.preview_autoplay,  # backward-compat only
-            thumbnail_size=normalize_thumbnail_size(str(self.thumbnail_size_combo.currentData())),
+            thumbnail_size=normalize_thumbnail_size(
+                str(self.thumbnail_size_combo.currentData())
+            ),
             thumbnail_frame_a_pct=self.settings.thumbnail_frame_a_pct,
             thumbnail_frame_b_pct=self.settings.thumbnail_frame_b_pct,
             identical_block_mib=self.settings.identical_block_mib,
@@ -427,7 +503,8 @@ class MainWindow(QMainWindow):
             saved_scan_profiles=self._normalized_saved_scan_profiles(),
             keep_rule="best_quality",
             drive_worker_overrides=drive_worker_overrides,
-            probe_worker_mode=self.probe_mode_combo.currentText().strip().lower() or "balanced",
+            probe_worker_mode=self.probe_mode_combo.currentText().strip().lower()
+            or "balanced",
             scan_db_batch_size=self.settings.scan_db_batch_size,
             scan_db_flush_interval_ms=self.settings.scan_db_flush_interval_ms,
             scan_enum_queue_max=self.settings.scan_enum_queue_max,
@@ -480,33 +557,50 @@ class MainWindow(QMainWindow):
                 self.tabs.setTabEnabled(idx, True)
 
     def _thumbnail_size_changed(self) -> None:
-        size_key = normalize_thumbnail_size(str(self.thumbnail_size_combo.currentData()))
+        size_key = normalize_thumbnail_size(
+            str(self.thumbnail_size_combo.currentData())
+        )
         self.results_view.set_thumbnail_size(size_key)
 
     def _extensions_preset_changed(self, preset_name: str) -> None:
         self.extensions_edit.setText(video_extensions_csv_for_preset(preset_name))
 
     def _extensions_text_edited(self, _text: str) -> None:
-        matched_preset = detect_video_extension_preset(self._current_sources_extensions())
+        matched_preset = detect_video_extension_preset(
+            self._current_sources_extensions()
+        )
         if not matched_preset:
             return
         target_index = self.extensions_preset_combo.findText(matched_preset)
-        if target_index < 0 or target_index == self.extensions_preset_combo.currentIndex():
+        if (
+            target_index < 0
+            or target_index == self.extensions_preset_combo.currentIndex()
+        ):
             return
         self.extensions_preset_combo.blockSignals(True)
         self.extensions_preset_combo.setCurrentIndex(target_index)
         self.extensions_preset_combo.blockSignals(False)
 
-    def _normalized_saved_column_views(self) -> dict[str, dict[str, list[int] | list[bool]]]:
+    def _normalized_saved_column_views(
+        self,
+    ) -> dict[str, dict[str, list[int] | list[bool]]]:
         normalized: dict[str, dict[str, list[int] | list[bool]]] = {}
         for name, payload in self._saved_column_views.items():
             cleaned_name = str(name).strip()
             if not cleaned_name:
                 continue
             widths_raw = payload.get("widths", []) if isinstance(payload, dict) else []
-            visibility_raw = payload.get("visibility", []) if isinstance(payload, dict) else []
-            widths = [int(w) for w in widths_raw] if isinstance(widths_raw, list) else []
-            visibility = [bool(v) for v in visibility_raw] if isinstance(visibility_raw, list) else []
+            visibility_raw = (
+                payload.get("visibility", []) if isinstance(payload, dict) else []
+            )
+            widths = (
+                [int(w) for w in widths_raw] if isinstance(widths_raw, list) else []
+            )
+            visibility = (
+                [bool(v) for v in visibility_raw]
+                if isinstance(visibility_raw, list)
+                else []
+            )
             if len(widths) != len(self.results_view.column_labels()):
                 continue
             if len(visibility) != len(self.results_view.column_labels()):
@@ -582,7 +676,9 @@ class MainWindow(QMainWindow):
             return
         for name in sorted(self._saved_column_views):
             action = QAction(name, self)
-            action.triggered.connect(lambda _checked=False, view_name=name: self._apply_saved_view(view_name))
+            action.triggered.connect(
+                lambda _checked=False, view_name=name: self._apply_saved_view(view_name)
+            )
             self._saved_views_menu.addAction(action)
 
     def _apply_saved_view(self, name: str) -> None:
@@ -592,13 +688,19 @@ class MainWindow(QMainWindow):
         widths_raw = payload.get("widths", [])
         visibility_raw = payload.get("visibility", [])
         widths = [int(w) for w in widths_raw] if isinstance(widths_raw, list) else []
-        visibility = [bool(v) for v in visibility_raw] if isinstance(visibility_raw, list) else []
+        visibility = (
+            [bool(v) for v in visibility_raw]
+            if isinstance(visibility_raw, list)
+            else []
+        )
         self.results_view.set_column_visibility(visibility)
         self.results_view.set_column_widths(widths)
         self._sync_column_toggle_actions()
         self.statusBar().showMessage(f"Applied view '{name}'.")
 
-    def _set_column_visibility_from_menu(self, column_index: int, checked: bool) -> None:
+    def _set_column_visibility_from_menu(
+        self, column_index: int, checked: bool
+    ) -> None:
         self.results_view.set_column_visible(column_index, checked)
         self._sync_column_toggle_actions()
 
@@ -666,7 +768,9 @@ class MainWindow(QMainWindow):
         normalized = self._normalize_root_path(path)
         if not normalized:
             return
-        deduped = [p for p in self._recent_roots if p.casefold() != normalized.casefold()]
+        deduped = [
+            p for p in self._recent_roots if p.casefold() != normalized.casefold()
+        ]
         self._recent_roots = [normalized, *deduped][:MAX_RECENT_ROOTS]
         self._refresh_recent_roots_menu()
 
@@ -683,7 +787,11 @@ class MainWindow(QMainWindow):
         self.add_recent_root_btn.setEnabled(True)
         for folder in self._recent_roots:
             action = QAction(folder, self)
-            action.triggered.connect(lambda _checked=False, value=folder: self._add_recent_root_selected(value))
+            action.triggered.connect(
+                lambda _checked=False, value=folder: self._add_recent_root_selected(
+                    value
+                )
+            )
             self._recent_roots_menu.addAction(action)
         self._recent_roots_menu.addSeparator()
         clear_action = QAction("Clear Recent Folders", self)
@@ -693,7 +801,11 @@ class MainWindow(QMainWindow):
     def _show_recent_roots_menu(self) -> None:
         if self._recent_roots_menu is None:
             return
-        self._recent_roots_menu.exec(self.add_recent_root_btn.mapToGlobal(self.add_recent_root_btn.rect().bottomLeft()))
+        self._recent_roots_menu.exec(
+            self.add_recent_root_btn.mapToGlobal(
+                self.add_recent_root_btn.rect().bottomLeft()
+            )
+        )
 
     def _add_recent_root_selected(self, path: str) -> None:
         self._add_root_path(path)
@@ -744,7 +856,9 @@ class MainWindow(QMainWindow):
     def _clear_cached_thumbnails(self) -> None:
         removed, failed = self._clear_cached_thumbnails_internal()
         if failed > 0:
-            self.statusBar().showMessage(f"Cleared cached thumbnails ({removed} item(s), {failed} failed).")
+            self.statusBar().showMessage(
+                f"Cleared cached thumbnails ({removed} item(s), {failed} failed)."
+            )
             return
         self.statusBar().showMessage(f"Cleared cached thumbnails ({removed} item(s)).")
 
@@ -771,11 +885,15 @@ class MainWindow(QMainWindow):
             normalized[identity] = max(1, min(MAX_DRIVE_WORKERS, workers))
         return normalized
 
-    def _on_drive_worker_override_changed(self, volume_identity: str, workers: int) -> None:
+    def _on_drive_worker_override_changed(
+        self, volume_identity: str, workers: int
+    ) -> None:
         identity = str(volume_identity).strip()
         if not identity:
             return
-        self._drive_worker_overrides[identity] = max(1, min(MAX_DRIVE_WORKERS, int(workers)))
+        self._drive_worker_overrides[identity] = max(
+            1, min(MAX_DRIVE_WORKERS, int(workers))
+        )
         if self._drive_workers_editing:
             return
         self._refresh_sources_physical_drive_view()
@@ -807,7 +925,9 @@ class MainWindow(QMainWindow):
         self.sources_drive_table.setRowCount(0)
         if not drives:
             self.sources_drive_table.setRowCount(1)
-            self.sources_drive_table.setItem(0, 0, QTableWidgetItem("(No local drives detected)"))
+            self.sources_drive_table.setItem(
+                0, 0, QTableWidgetItem("(No local drives detected)")
+            )
             for col in range(1, self.sources_drive_table.columnCount()):
                 self.sources_drive_table.setItem(0, col, QTableWidgetItem(""))
         else:
@@ -815,7 +935,9 @@ class MainWindow(QMainWindow):
             self._drive_workers_editing = True
             try:
                 for row, drive in enumerate(drives):
-                    tokens = ", ".join(drive.disk_tokens) if drive.disk_tokens else "(none)"
+                    tokens = (
+                        ", ".join(drive.disk_tokens) if drive.disk_tokens else "(none)"
+                    )
                     matched = drive.volume_identity in matched_identities
                     row_values = [
                         drive.root,
@@ -823,7 +945,9 @@ class MainWindow(QMainWindow):
                         drive.volume_identity,
                         self._format_byte_count(drive.total_bytes),
                         self._format_byte_count(drive.free_bytes),
-                        f"{drive.used_percent:.1f}%" if drive.used_percent is not None else "n/a",
+                        f"{drive.used_percent:.1f}%"
+                        if drive.used_percent is not None
+                        else "n/a",
                         "Yes" if matched else "No",
                         drive.lookup_error or "",
                     ]
@@ -843,9 +967,11 @@ class MainWindow(QMainWindow):
                         spin.setRange(1, MAX_DRIVE_WORKERS)
                         spin.setValue(max(1, int(workers)))
                         spin.valueChanged.connect(
-                            lambda value, volume=drive.volume_identity: self._on_drive_worker_override_changed(
-                                volume,
-                                value,
+                            lambda value, volume=drive.volume_identity: (
+                                self._on_drive_worker_override_changed(
+                                    volume,
+                                    value,
+                                )
                             )
                         )
                         self.sources_drive_table.setCellWidget(row, 6, spin)
@@ -891,7 +1017,10 @@ class MainWindow(QMainWindow):
         return [self.roots_list.item(i).text() for i in range(self.roots_list.count())]
 
     def _current_sources_extensions(self) -> list[str]:
-        raw = [e.strip().lower().lstrip(".") for e in self.extensions_edit.text().split(",")]
+        raw = [
+            e.strip().lower().lstrip(".")
+            for e in self.extensions_edit.text().split(",")
+        ]
         return normalize_extensions([e for e in raw if e])
 
     def _current_sources_profile(self) -> str:
@@ -904,7 +1033,9 @@ class MainWindow(QMainWindow):
         profile = self._current_sources_profile()
         extensions = self._current_sources_extensions()
         return SavedScanProfilePayload(
-            scan_set_key=build_scan_set_key(roots=roots, similarity_profile=profile, extensions=extensions),
+            scan_set_key=build_scan_set_key(
+                roots=roots, similarity_profile=profile, extensions=extensions
+            ),
             roots=roots,
             similarity_profile=profile,
             extensions=extensions,
@@ -914,7 +1045,11 @@ class MainWindow(QMainWindow):
     def _save_current_scan_set_as(self) -> None:
         payload = self._build_profile_payload_from_sources()
         if payload is None:
-            QMessageBox.warning(self, "Missing Sources", "Add at least one scan root before saving a scan set.")
+            QMessageBox.warning(
+                self,
+                "Missing Sources",
+                "Add at least one scan root before saving a scan set.",
+            )
             return
         name, ok = QInputDialog.getText(self, "Save Scan Set", "Profile name:")
         if not ok:
@@ -923,7 +1058,9 @@ class MainWindow(QMainWindow):
         if not cleaned:
             return
         if len(cleaned) > 80:
-            QMessageBox.warning(self, "Name Too Long", "Profile name must be 80 characters or fewer.")
+            QMessageBox.warning(
+                self, "Name Too Long", "Profile name must be 80 characters or fewer."
+            )
             return
         if cleaned in self._saved_scan_profiles:
             replace = QMessageBox.question(
@@ -944,7 +1081,9 @@ class MainWindow(QMainWindow):
         if not names:
             self.statusBar().showMessage("No named scan profiles to delete.")
             return
-        chosen, ok = QInputDialog.getItem(self, "Delete Named Profile", "Profile:", names, 0, False)
+        chosen, ok = QInputDialog.getItem(
+            self, "Delete Named Profile", "Profile:", names, 0, False
+        )
         if not ok:
             return
         name = str(chosen).strip()
@@ -987,7 +1126,9 @@ class MainWindow(QMainWindow):
         raw_key = str(profile.scan_set_key).strip()
         if raw_key:
             return raw_key
-        return build_scan_set_key(roots=roots, similarity_profile=similarity_profile, extensions=extensions)
+        return build_scan_set_key(
+            roots=roots, similarity_profile=similarity_profile, extensions=extensions
+        )
 
     def _format_scan_status(self, status: str | None) -> str:
         cleaned = str(status or "").strip().lower()
@@ -1001,14 +1142,22 @@ class MainWindow(QMainWindow):
         if self._saved_scans_menu is None:
             return
         self._refresh_saved_scans_menu()
-        self._saved_scans_menu.exec(self.load_saved_scan_btn.mapToGlobal(self.load_saved_scan_btn.rect().bottomLeft()))
+        self._saved_scans_menu.exec(
+            self.load_saved_scan_btn.mapToGlobal(
+                self.load_saved_scan_btn.rect().bottomLeft()
+            )
+        )
 
     def _refresh_saved_scans_menu(self) -> None:
         if self._saved_scans_menu is None:
             return
         self._saved_scans_menu.clear()
-        named_items = sorted(self._saved_scan_profiles.items(), key=lambda pair: pair[0].casefold())
-        represented_keys = {self._scan_set_key_for_profile(payload) for _, payload in named_items}
+        named_items = sorted(
+            self._saved_scan_profiles.items(), key=lambda pair: pair[0].casefold()
+        )
+        represented_keys = {
+            self._scan_set_key_for_profile(payload) for _, payload in named_items
+        }
         represented_keys.discard("")
         has_entries = False
 
@@ -1029,24 +1178,34 @@ class MainWindow(QMainWindow):
                     summary = self.db.scan_summary(latest_scan_id)
                     stamp = self._format_scan_created_at(summary["created_at"])
                     status_text = self._format_scan_status(summary.get("status"))
-                    action = QAction(f"{name} | #{latest_scan_id} | {stamp} | {status_text}", self)
+                    action = QAction(
+                        f"{name} | #{latest_scan_id} | {stamp} | {status_text}", self
+                    )
                 action.triggered.connect(
-                    lambda _checked=False, profile=payload, source_name=name: self._load_saved_scan_profile(
-                        profile=profile,
-                        source_name=source_name,
+                    lambda _checked=False, profile=payload, source_name=name: (
+                        self._load_saved_scan_profile(
+                            profile=profile,
+                            source_name=source_name,
+                        )
                     )
                 )
                 self._saved_scans_menu.addAction(action)
             self._saved_scans_menu.addSeparator()
 
-        auto_scans = [item for item in self.db.list_latest_scans_by_set() if item["scan_set_key"] not in represented_keys]
+        auto_scans = [
+            item
+            for item in self.db.list_latest_scans_by_set()
+            if item["scan_set_key"] not in represented_keys
+        ]
         if auto_scans:
             auto_header = QAction("Auto Profiles", self)
             auto_header.setEnabled(False)
             self._saved_scans_menu.addAction(auto_header)
             for scan in auto_scans:
                 roots = normalize_roots_for_display(list(scan.get("roots", [])))
-                profile = normalize_similarity_profile(str(scan.get("profile", "balanced")))
+                profile = normalize_similarity_profile(
+                    str(scan.get("profile", "balanced"))
+                )
                 extensions = normalize_extensions(list(scan.get("extensions", [])))
                 payload = SavedScanProfilePayload(
                     scan_set_key=str(scan.get("scan_set_key", "")),
@@ -1060,9 +1219,11 @@ class MainWindow(QMainWindow):
                 label = f"Auto: {self._scan_root_summary(roots)} | {profile} | #{scan_id} | {status_text}"
                 action = QAction(label, self)
                 action.triggered.connect(
-                    lambda _checked=False, profile_payload=payload: self._load_saved_scan_profile(
-                        profile=profile_payload,
-                        source_name="auto profile",
+                    lambda _checked=False, profile_payload=payload: (
+                        self._load_saved_scan_profile(
+                            profile=profile_payload,
+                            source_name="auto profile",
+                        )
                     )
                 )
                 self._saved_scans_menu.addAction(action)
@@ -1084,7 +1245,9 @@ class MainWindow(QMainWindow):
         delete_action.triggered.connect(self._delete_named_scan_profile)
         self._saved_scans_menu.addAction(delete_action)
 
-    def _load_saved_scan_profile(self, profile: SavedScanProfilePayload, source_name: str) -> None:
+    def _load_saved_scan_profile(
+        self, profile: SavedScanProfilePayload, source_name: str
+    ) -> None:
         roots = normalize_roots_for_display(list(profile.roots))
         normalized_profile = normalize_similarity_profile(profile.similarity_profile)
         extensions = normalize_extensions(list(profile.extensions))
@@ -1099,7 +1262,9 @@ class MainWindow(QMainWindow):
         profile_index = self.profile_combo.findText(normalized_profile)
         self.profile_combo.setCurrentIndex(max(0, profile_index))
         self.extensions_edit.setText(", ".join(extensions))
-        preset_name = detect_video_extension_preset(extensions) or DEFAULT_VIDEO_EXTENSION_PRESET
+        preset_name = (
+            detect_video_extension_preset(extensions) or DEFAULT_VIDEO_EXTENSION_PRESET
+        )
         preset_index = self.extensions_preset_combo.findText(preset_name)
         self.extensions_preset_combo.blockSignals(True)
         self.extensions_preset_combo.setCurrentIndex(max(0, preset_index))
@@ -1148,12 +1313,18 @@ class MainWindow(QMainWindow):
         self._persist_settings()
         roots = normalize_roots_for_display(list(self.settings.scan_roots))
         if not roots:
-            QMessageBox.warning(self, "Missing Sources", "Add at least one scan root in the Sources tab.")
+            QMessageBox.warning(
+                self,
+                "Missing Sources",
+                "Add at least one scan root in the Sources tab.",
+            )
             self.tabs.setCurrentWidget(self.sources_tab)
             return
         profile = normalize_similarity_profile(self.settings.similarity_profile)
         extensions = normalize_extensions(list(self.settings.extensions))
-        scan_set_key = build_scan_set_key(roots=roots, similarity_profile=profile, extensions=extensions)
+        scan_set_key = build_scan_set_key(
+            roots=roots, similarity_profile=profile, extensions=extensions
+        )
         confirm = QMessageBox.question(
             self,
             "Rescan (Fresh)",
@@ -1168,7 +1339,9 @@ class MainWindow(QMainWindow):
         if confirm != QMessageBox.StandardButton.Yes:
             return
         try:
-            purge_counts = self.db.purge_for_fresh_rescan(scan_set_key=scan_set_key, roots=roots)
+            purge_counts = self.db.purge_for_fresh_rescan(
+                scan_set_key=scan_set_key, roots=roots
+            )
             thumbs_removed, thumbs_failed = self._clear_cached_thumbnails_internal()
         except Exception as exc:
             QMessageBox.critical(self, "Rescan Failed", str(exc))
@@ -1193,7 +1366,11 @@ class MainWindow(QMainWindow):
     def _start_scan(self) -> None:
         self._persist_settings()
         if not self.settings.scan_roots:
-            QMessageBox.warning(self, "Missing Sources", "Add at least one scan root in the Sources tab.")
+            QMessageBox.warning(
+                self,
+                "Missing Sources",
+                "Add at least one scan root in the Sources tab.",
+            )
             self.tabs.setCurrentWidget(self.sources_tab)
             return
 
@@ -1254,7 +1431,9 @@ class MainWindow(QMainWindow):
         if status_text != "done":
             self.current_scan_id = None
             self.tabs.setCurrentWidget(self.scan_view)
-            self.statusBar().showMessage(f"Scan {finished_scan_id} {status_text}: {len(result.issues)} issues.")
+            self.statusBar().showMessage(
+                f"Scan {finished_scan_id} {status_text}: {len(result.issues)} issues."
+            )
             return
 
         groups = self.db.load_duplicate_groups(finished_scan_id)
@@ -1313,7 +1492,9 @@ class MainWindow(QMainWindow):
                         raise FileNotFoundError(f"{source} does not exist")
                     destination = self._next_zdele_path(source)
                     source.rename(destination)
-                    self.db.refresh_file_after_rename(file_id=file_id, new_path=str(destination))
+                    self.db.refresh_file_after_rename(
+                        file_id=file_id, new_path=str(destination)
+                    )
                 elif mode == "permanent":
                     if source.exists():
                         source.unlink()
@@ -1332,7 +1513,9 @@ class MainWindow(QMainWindow):
 
         if failures:
             self.statusBar().showMessage(f"Completed with {len(failures)} errors.")
-            QMessageBox.warning(self, "Delete Completed with Errors", "\n".join(failures[:20]))
+            QMessageBox.warning(
+                self, "Delete Completed with Errors", "\n".join(failures[:20])
+            )
         else:
             self.statusBar().showMessage(f"Processed {success_count} file(s).")
 
@@ -1343,8 +1526,12 @@ class MainWindow(QMainWindow):
         out_dir = QFileDialog.getExistingDirectory(self, "Choose export directory")
         if not out_dir:
             return
-        csv_path, json_path = export_scan(self.db, scan_id=self.current_scan_id, out_dir=out_dir)
-        QMessageBox.information(self, "Export Complete", f"CSV: {csv_path}\nJSON: {json_path}")
+        csv_path, json_path = export_scan(
+            self.db, scan_id=self.current_scan_id, out_dir=out_dir
+        )
+        QMessageBox.information(
+            self, "Export Complete", f"CSV: {csv_path}\nJSON: {json_path}"
+        )
 
     def closeEvent(self, event) -> None:
         if not self._full_reset_requested:

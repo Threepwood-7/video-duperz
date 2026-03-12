@@ -33,10 +33,15 @@ def test_db_migration_backfills_scan_set_columns(tmp_path: Path) -> None:
     conn.close()
 
     with Database(db_file) as db:
-        cols = {str(row["name"]) for row in db.conn.execute("PRAGMA table_info(scans)").fetchall()}
+        cols = {
+            str(row["name"])
+            for row in db.conn.execute("PRAGMA table_info(scans)").fetchall()
+        }
         assert "extensions_json" in cols
         assert "scan_set_key" in cols
-        row = db.conn.execute("SELECT scan_set_key, extensions_json FROM scans WHERE id = 1").fetchone()
+        row = db.conn.execute(
+            "SELECT scan_set_key, extensions_json FROM scans WHERE id = 1"
+        ).fetchone()
         assert str(row["scan_set_key"])
         assert str(row["extensions_json"]) == "[]"
 
@@ -45,25 +50,44 @@ def test_latest_scan_queries_by_scan_set() -> None:
     with Database(":memory:") as db:
         roots = ["D:/Videos"]
         ext = ["mp4", "mkv"]
-        balanced_key = build_scan_set_key(roots=roots, similarity_profile="balanced", extensions=ext)
-        aggressive_key = build_scan_set_key(roots=roots, similarity_profile="aggressive", extensions=ext)
-        conservative_key = build_scan_set_key(roots=roots, similarity_profile="conservative", extensions=ext)
+        balanced_key = build_scan_set_key(
+            roots=roots, similarity_profile="balanced", extensions=ext
+        )
+        aggressive_key = build_scan_set_key(
+            roots=roots, similarity_profile="aggressive", extensions=ext
+        )
+        conservative_key = build_scan_set_key(
+            roots=roots, similarity_profile="conservative", extensions=ext
+        )
 
-        balanced_done_a = db.create_scan(profile="balanced", roots=roots, extensions=ext)
+        balanced_done_a = db.create_scan(
+            profile="balanced", roots=roots, extensions=ext
+        )
         db.complete_scan(balanced_done_a, status="done")
 
-        db.complete_scan(db.create_scan(profile="balanced", roots=roots, extensions=ext), status="cancelled")
+        db.complete_scan(
+            db.create_scan(profile="balanced", roots=roots, extensions=ext),
+            status="cancelled",
+        )
 
-        balanced_done_b = db.create_scan(profile="balanced", roots=roots, extensions=ext)
+        balanced_done_b = db.create_scan(
+            profile="balanced", roots=roots, extensions=ext
+        )
         db.complete_scan(balanced_done_b, status="done")
 
-        aggressive_done = db.create_scan(profile="aggressive", roots=roots, extensions=ext)
+        aggressive_done = db.create_scan(
+            profile="aggressive", roots=roots, extensions=ext
+        )
         db.complete_scan(aggressive_done, status="done")
 
-        aggressive_cancelled = db.create_scan(profile="aggressive", roots=roots, extensions=ext)
+        aggressive_cancelled = db.create_scan(
+            profile="aggressive", roots=roots, extensions=ext
+        )
         db.complete_scan(aggressive_cancelled, status="cancelled")
 
-        conservative_running = db.create_scan(profile="conservative", roots=roots, extensions=ext)
+        conservative_running = db.create_scan(
+            profile="conservative", roots=roots, extensions=ext
+        )
 
         assert db.latest_scan_id_for_set(balanced_key) == balanced_done_b
         assert db.latest_scan_id_for_set(aggressive_key) == aggressive_cancelled
@@ -83,7 +107,9 @@ def test_latest_scan_queries_by_scan_set() -> None:
         assert str(by_key[conservative_key]["status"]) == "running"
 
         latest_completed_by_set = db.list_latest_completed_scans_by_set()
-        completed_by_key = {str(item["scan_set_key"]): item for item in latest_completed_by_set}
+        completed_by_key = {
+            str(item["scan_set_key"]): item for item in latest_completed_by_set
+        }
         assert int(completed_by_key[balanced_key]["scan_id"]) == balanced_done_b
         assert int(completed_by_key[aggressive_key]["scan_id"]) == aggressive_done
         assert conservative_key not in completed_by_key
@@ -99,7 +125,9 @@ def test_latest_scan_queries_by_scan_set() -> None:
 
 def test_list_match_items_for_scan_orders_by_path() -> None:
     with Database(":memory:") as db:
-        scan_id = db.create_scan(profile="balanced", roots=["D:/Videos"], extensions=["mp4"])
+        scan_id = db.create_scan(
+            profile="balanced", roots=["D:/Videos"], extensions=["mp4"]
+        )
         file_b = db.upsert_file(
             path="D:/Videos/b.mp4",
             size=2,
@@ -144,29 +172,71 @@ def test_purge_for_fresh_rescan_deletes_scan_set_and_selected_root_artifacts() -
     with Database(":memory:") as db:
         roots_a = ["D:/Videos"]
         ext = ["mp4"]
-        key_a = build_scan_set_key(roots=roots_a, similarity_profile="balanced", extensions=ext)
+        key_a = build_scan_set_key(
+            roots=roots_a, similarity_profile="balanced", extensions=ext
+        )
 
         scan_a1 = db.create_scan(profile="balanced", roots=roots_a, extensions=ext)
-        db.upsert_file(path="D:/Videos/a1.mp4", size=1, mtime_ns=1, ctime_ns=1, ext="mp4", scan_id=scan_a1)
-        db.insert_duplicate_group(scan_id=scan_a1, profile="balanced", total_size_bytes=1)
+        db.upsert_file(
+            path="D:/Videos/a1.mp4",
+            size=1,
+            mtime_ns=1,
+            ctime_ns=1,
+            ext="mp4",
+            scan_id=scan_a1,
+        )
+        db.insert_duplicate_group(
+            scan_id=scan_a1, profile="balanced", total_size_bytes=1
+        )
         db.insert_action_run(scan_id=scan_a1, mode="rename", status="done")
         db.complete_scan(scan_a1, status="done")
 
         scan_a2 = db.create_scan(profile="balanced", roots=roots_a, extensions=ext)
-        db.upsert_file(path="D:/Videos/a2.mp4", size=2, mtime_ns=2, ctime_ns=2, ext="mp4", scan_id=scan_a2)
-        db.insert_duplicate_group(scan_id=scan_a2, profile="balanced", total_size_bytes=2)
+        db.upsert_file(
+            path="D:/Videos/a2.mp4",
+            size=2,
+            mtime_ns=2,
+            ctime_ns=2,
+            ext="mp4",
+            scan_id=scan_a2,
+        )
+        db.insert_duplicate_group(
+            scan_id=scan_a2, profile="balanced", total_size_bytes=2
+        )
         db.insert_action_run(scan_id=scan_a2, mode="rename", status="done")
         db.complete_scan(scan_a2, status="done")
 
-        scan_root_match = db.create_scan(profile="aggressive", roots=["Z:/Other"], extensions=ext)
-        db.upsert_file(path="D:/Videos/strict.mp4", size=3, mtime_ns=3, ctime_ns=3, ext="mp4", scan_id=scan_root_match)
-        db.insert_duplicate_group(scan_id=scan_root_match, profile="aggressive", total_size_bytes=3)
+        scan_root_match = db.create_scan(
+            profile="aggressive", roots=["Z:/Other"], extensions=ext
+        )
+        db.upsert_file(
+            path="D:/Videos/strict.mp4",
+            size=3,
+            mtime_ns=3,
+            ctime_ns=3,
+            ext="mp4",
+            scan_id=scan_root_match,
+        )
+        db.insert_duplicate_group(
+            scan_id=scan_root_match, profile="aggressive", total_size_bytes=3
+        )
         db.insert_action_run(scan_id=scan_root_match, mode="rename", status="done")
         db.complete_scan(scan_root_match, status="done")
 
-        scan_keep = db.create_scan(profile="balanced", roots=["E:/Archive"], extensions=ext)
-        db.upsert_file(path="E:/Archive/keep.mp4", size=4, mtime_ns=4, ctime_ns=4, ext="mp4", scan_id=scan_keep)
-        db.insert_duplicate_group(scan_id=scan_keep, profile="balanced", total_size_bytes=4)
+        scan_keep = db.create_scan(
+            profile="balanced", roots=["E:/Archive"], extensions=ext
+        )
+        db.upsert_file(
+            path="E:/Archive/keep.mp4",
+            size=4,
+            mtime_ns=4,
+            ctime_ns=4,
+            ext="mp4",
+            scan_id=scan_keep,
+        )
+        db.insert_duplicate_group(
+            scan_id=scan_keep, profile="balanced", total_size_bytes=4
+        )
         db.insert_action_run(scan_id=scan_keep, mode="rename", status="done")
         db.complete_scan(scan_keep, status="done")
 
@@ -178,13 +248,20 @@ def test_purge_for_fresh_rescan_deletes_scan_set_and_selected_root_artifacts() -
         assert counts["deleted_actions"] == 3
         assert db.latest_scan_id_for_set(key_a) is None
         assert db.scan_summary(scan_keep)["scan_id"] == scan_keep
-        remaining_paths = [str(row["path"]) for row in db.conn.execute("SELECT path FROM files ORDER BY path").fetchall()]
+        remaining_paths = [
+            str(row["path"])
+            for row in db.conn.execute(
+                "SELECT path FROM files ORDER BY path"
+            ).fetchall()
+        ]
         assert remaining_paths == ["E:/Archive/keep.mp4"]
 
 
 def test_scan_batch_methods_roundtrip() -> None:
     with Database(":memory:") as db:
-        scan_id = db.create_scan(profile="balanced", roots=["D:/Videos"], extensions=["mp4"])
+        scan_id = db.create_scan(
+            profile="balanced", roots=["D:/Videos"], extensions=["mp4"]
+        )
         db.begin_scan_transaction()
         by_path = db.upsert_files_batch(
             [
@@ -280,7 +357,9 @@ def test_scan_batch_methods_roundtrip() -> None:
                 ),
             ],
         )
-        inserted_ids = db.insert_duplicate_groups_batch(scan_id=scan_id, profile="balanced", groups=[group])
+        inserted_ids = db.insert_duplicate_groups_batch(
+            scan_id=scan_id, profile="balanced", groups=[group]
+        )
         db.flush_scan_transaction()
         db.end_scan_transaction()
 

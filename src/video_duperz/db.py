@@ -222,25 +222,47 @@ class Database:
         self.conn.commit()
 
     def _ensure_video_meta_columns(self) -> None:
-        columns = {str(r["name"]) for r in self.conn.execute("PRAGMA table_info(video_meta)").fetchall()}
+        columns = {
+            str(r["name"])
+            for r in self.conn.execute("PRAGMA table_info(video_meta)").fetchall()
+        }
         if "audio_codec" not in columns:
-            self.conn.execute("ALTER TABLE video_meta ADD COLUMN audio_codec TEXT NOT NULL DEFAULT ''")
+            self.conn.execute(
+                "ALTER TABLE video_meta ADD COLUMN audio_codec TEXT NOT NULL DEFAULT ''"
+            )
         if "audio_bitrate" not in columns:
-            self.conn.execute("ALTER TABLE video_meta ADD COLUMN audio_bitrate INTEGER NOT NULL DEFAULT 0")
+            self.conn.execute(
+                "ALTER TABLE video_meta ADD COLUMN audio_bitrate INTEGER NOT NULL DEFAULT 0"
+            )
         if "audio_languages" not in columns:
-            self.conn.execute("ALTER TABLE video_meta ADD COLUMN audio_languages TEXT NOT NULL DEFAULT ''")
+            self.conn.execute(
+                "ALTER TABLE video_meta ADD COLUMN audio_languages TEXT NOT NULL DEFAULT ''"
+            )
         if "subtitle_languages" not in columns:
-            self.conn.execute("ALTER TABLE video_meta ADD COLUMN subtitle_languages TEXT NOT NULL DEFAULT ''")
+            self.conn.execute(
+                "ALTER TABLE video_meta ADD COLUMN subtitle_languages TEXT NOT NULL DEFAULT ''"
+            )
         if "is_hdr" not in columns:
-            self.conn.execute("ALTER TABLE video_meta ADD COLUMN is_hdr INTEGER NOT NULL DEFAULT 0")
+            self.conn.execute(
+                "ALTER TABLE video_meta ADD COLUMN is_hdr INTEGER NOT NULL DEFAULT 0"
+            )
 
     def _ensure_scan_columns(self) -> None:
-        columns = {str(r["name"]) for r in self.conn.execute("PRAGMA table_info(scans)").fetchall()}
+        columns = {
+            str(r["name"])
+            for r in self.conn.execute("PRAGMA table_info(scans)").fetchall()
+        }
         if "extensions_json" not in columns:
-            self.conn.execute("ALTER TABLE scans ADD COLUMN extensions_json TEXT NOT NULL DEFAULT '[]'")
+            self.conn.execute(
+                "ALTER TABLE scans ADD COLUMN extensions_json TEXT NOT NULL DEFAULT '[]'"
+            )
         if "scan_set_key" not in columns:
-            self.conn.execute("ALTER TABLE scans ADD COLUMN scan_set_key TEXT NOT NULL DEFAULT ''")
-        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_scans_set_status ON scans(scan_set_key, status, id DESC)")
+            self.conn.execute(
+                "ALTER TABLE scans ADD COLUMN scan_set_key TEXT NOT NULL DEFAULT ''"
+            )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_scans_set_status ON scans(scan_set_key, status, id DESC)"
+        )
 
     def _backfill_scan_set_keys(self) -> None:
         rows = self.conn.execute(
@@ -268,10 +290,17 @@ class Database:
                 ext_payload = []
             extensions = normalize_extensions(ext_payload)
             profile = normalize_similarity_profile(str(row["profile"] or "balanced"))
-            scan_set_key = build_scan_set_key(roots=roots, similarity_profile=profile, extensions=extensions)
-            self.conn.execute("UPDATE scans SET scan_set_key = ? WHERE id = ?", (scan_set_key, int(row["id"])))
+            scan_set_key = build_scan_set_key(
+                roots=roots, similarity_profile=profile, extensions=extensions
+            )
+            self.conn.execute(
+                "UPDATE scans SET scan_set_key = ? WHERE id = ?",
+                (scan_set_key, int(row["id"])),
+            )
 
-    def create_scan(self, profile: str, roots: list[str], extensions: list[str] | None = None) -> int:
+    def create_scan(
+        self, profile: str, roots: list[str], extensions: list[str] | None = None
+    ) -> int:
         normalized_roots = normalize_roots_for_display(roots)
         normalized_profile = normalize_similarity_profile(profile)
         normalized_extensions = normalize_extensions(extensions or [])
@@ -373,11 +402,15 @@ class Database:
         return path_to_id
 
     def mark_missing_for_scan(self, scan_id: int, present_paths: set[str]) -> None:
-        rows = self.conn.execute("SELECT path FROM files WHERE scan_id = ?", (scan_id,)).fetchall()
+        rows = self.conn.execute(
+            "SELECT path FROM files WHERE scan_id = ?", (scan_id,)
+        ).fetchall()
         for row in rows:
             path = row["path"]
             if path not in present_paths:
-                self.conn.execute("UPDATE files SET exists_flag = 0 WHERE path = ?", (path,))
+                self.conn.execute(
+                    "UPDATE files SET exists_flag = 0 WHERE path = ?", (path,)
+                )
         self._commit_if_needed()
 
     @staticmethod
@@ -406,7 +439,9 @@ class Database:
             }
         return out
 
-    def get_cached_artifacts(self, path: str, size: int, mtime_ns: int) -> dict[str, Any] | None:
+    def get_cached_artifacts(
+        self, path: str, size: int, mtime_ns: int
+    ) -> dict[str, Any] | None:
         cached = self.load_cached_artifacts_batch(
             [
                 {
@@ -418,7 +453,9 @@ class Database:
         )
         return cached.get(path)
 
-    def load_cached_artifacts_batch(self, files: list[dict[str, object]]) -> dict[str, dict[str, Any]]:
+    def load_cached_artifacts_batch(
+        self, files: list[dict[str, object]]
+    ) -> dict[str, dict[str, Any]]:
         if not files:
             return {}
         requested: dict[str, tuple[int, int]] = {}
@@ -451,7 +488,10 @@ class Database:
                 expected = requested.get(path)
                 if expected is None:
                     continue
-                if int(row["size"]) != expected[0] or int(row["mtime_ns"]) != expected[1]:
+                if (
+                    int(row["size"]) != expected[0]
+                    or int(row["mtime_ns"]) != expected[1]
+                ):
                     continue
                 out[path] = self._row_to_cached_artifacts(row)
         return out
@@ -462,13 +502,17 @@ class Database:
     def save_probe_error(self, file_id: int, error: str) -> None:
         self.save_probe_errors_batch([(int(file_id), str(error))])
 
-    def save_fingerprint(self, file_id: int, algo_version: int, hashes: list[int]) -> None:
+    def save_fingerprint(
+        self, file_id: int, algo_version: int, hashes: list[int]
+    ) -> None:
         self.save_fingerprints_batch([(int(file_id), int(algo_version), list(hashes))])
 
     def save_video_meta_batch(self, rows: list[tuple[int, VideoMeta]]) -> None:
         if not rows:
             return
-        payload: list[tuple[int, float, int, int, float, str, int, int, str, int, str, str, int]] = []
+        payload: list[
+            tuple[int, float, int, int, float, str, int, int, str, int, str, str, int]
+        ] = []
         for file_id, meta in rows:
             payload.append(
                 (
@@ -560,7 +604,9 @@ class Database:
         )
         self._commit_if_needed()
 
-    def list_match_items_for_scan(self, scan_id: int, algo_version: int) -> list[MatchItem]:
+    def list_match_items_for_scan(
+        self, scan_id: int, algo_version: int
+    ) -> list[MatchItem]:
         rows = self.conn.execute(
             """
             SELECT f.id AS file_id, f.path, f.size, f.mtime_ns, f.ctime_ns,
@@ -619,18 +665,27 @@ class Database:
             return False
         return is_path_under_root(path, root)
 
-    def purge_for_fresh_rescan(self, scan_set_key: str, roots: list[str]) -> dict[str, int]:
+    def purge_for_fresh_rescan(
+        self, scan_set_key: str, roots: list[str]
+    ) -> dict[str, int]:
         key = str(scan_set_key or "").strip()
-        normalized_roots = [str(root) for root in roots if self._canonical_path_match_key(root)]
+        normalized_roots = [
+            str(root) for root in roots if self._canonical_path_match_key(root)
+        ]
         scan_ids: set[int] = set()
         if key:
-            scan_rows = self.conn.execute("SELECT id FROM scans WHERE scan_set_key = ?", (key,)).fetchall()
+            scan_rows = self.conn.execute(
+                "SELECT id FROM scans WHERE scan_set_key = ?", (key,)
+            ).fetchall()
             scan_ids.update(int(row["id"]) for row in scan_rows)
         if normalized_roots:
             file_rows = self.conn.execute("SELECT scan_id, path FROM files").fetchall()
             for row in file_rows:
                 file_path = str(row["path"] or "")
-                if any(self._path_is_under_root(file_path, root) for root in normalized_roots):
+                if any(
+                    self._path_is_under_root(file_path, root)
+                    for root in normalized_roots
+                ):
                     scan_ids.add(int(row["scan_id"]))
 
         if not scan_ids:
@@ -645,10 +700,15 @@ class Database:
         placeholders = ",".join("?" for _ in ordered_ids)
         params = tuple(ordered_ids)
         deleted_scans = int(
-            self.conn.execute(f"SELECT COUNT(*) AS c FROM scans WHERE id IN ({placeholders})", params).fetchone()["c"]
+            self.conn.execute(
+                f"SELECT COUNT(*) AS c FROM scans WHERE id IN ({placeholders})", params
+            ).fetchone()["c"]
         )
         deleted_files = int(
-            self.conn.execute(f"SELECT COUNT(*) AS c FROM files WHERE scan_id IN ({placeholders})", params).fetchone()["c"]
+            self.conn.execute(
+                f"SELECT COUNT(*) AS c FROM files WHERE scan_id IN ({placeholders})",
+                params,
+            ).fetchone()["c"]
         )
         deleted_groups = int(
             self.conn.execute(
@@ -657,9 +717,10 @@ class Database:
             ).fetchone()["c"]
         )
         deleted_actions = int(
-            self.conn.execute(f"SELECT COUNT(*) AS c FROM action_runs WHERE scan_id IN ({placeholders})", params).fetchone()[
-                "c"
-            ]
+            self.conn.execute(
+                f"SELECT COUNT(*) AS c FROM action_runs WHERE scan_id IN ({placeholders})",
+                params,
+            ).fetchone()["c"]
         )
         self.conn.execute(f"DELETE FROM scans WHERE id IN ({placeholders})", params)
         self._commit_if_needed()
@@ -670,7 +731,9 @@ class Database:
             "deleted_actions": deleted_actions,
         }
 
-    def insert_duplicate_group(self, scan_id: int, profile: str, total_size_bytes: int) -> int:
+    def insert_duplicate_group(
+        self, scan_id: int, profile: str, total_size_bytes: int
+    ) -> int:
         group_ids = self.insert_duplicate_groups_batch(
             scan_id=scan_id,
             profile=profile,
@@ -706,7 +769,9 @@ class Database:
         )
         self._commit_if_needed()
 
-    def insert_duplicate_groups_batch(self, scan_id: int, profile: str, groups: list[DuplicateGroup]) -> list[int]:
+    def insert_duplicate_groups_batch(
+        self, scan_id: int, profile: str, groups: list[DuplicateGroup]
+    ) -> list[int]:
         if not groups:
             return []
         created_at = utc_now_iso()
@@ -790,7 +855,9 @@ class Database:
         self._commit_if_needed()
 
     def remove_file_from_duplicate_groups(self, file_id: int) -> None:
-        self.conn.execute("DELETE FROM duplicate_group_items WHERE file_id = ?", (file_id,))
+        self.conn.execute(
+            "DELETE FROM duplicate_group_items WHERE file_id = ?", (file_id,)
+        )
         self._commit_if_needed()
 
     def prune_duplicate_groups(self, scan_id: int) -> list[int]:
@@ -877,7 +944,9 @@ class Database:
         return groups
 
     def get_scan_info(self, scan_id: int) -> dict[str, Any]:
-        row = self.conn.execute("SELECT * FROM scans WHERE id = ?", (scan_id,)).fetchone()
+        row = self.conn.execute(
+            "SELECT * FROM scans WHERE id = ?", (scan_id,)
+        ).fetchone()
         if not row:
             raise ValueError(f"scan_id {scan_id} not found")
         try:
@@ -903,7 +972,9 @@ class Database:
         }
 
     def latest_scan_id(self) -> int | None:
-        row = self.conn.execute("SELECT id FROM scans ORDER BY id DESC LIMIT 1").fetchone()
+        row = self.conn.execute(
+            "SELECT id FROM scans ORDER BY id DESC LIMIT 1"
+        ).fetchone()
         if row is None:
             return None
         return int(row["id"])
@@ -995,7 +1066,9 @@ class Database:
                 {
                     "scan_id": int(row["id"]),
                     "created_at": str(row["created_at"]),
-                    "profile": normalize_similarity_profile(str(row["profile"] or "balanced")),
+                    "profile": normalize_similarity_profile(
+                        str(row["profile"] or "balanced")
+                    ),
                     "roots": normalize_roots_for_display(roots),
                     "extensions": normalize_extensions(extensions),
                     "scan_set_key": str(row["scan_set_key"] or ""),
@@ -1034,11 +1107,15 @@ class Database:
             "created_at": str(scan["created_at"]),
             "profile": str(scan["profile"]),
             "status": str(scan["status"]),
-            "group_count": int(group_count_row["c"] if group_count_row is not None else 0),
+            "group_count": int(
+                group_count_row["c"] if group_count_row is not None else 0
+            ),
             "file_count": int(file_count_row["c"] if file_count_row is not None else 0),
         }
 
-    def insert_action_run(self, scan_id: int, mode: str, status: str = "running") -> int:
+    def insert_action_run(
+        self, scan_id: int, mode: str, status: str = "running"
+    ) -> int:
         cur = self.conn.execute(
             "INSERT INTO action_runs(scan_id, mode, created_at, status) VALUES(?, ?, ?, ?)",
             (scan_id, mode, utc_now_iso(), status),
@@ -1065,11 +1142,15 @@ class Database:
         self._commit_if_needed()
 
     def finalize_action_run(self, run_id: int, status: str) -> None:
-        self.conn.execute("UPDATE action_runs SET status = ? WHERE id = ?", (status, run_id))
+        self.conn.execute(
+            "UPDATE action_runs SET status = ? WHERE id = ?", (status, run_id)
+        )
         self._commit_if_needed()
 
     def fetch_file_path(self, file_id: int) -> str:
-        row = self.conn.execute("SELECT path FROM files WHERE id = ?", (file_id,)).fetchone()
+        row = self.conn.execute(
+            "SELECT path FROM files WHERE id = ?", (file_id,)
+        ).fetchone()
         if not row:
             raise ValueError(f"file_id {file_id} not found")
         return str(row["path"])

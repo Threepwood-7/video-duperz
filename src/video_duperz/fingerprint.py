@@ -12,7 +12,20 @@ except ImportError:
     cv2 = None  # type: ignore[assignment]
 
 ALGO_VERSION = 1
-SAMPLE_PERCENTS = [0.05, 0.13, 0.21, 0.29, 0.37, 0.45, 0.53, 0.61, 0.69, 0.77, 0.85, 0.93]
+SAMPLE_PERCENTS = [
+    0.05,
+    0.13,
+    0.21,
+    0.29,
+    0.37,
+    0.45,
+    0.53,
+    0.61,
+    0.69,
+    0.77,
+    0.85,
+    0.93,
+]
 
 
 class FingerprintError(RuntimeError):
@@ -55,7 +68,9 @@ def hamming_distance(a: int, b: int) -> int:
 def normalized_median_distance(hashes_a: list[int], hashes_b: list[int]) -> float:
     if len(hashes_a) != len(hashes_b) or not hashes_a:
         return 1.0
-    distances = [hamming_distance(a, b) for a, b in zip(hashes_a, hashes_b, strict=True)]
+    distances = [
+        hamming_distance(a, b) for a, b in zip(hashes_a, hashes_b, strict=True)
+    ]
     return float(median(distances)) / 64.0
 
 
@@ -85,7 +100,9 @@ def compute_video_hashes(path: str, duration_s: float) -> list[int]:
     return hashes
 
 
-def build_fingerprint_record(file_id: int, duration_s: float, path: str) -> FingerprintRecord:
+def build_fingerprint_record(
+    file_id: int, duration_s: float, path: str
+) -> FingerprintRecord:
     hashes = compute_video_hashes(path, duration_s)
     return FingerprintRecord(
         file_id=file_id,

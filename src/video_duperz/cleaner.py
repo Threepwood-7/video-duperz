@@ -14,7 +14,9 @@ if TYPE_CHECKING:
 FULL_RESET_DEFAULT_DELAY_MS = 1500
 
 
-def run_full_reset(delay_ms: int = FULL_RESET_DEFAULT_DELAY_MS, relaunch: bool = False) -> int:
+def run_full_reset(
+    delay_ms: int = FULL_RESET_DEFAULT_DELAY_MS, relaunch: bool = False
+) -> int:
     try:
         delay = max(0, int(delay_ms))
     except (TypeError, ValueError):

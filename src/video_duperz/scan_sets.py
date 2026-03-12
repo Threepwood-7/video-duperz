@@ -54,7 +54,9 @@ def canonical_roots(roots: list[str]) -> list[str]:
     return normalized
 
 
-def build_scan_set_spec(roots: list[str], similarity_profile: str, extensions: list[str]) -> dict[str, object]:
+def build_scan_set_spec(
+    roots: list[str], similarity_profile: str, extensions: list[str]
+) -> dict[str, object]:
     ext = normalize_extensions(extensions)
     ext.sort()
     return {
@@ -64,7 +66,10 @@ def build_scan_set_spec(roots: list[str], similarity_profile: str, extensions: l
     }
 
 
-def build_scan_set_key(roots: list[str], similarity_profile: str, extensions: list[str]) -> str:
-    spec = build_scan_set_spec(roots=roots, similarity_profile=similarity_profile, extensions=extensions)
+def build_scan_set_key(
+    roots: list[str], similarity_profile: str, extensions: list[str]
+) -> str:
+    spec = build_scan_set_spec(
+        roots=roots, similarity_profile=similarity_profile, extensions=extensions
+    )
     return json.dumps(spec, separators=(",", ":"), sort_keys=True)
-

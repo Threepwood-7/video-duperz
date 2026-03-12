@@ -71,12 +71,10 @@ VIDEO_EXTENSION_PRESETS: dict[str, tuple[str, ...]] = {
     ),
 }
 VIDEO_EXTENSION_PRESET_CSV: dict[str, str] = {
-    name: ", ".join(extensions)
-    for name, extensions in VIDEO_EXTENSION_PRESETS.items()
+    name: ", ".join(extensions) for name, extensions in VIDEO_EXTENSION_PRESETS.items()
 }
 _VIDEO_EXTENSION_PRESET_KEYS: dict[str, frozenset[str]] = {
-    name: frozenset(extensions)
-    for name, extensions in VIDEO_EXTENSION_PRESETS.items()
+    name: frozenset(extensions) for name, extensions in VIDEO_EXTENSION_PRESETS.items()
 }
 
 
@@ -156,7 +154,9 @@ def _normalize_column_visibility(value: object, expected_count: int) -> list[boo
     return visibility
 
 
-def _normalize_saved_column_views(value: object, expected_count: int) -> dict[str, dict[str, list[int] | list[bool]]]:
+def _normalize_saved_column_views(
+    value: object, expected_count: int
+) -> dict[str, dict[str, list[int] | list[bool]]]:
     if not isinstance(value, dict):
         return {}
     normalized: dict[str, dict[str, list[int] | list[bool]]] = {}
@@ -167,7 +167,9 @@ def _normalize_saved_column_views(value: object, expected_count: int) -> dict[st
         if not isinstance(raw_payload, dict):
             continue
         widths = _normalize_column_widths(raw_payload.get("widths"), expected_count)
-        visibility = _normalize_column_visibility(raw_payload.get("visibility"), expected_count)
+        visibility = _normalize_column_visibility(
+            raw_payload.get("visibility"), expected_count
+        )
         if not widths or not visibility:
             continue
         normalized[name] = {"widths": widths, "visibility": visibility}
@@ -209,14 +211,18 @@ def _normalize_saved_scan_profiles(value: object) -> dict[str, SavedScanProfileP
         roots = normalize_roots_for_display(roots_raw)
         if not roots:
             continue
-        profile = normalize_similarity_profile(str(raw_payload.get("similarity_profile", "balanced")))
+        profile = normalize_similarity_profile(
+            str(raw_payload.get("similarity_profile", "balanced"))
+        )
         ext_raw = raw_payload.get("extensions", [])
         if not isinstance(ext_raw, list):
             ext_raw = []
         extensions = normalize_extensions(ext_raw)
         scan_set_key = str(raw_payload.get("scan_set_key", "")).strip()
         if not scan_set_key:
-            scan_set_key = build_scan_set_key(roots=roots, similarity_profile=profile, extensions=extensions)
+            scan_set_key = build_scan_set_key(
+                roots=roots, similarity_profile=profile, extensions=extensions
+            )
         updated_at = str(raw_payload.get("updated_at", "")).strip() or utc_now_iso()
         normalized[name] = SavedScanProfilePayload(
             scan_set_key=scan_set_key,
@@ -238,7 +244,9 @@ def _normalize_percent(value: object, default: int) -> int:
     return max(0, min(100, parsed))
 
 
-def _normalize_frame_pair(a_value: object, b_value: object, default_a: int, default_b: int) -> tuple[int, int]:
+def _normalize_frame_pair(
+    a_value: object, b_value: object, default_a: int, default_b: int
+) -> tuple[int, int]:
     a = _normalize_percent(a_value, default_a)
     b = _normalize_percent(b_value, default_b)
     if a == b:
@@ -254,7 +262,9 @@ def _normalize_identical_block_mib(value: object, default: int = 1) -> int:
     return max(1, min(64, parsed))
 
 
-def _normalize_identical_sample_pair(a_value: object, b_value: object, default_a: int, default_b: int) -> tuple[int, int]:
+def _normalize_identical_sample_pair(
+    a_value: object, b_value: object, default_a: int, default_b: int
+) -> tuple[int, int]:
     a = _normalize_percent(a_value, default_a)
     b = _normalize_percent(b_value, default_b)
     if a == b:
@@ -267,7 +277,9 @@ def _normalize_identical_sample_pair(a_value: object, b_value: object, default_a
     return a, b
 
 
-def _normalize_drive_worker_overrides(value: object, max_workers: int = MAX_DRIVE_WORKERS) -> dict[str, int]:
+def _normalize_drive_worker_overrides(
+    value: object, max_workers: int = MAX_DRIVE_WORKERS
+) -> dict[str, int]:
     if not isinstance(value, dict):
         return {}
     normalized: dict[str, int] = {}
@@ -291,7 +303,9 @@ def _normalize_probe_worker_mode(value: object, default: str = "balanced") -> st
     return default
 
 
-def _normalize_int_range(value: object, default: int, minimum: int, maximum: int) -> int:
+def _normalize_int_range(
+    value: object, default: int, minimum: int, maximum: int
+) -> int:
     try:
         parsed = int(value)
     except (TypeError, ValueError):
@@ -353,20 +367,38 @@ def _coerce_bool(value: object, default: bool) -> bool:
     return default
 
 
-def _read_qsettings_payload(qs: QSettingsValueStore, defaults: Settings) -> dict[str, object]:
+def _read_qsettings_payload(
+    qs: QSettingsValueStore, defaults: Settings
+) -> dict[str, object]:
     payload: dict[str, object] = {
         "scan_roots": _decode_json_value(qs.value("scan_roots"), defaults.scan_roots),
-        "recent_scan_roots": _decode_json_value(qs.value("recent_scan_roots"), defaults.recent_scan_roots),
+        "recent_scan_roots": _decode_json_value(
+            qs.value("recent_scan_roots"), defaults.recent_scan_roots
+        ),
         "extensions": _decode_json_value(qs.value("extensions"), defaults.extensions),
-        "similarity_profile": qs.value("similarity_profile", defaults.similarity_profile),
+        "similarity_profile": qs.value(
+            "similarity_profile", defaults.similarity_profile
+        ),
         "max_workers": qs.value("max_workers", defaults.max_workers),
-        "preview_autoplay": _coerce_bool(qs.value("preview_autoplay"), defaults.preview_autoplay),
+        "preview_autoplay": _coerce_bool(
+            qs.value("preview_autoplay"), defaults.preview_autoplay
+        ),
         "thumbnail_size": qs.value("thumbnail_size", defaults.thumbnail_size),
-        "thumbnail_frame_a_pct": qs.value("thumbnail_frame_a_pct", defaults.thumbnail_frame_a_pct),
-        "thumbnail_frame_b_pct": qs.value("thumbnail_frame_b_pct", defaults.thumbnail_frame_b_pct),
-        "identical_block_mib": qs.value("identical_block_mib", defaults.identical_block_mib),
-        "identical_sample_a_pct": qs.value("identical_sample_a_pct", defaults.identical_sample_a_pct),
-        "identical_sample_b_pct": qs.value("identical_sample_b_pct", defaults.identical_sample_b_pct),
+        "thumbnail_frame_a_pct": qs.value(
+            "thumbnail_frame_a_pct", defaults.thumbnail_frame_a_pct
+        ),
+        "thumbnail_frame_b_pct": qs.value(
+            "thumbnail_frame_b_pct", defaults.thumbnail_frame_b_pct
+        ),
+        "identical_block_mib": qs.value(
+            "identical_block_mib", defaults.identical_block_mib
+        ),
+        "identical_sample_a_pct": qs.value(
+            "identical_sample_a_pct", defaults.identical_sample_a_pct
+        ),
+        "identical_sample_b_pct": qs.value(
+            "identical_sample_b_pct", defaults.identical_sample_b_pct
+        ),
         "results_table_column_widths": _decode_json_value(
             qs.value("results_table_column_widths"),
             defaults.results_table_column_widths,
@@ -375,17 +407,27 @@ def _read_qsettings_payload(qs: QSettingsValueStore, defaults: Settings) -> dict
             qs.value("results_table_column_visibility"),
             defaults.results_table_column_visibility,
         ),
-        "saved_column_views": _decode_json_value(qs.value("saved_column_views"), defaults.saved_column_views),
-        "saved_scan_profiles": _decode_json_value(qs.value("saved_scan_profiles"), defaults.saved_scan_profiles),
+        "saved_column_views": _decode_json_value(
+            qs.value("saved_column_views"), defaults.saved_column_views
+        ),
+        "saved_scan_profiles": _decode_json_value(
+            qs.value("saved_scan_profiles"), defaults.saved_scan_profiles
+        ),
         "keep_rule": qs.value("keep_rule", defaults.keep_rule),
         "drive_worker_overrides": _decode_json_value(
             qs.value("drive_worker_overrides"),
             defaults.drive_worker_overrides,
         ),
         "probe_worker_mode": qs.value("probe_worker_mode", defaults.probe_worker_mode),
-        "scan_db_batch_size": qs.value("scan_db_batch_size", defaults.scan_db_batch_size),
-        "scan_db_flush_interval_ms": qs.value("scan_db_flush_interval_ms", defaults.scan_db_flush_interval_ms),
-        "scan_enum_queue_max": qs.value("scan_enum_queue_max", defaults.scan_enum_queue_max),
+        "scan_db_batch_size": qs.value(
+            "scan_db_batch_size", defaults.scan_db_batch_size
+        ),
+        "scan_db_flush_interval_ms": qs.value(
+            "scan_db_flush_interval_ms", defaults.scan_db_flush_interval_ms
+        ),
+        "scan_enum_queue_max": qs.value(
+            "scan_enum_queue_max", defaults.scan_enum_queue_max
+        ),
         "scan_progress_emit_interval_ms": qs.value(
             "scan_progress_emit_interval_ms",
             defaults.scan_progress_emit_interval_ms,
@@ -413,12 +455,21 @@ def _settings_from_raw(raw: dict[str, object], defaults: Settings) -> Settings:
     )
     settings = Settings(
         scan_roots=list(raw.get("scan_roots", defaults.scan_roots)),
-        recent_scan_roots=_normalize_recent_roots(raw.get("recent_scan_roots", defaults.recent_scan_roots)),
+        recent_scan_roots=_normalize_recent_roots(
+            raw.get("recent_scan_roots", defaults.recent_scan_roots)
+        ),
         extensions=list(raw.get("extensions", defaults.extensions)),
-        similarity_profile=str(raw.get("similarity_profile", defaults.similarity_profile)),
+        similarity_profile=str(
+            raw.get("similarity_profile", defaults.similarity_profile)
+        ),
         max_workers=int(raw.get("max_workers", defaults.max_workers)),
-        preview_autoplay=_coerce_bool(raw.get("preview_autoplay", defaults.preview_autoplay), defaults.preview_autoplay),
-        thumbnail_size=normalize_thumbnail_size(raw.get("thumbnail_size", defaults.thumbnail_size)),
+        preview_autoplay=_coerce_bool(
+            raw.get("preview_autoplay", defaults.preview_autoplay),
+            defaults.preview_autoplay,
+        ),
+        thumbnail_size=normalize_thumbnail_size(
+            raw.get("thumbnail_size", defaults.thumbnail_size)
+        ),
         thumbnail_frame_a_pct=frame_a,
         thumbnail_frame_b_pct=frame_b,
         identical_block_mib=_normalize_identical_block_mib(
@@ -439,7 +490,9 @@ def _settings_from_raw(raw: dict[str, object], defaults: Settings) -> Settings:
             raw.get("saved_column_views", {}),
             expected_count=RESULTS_TABLE_COLUMN_COUNT,
         ),
-        saved_scan_profiles=_normalize_saved_scan_profiles(raw.get("saved_scan_profiles", {})),
+        saved_scan_profiles=_normalize_saved_scan_profiles(
+            raw.get("saved_scan_profiles", {})
+        ),
         keep_rule=str(raw.get("keep_rule", defaults.keep_rule)),
         drive_worker_overrides=_normalize_drive_worker_overrides(
             raw.get("drive_worker_overrides", defaults.drive_worker_overrides),
@@ -467,13 +520,19 @@ def _settings_from_raw(raw: dict[str, object], defaults: Settings) -> Settings:
             32768,
         ),
         scan_progress_emit_interval_ms=_normalize_int_range(
-            raw.get("scan_progress_emit_interval_ms", defaults.scan_progress_emit_interval_ms),
+            raw.get(
+                "scan_progress_emit_interval_ms",
+                defaults.scan_progress_emit_interval_ms,
+            ),
             defaults.scan_progress_emit_interval_ms,
             50,
             2000,
         ),
         scan_progress_emit_every_files=_normalize_int_range(
-            raw.get("scan_progress_emit_every_files", defaults.scan_progress_emit_every_files),
+            raw.get(
+                "scan_progress_emit_every_files",
+                defaults.scan_progress_emit_every_files,
+            ),
             defaults.scan_progress_emit_every_files,
             10,
             5000,
