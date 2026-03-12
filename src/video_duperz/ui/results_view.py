@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import subprocess
 from collections import deque
 from dataclasses import dataclass, replace
@@ -28,6 +27,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from threep_commons.desktop import open_path_in_default_app, reveal_path_in_file_manager
 
 from ..quality import codec_rank
 from .thumbnails import (
@@ -1102,10 +1102,8 @@ class ResultsView(QWidget):
             self.status_message.emit("Selected file does not exist.")
             return
         try:
-            if os.name == "nt":
-                os.startfile(str(target))  # type: ignore[attr-defined]
-            else:
-                subprocess.Popen(["xdg-open", str(target)])
+            if not open_path_in_default_app(target):
+                raise RuntimeError("No default opener available on this platform")
             self.status_message.emit(f"Opened {target.name}")
         except Exception as exc:
             QMessageBox.warning(self, "Open Failed", str(exc))
@@ -1120,10 +1118,8 @@ class ResultsView(QWidget):
             self.status_message.emit("Selected file does not exist.")
             return
         try:
-            if os.name == "nt":
-                subprocess.Popen(["explorer", f"/select,{target}"])
-            else:
-                subprocess.Popen(["xdg-open", str(target.parent)])
+            if not reveal_path_in_file_manager(target):
+                raise RuntimeError("No file manager available on this platform")
             self.status_message.emit(f"Exploring {target.parent}")
         except Exception as exc:
             QMessageBox.warning(self, "Explore Failed", str(exc))

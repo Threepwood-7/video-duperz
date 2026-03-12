@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from time import monotonic
 from types import SimpleNamespace
 
 import pytest
@@ -12,6 +13,7 @@ from video_duperz.db import Database
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton, QSpinBox
 
 from video_duperz.models import (
@@ -63,6 +65,25 @@ def _dup_item(
         keep_default=file_id % 2 == 1,
         selected_action="keep",
     )
+
+
+def _wait_until_table_text(
+    app: QApplication,
+    table,
+    row: int,
+    column: int,
+    *,
+    timeout_s: float = 2.0,
+) -> str:
+    deadline = monotonic() + timeout_s
+    while monotonic() < deadline:
+        app.processEvents()
+        item = table.item(row, column)
+        if item is not None and item.text():
+            return item.text()
+        QTest.qWait(10)
+    item = table.item(row, column)
+    return "" if item is None else item.text()
 
 
 def test_main_window_launches_with_new_results_table(tmp_path: Path) -> None:
@@ -358,11 +379,7 @@ def test_results_identical_column_lazy_compare_and_cache(tmp_path: Path) -> None
         table = window.results_view.results_table
         assert table.item(0, 2).text() == ""
 
-        for _ in range(120):
-            app.processEvents()
-            if table.item(0, 2).text():
-                break
-        assert table.item(0, 2).text() != ""
+        assert _wait_until_table_text(app, table, 0, 2) != ""
 
         group_b_row = next(
             row
@@ -372,12 +389,8 @@ def test_results_identical_column_lazy_compare_and_cache(tmp_path: Path) -> None
         assert table.item(group_b_row, 2).text() == ""
 
         table.verticalScrollBar().setValue(table.verticalScrollBar().maximum())
-        for _ in range(120):
-            app.processEvents()
-            if table.item(group_b_row, 2).text():
-                break
-        assert table.item(group_b_row, 2).text() != ""
-        group_b_symbol = table.item(group_b_row, 2).text()
+        group_b_symbol = _wait_until_table_text(app, table, group_b_row, 2)
+        assert group_b_symbol != ""
 
         window.results_view.filter_include_path_edit.setText("g2_")
         for _ in range(50):

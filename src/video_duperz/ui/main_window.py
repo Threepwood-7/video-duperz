@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import contextlib
-import os
 import shutil
-import subprocess
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThreadPool
@@ -29,6 +27,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from threep_commons.desktop import open_path_in_default_app
 
 from .. import __version__
 from ..config import (
@@ -753,10 +752,8 @@ class MainWindow(QMainWindow):
         self._persist_settings()
         target = settings_path()
         try:
-            if os.name == "nt":
-                os.startfile(str(target))  # type: ignore[attr-defined]
-            else:
-                subprocess.Popen(["xdg-open", str(target)])
+            if not open_path_in_default_app(target):
+                raise RuntimeError("No default opener available on this platform")
             self.statusBar().showMessage(f"Opened settings file: {target}")
         except Exception as exc:
             QMessageBox.warning(self, "Open Settings Failed", str(exc))
