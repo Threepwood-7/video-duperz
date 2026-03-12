@@ -167,7 +167,7 @@ def test_settings_identical_compare_normalization(tmp_path: Path, monkeypatch) -
     assert loaded_swapped.identical_sample_b_pct == 80
 
 
-def test_settings_legacy_column_widths_and_visibility_migrate_to_19(tmp_path: Path, monkeypatch) -> None:
+def test_settings_old_column_payloads_are_ignored(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setenv("APPDATA", str(tmp_path))
     settings = default_settings()
@@ -176,14 +176,11 @@ def test_settings_legacy_column_widths_and_visibility_migrate_to_19(tmp_path: Pa
     path = settings_path()
     _set_qsettings_value(path, "results_table_column_widths", [80] * 18)
     _set_qsettings_value(path, "results_table_column_visibility", [False] * 18)
+    _set_qsettings_value(path, "files_table_column_widths", [90] * 19)
 
     loaded = load_settings()
-    assert len(loaded.results_table_column_widths) == 19
-    assert loaded.results_table_column_widths[:18] == [80] * 18
-    assert loaded.results_table_column_widths[18] > 0
-    assert len(loaded.results_table_column_visibility) == 19
-    assert loaded.results_table_column_visibility[:18] == [False] * 18
-    assert loaded.results_table_column_visibility[18] is True
+    assert loaded.results_table_column_widths == []
+    assert loaded.results_table_column_visibility == []
 
 
 def test_settings_saved_views_normalization(tmp_path: Path, monkeypatch) -> None:
@@ -219,7 +216,7 @@ def test_settings_saved_views_normalization(tmp_path: Path, monkeypatch) -> None
     assert all(loaded.saved_column_views["bad_all_hidden"]["visibility"])
 
 
-def test_settings_saved_views_legacy_columns_migrate_to_19(tmp_path: Path, monkeypatch) -> None:
+def test_settings_saved_views_with_old_column_counts_are_ignored(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setenv("APPDATA", str(tmp_path))
     settings = default_settings()
@@ -238,10 +235,7 @@ def test_settings_saved_views_legacy_columns_migrate_to_19(tmp_path: Path, monke
     )
 
     loaded = load_settings()
-    assert "legacy" in loaded.saved_column_views
-    legacy = loaded.saved_column_views["legacy"]
-    assert len(legacy["widths"]) == 19
-    assert len(legacy["visibility"]) == 19
+    assert "legacy" not in loaded.saved_column_views
 
 
 def test_settings_saved_scan_profiles_normalization(tmp_path: Path, monkeypatch) -> None:

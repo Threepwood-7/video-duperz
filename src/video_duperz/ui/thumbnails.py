@@ -192,8 +192,3 @@ def extract_thumbnail_pair(
     if not ok_b:
         return False, err_b
     return True, None
-
-
-def extract_thumbnail(path: str, output_path: str | Path, target_w: int, target_h: int) -> tuple[bool, str | None]:
-    # Backward-compatible wrapper used by older callers/tests.
-    return extract_thumbnail_at(path, output_path, target_w=target_w, target_h=target_h, frame_pct=23)

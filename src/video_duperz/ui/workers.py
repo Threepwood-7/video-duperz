@@ -200,7 +200,3 @@ class ExactMatchGroupWorker(QRunnable):
             )
         except Exception as exc:
             self.signals.error.emit({**payload, "message": str(exc)})
-
-
-# Backward-compatible alias used by any older imports.
-ThumbnailWorker = ThumbnailPairWorker

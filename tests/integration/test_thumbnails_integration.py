@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from video_duperz.ui.thumbnails import extract_thumbnail, extract_thumbnail_pair
+from video_duperz.ui.thumbnails import extract_thumbnail_at, extract_thumbnail_pair
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -39,7 +39,13 @@ def test_extract_thumbnail_writes_file(tmp_path: Path) -> None:
         ]
     )
 
-    ok, err = extract_thumbnail(path=str(source), output_path=thumb, target_w=96, target_h=54)
+    ok, err = extract_thumbnail_at(
+        path=str(source),
+        output_path=thumb,
+        target_w=96,
+        target_h=54,
+        frame_pct=23,
+    )
     assert ok, err
     assert thumb.exists()
     assert thumb.stat().st_size > 0

@@ -356,7 +356,7 @@ python -m video_duperz clean --full-reset
 
 ### Settings migration
 
-Legacy config keys (e.g., `files_table_column_widths`) are automatically migrated. Column width/visibility is normalized when the schema changes (18 to 19 columns).
+Column width and visibility settings must match the current 19-column schema; stale payloads are ignored.
 
 ---
 

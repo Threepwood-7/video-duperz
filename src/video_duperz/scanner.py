@@ -56,11 +56,6 @@ class PhysicalDriveScanPlan:
     effective_total_workers: int
     issues: list[ScanIssue]
 
-    @property
-    def effective_workers(self) -> int:
-        # Backward-compatible alias used by pre-plan UI/tests.
-        return int(self.effective_total_workers)
-
 
 def _windows_mount_point_for_path(path: str) -> str:
     return str(_get_volume_mount_point(path))

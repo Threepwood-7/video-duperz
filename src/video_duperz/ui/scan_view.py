@@ -34,8 +34,6 @@ class ScanView(QWidget):
         self.stage_progress = QProgressBar(self)
         self.stage_progress.setRange(0, 100)
         self.stage_progress.setValue(0)
-        # Backward-compatible alias for any direct external references.
-        self.progress = self.stage_progress
         self.worker_progress = QProgressBar(self)
         self.worker_progress.setRange(0, 1)
         self.worker_progress.setValue(0)

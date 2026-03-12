@@ -115,8 +115,6 @@ def detect_video_extension_preset(extensions: list[str]) -> str | None:
 
 COMMON_VIDEO_EXTENSIONS = list(VIDEO_EXTENSION_PRESETS[DEFAULT_VIDEO_EXTENSION_PRESET])
 RESULTS_TABLE_COLUMN_COUNT = 19
-LEGACY_RESULTS_TABLE_COLUMN_COUNT = 18
-DEFAULT_IDENTICAL_COLUMN_WIDTH = 42
 MAX_RECENT_ROOTS = 20
 MAX_SAVED_SCAN_PROFILES = 200
 SETTINGS_FILE_NAME = f"{SETTINGS_APP_NAME}.ini"
@@ -133,8 +131,6 @@ def _normalize_column_widths(value: object, expected_count: int) -> list[int]:
     if not isinstance(value, list):
         return []
     raw_values = list(value)
-    if len(raw_values) == LEGACY_RESULTS_TABLE_COLUMN_COUNT and expected_count == RESULTS_TABLE_COLUMN_COUNT:
-        raw_values.append(DEFAULT_IDENTICAL_COLUMN_WIDTH)
     if len(raw_values) != expected_count:
         return []
     widths: list[int] = []
@@ -153,8 +149,6 @@ def _normalize_column_visibility(value: object, expected_count: int) -> list[boo
     if not isinstance(value, list):
         return []
     raw_values = list(value)
-    if len(raw_values) == LEGACY_RESULTS_TABLE_COLUMN_COUNT and expected_count == RESULTS_TABLE_COLUMN_COUNT:
-        raw_values.append(True)
     if len(raw_values) != expected_count:
         return []
     visibility: list[bool] = []
@@ -411,12 +405,6 @@ def _read_qsettings_payload(qs: QSettings, defaults: Settings) -> dict[str, obje
             defaults.scan_progress_emit_every_files,
         ),
     }
-    if not payload["results_table_column_widths"]:
-        # Backward compatibility for pre-refactor settings files.
-        payload["results_table_column_widths"] = _decode_json_value(
-            qs.value("files_table_column_widths"),
-            [],
-        )
     return payload
 
 
@@ -433,9 +421,6 @@ def _settings_from_raw(raw: dict[str, object], defaults: Settings) -> Settings:
         defaults.identical_sample_a_pct,
         defaults.identical_sample_b_pct,
     )
-    raw_results_widths = raw.get("results_table_column_widths", [])
-    if not raw_results_widths:
-        raw_results_widths = raw.get("files_table_column_widths", [])
     settings = Settings(
         scan_roots=list(raw.get("scan_roots", defaults.scan_roots)),
         recent_scan_roots=_normalize_recent_roots(raw.get("recent_scan_roots", defaults.recent_scan_roots)),
@@ -453,7 +438,7 @@ def _settings_from_raw(raw: dict[str, object], defaults: Settings) -> Settings:
         identical_sample_a_pct=identical_a,
         identical_sample_b_pct=identical_b,
         results_table_column_widths=_normalize_column_widths(
-            raw_results_widths,
+            raw.get("results_table_column_widths", []),
             expected_count=RESULTS_TABLE_COLUMN_COUNT,
         ),
         results_table_column_visibility=_normalize_column_visibility(
