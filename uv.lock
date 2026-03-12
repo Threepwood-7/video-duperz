@@ -132,8 +132,8 @@ wheels = [
 
 [[package]]
 name = "threep-commons"
-version = "0.2.0"
-source = { git = "https://github.com/Threepwood-7/threep-commons?rev=v0.2.0#de407fe14d046211baa12afea3d0818b6eae6198" }
+version = "0.3.0"
+source = { git = "https://github.com/Threepwood-7/threep-commons?rev=v0.3.0#8b44b52332bf4caeb064b4e8a6c0d73014eeefab" }
 dependencies = [
     { name = "pyside6" },
 ]
@@ -154,5 +154,5 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.4.2" },
     { name = "opencv-python", specifier = ">=4.13.0.92" },
     { name = "pyside6", specifier = ">=6.10.2" },
-    { name = "threep-commons", git = "https://github.com/Threepwood-7/threep-commons?rev=v0.2.0" },
+    { name = "threep-commons", git = "https://github.com/Threepwood-7/threep-commons?rev=v0.3.0" },
 ]
