@@ -1,10 +1,12 @@
+"""SQLite persistence layer for scans, cached artifacts, and action history."""
+
 from __future__ import annotations
 
 import json
 import sqlite3
 import struct
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Self, cast
 
 from threep_commons.fs_paths import is_path_under_root, path_key
 
@@ -31,12 +33,14 @@ SCHEMA_VERSION = 3
 
 
 def encode_hashes(hashes: list[int]) -> bytes:
+    """Pack a list of fingerprint hashes into the database blob format."""
     if not hashes:
         return b""
     return struct.pack(f">{len(hashes)}Q", *hashes)
 
 
 def decode_hashes(blob: bytes | None) -> list[int]:
+    """Unpack database blob bytes into the stored fingerprint hash list."""
     if not blob:
         return []
     if len(blob) % 8 != 0:
@@ -95,7 +99,9 @@ def _require_lastrowid(cursor: sqlite3.Cursor) -> int:
     return int(cursor.lastrowid)
 
 
-class Database:
+class _DatabaseCore:
+    """Core SQLite connection, migration, and cached-artifact persistence logic."""
+
     def __init__(self, path: str | Path | None = None) -> None:
         if path is None:
             target = db_path()
@@ -116,7 +122,7 @@ class Database:
     def close(self) -> None:
         self.conn.close()
 
-    def __enter__(self) -> Database:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, _exc_type: object, exc: object, _tb: object) -> None:
@@ -674,6 +680,15 @@ class Database:
         )
         self._commit_if_needed()
 
+
+class _DatabaseResultSetMixin:
+    """Duplicate-group, scan lookup, and action-history database helpers."""
+
+    conn: sqlite3.Connection
+
+    def _commit_if_needed(self) -> None:
+        raise NotImplementedError
+
     def list_match_items_for_scan(
         self, scan_id: int, algo_version: int
     ) -> list[MatchItem]:
@@ -1225,3 +1240,7 @@ class Database:
         if not row:
             raise ValueError(f"file_id {file_id} not found")
         return str(row["path"])
+
+
+class Database(_DatabaseCore, _DatabaseResultSetMixin):
+    """Repository-style wrapper around the application's SQLite database."""
