@@ -455,7 +455,7 @@ def test_view_columns_menu_toggle_and_saved_view(tmp_path: Path, monkeypatch) ->
         assert window.results_view.results_table.isColumnHidden(18)
 
         monkeypatch.setattr(
-            "video_duperz.ui.main_window.QInputDialog.getText",
+            "video_duperz.ui.main_window_settings.QInputDialog.getText",
             lambda *a, **k: ("Compact", True),
         )
         window._save_current_view()
@@ -732,7 +732,7 @@ def test_saved_scan_profiles_save_load_and_delete(tmp_path: Path, monkeypatch) -
         assert window.load_saved_scan_btn.text() == "Load Saved Scan"
 
         monkeypatch.setattr(
-            "video_duperz.ui.main_window.QInputDialog.getText",
+            "video_duperz.ui.main_window_profiles.QInputDialog.getText",
             lambda *a, **k: ("My Library", True),
         )
         window._save_current_scan_set_as()
@@ -765,11 +765,11 @@ def test_saved_scan_profiles_save_load_and_delete(tmp_path: Path, monkeypatch) -
         )
 
         monkeypatch.setattr(
-            "video_duperz.ui.main_window.QInputDialog.getItem",
+            "video_duperz.ui.main_window_profiles.QInputDialog.getItem",
             lambda *a, **k: ("My Library", True),
         )
         monkeypatch.setattr(
-            "video_duperz.ui.main_window.QMessageBox.question",
+            "video_duperz.ui.main_window_profiles.QMessageBox.question",
             lambda *a, **k: QMessageBox.StandardButton.Yes,
         )
         window._delete_named_scan_profile()
@@ -991,7 +991,7 @@ def test_file_tools_help_menu_actions(tmp_path: Path, monkeypatch) -> None:
         )
         window.db.complete_scan(scan_id, status="done")
         monkeypatch.setattr(
-            "video_duperz.ui.main_window.QMessageBox.question",
+            "video_duperz.ui.main_window_profiles.QMessageBox.question",
             lambda *a, **k: QMessageBox.StandardButton.Yes,
         )
         close_called = {"value": False}
@@ -1032,7 +1032,7 @@ def test_sources_tab_drive_table_highlights_matches_and_tracks_parallel_total(
         )
 
     monkeypatch.setattr(
-        "video_duperz.ui.main_window.list_physical_drives",
+        "video_duperz.ui.main_window_profiles.list_physical_drives",
         lambda roots=None: [
             PhysicalDriveInfo(
                 root="R:\\",
@@ -1062,7 +1062,8 @@ def test_sources_tab_drive_table_highlights_matches_and_tracks_parallel_total(
         ],
     )
     monkeypatch.setattr(
-        "video_duperz.ui.main_window.build_physical_drive_scan_plan", _fake_plan
+        "video_duperz.ui.main_window_profiles.build_physical_drive_scan_plan",
+        _fake_plan,
     )
 
     with Database(tmp_path / "app.db") as db:
@@ -1120,10 +1121,11 @@ def test_sources_tab_drive_table_shows_placeholder_when_no_local_drives(
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QApplication.instance() or QApplication([])
     monkeypatch.setattr(
-        "video_duperz.ui.main_window.list_physical_drives", lambda roots=None: []
+        "video_duperz.ui.main_window_profiles.list_physical_drives",
+        lambda roots=None: [],
     )
     monkeypatch.setattr(
-        "video_duperz.ui.main_window.build_physical_drive_scan_plan",
+        "video_duperz.ui.main_window_profiles.build_physical_drive_scan_plan",
         lambda roots, max_workers, drive_worker_overrides=None: SimpleNamespace(
             matched_volume_identities=set(),
             requested_worker_target=max_workers,
@@ -1159,7 +1161,7 @@ def test_sources_tab_drive_workers_and_probe_mode_persist_across_reload(
     app = QApplication.instance() or QApplication([])
 
     monkeypatch.setattr(
-        "video_duperz.ui.main_window.list_physical_drives",
+        "video_duperz.ui.main_window_profiles.list_physical_drives",
         lambda roots=None: [
             PhysicalDriveInfo(
                 root="R:\\",
@@ -1199,7 +1201,8 @@ def test_sources_tab_drive_workers_and_probe_mode_persist_across_reload(
         )
 
     monkeypatch.setattr(
-        "video_duperz.ui.main_window.build_physical_drive_scan_plan", _fake_plan
+        "video_duperz.ui.main_window_profiles.build_physical_drive_scan_plan",
+        _fake_plan,
     )
 
     with Database(tmp_path / "app.db") as db:
@@ -1257,7 +1260,7 @@ def test_scan_running_locks_ui_to_scan_tab_until_finished(
         app.processEvents()
 
         monkeypatch.setattr(
-            "video_duperz.ui.main_window.build_physical_drive_scan_plan",
+            "video_duperz.ui.main_window_scan_actions.build_physical_drive_scan_plan",
             lambda roots, max_workers, drive_worker_overrides=None: SimpleNamespace(
                 root_groups=[[str(root)] for root in roots],
                 effective_total_workers=max_workers,
@@ -1290,7 +1293,9 @@ def test_scan_running_locks_ui_to_scan_tab_until_finished(
             profile="balanced", roots=[str(tmp_path)], extensions=["mp4"]
         )
         db.complete_scan(finished_scan_id, status="done")
-        window._scan_finished(SimpleNamespace(scan_id=finished_scan_id, issues=[]))
+        window._scan_finished(
+            SimpleNamespace(scan_id=finished_scan_id, issues=[], metrics={})
+        )
         app.processEvents()
 
         assert window.tabs.isTabEnabled(scan_idx)
@@ -1382,7 +1387,7 @@ def test_rescan_uses_current_sources_and_runs_cleanup_then_start(
 
         starts = {"count": 0}
         monkeypatch.setattr(
-            "video_duperz.ui.main_window.QMessageBox.question",
+            "video_duperz.ui.main_window_profiles.QMessageBox.question",
             lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
         )
         monkeypatch.setattr(window.db, "purge_for_fresh_rescan", _fake_purge)
@@ -1425,7 +1430,7 @@ def test_rescan_cancelled_confirmation_does_not_purge_or_start(
 
         calls = {"purge": 0, "start": 0}
         monkeypatch.setattr(
-            "video_duperz.ui.main_window.QMessageBox.question",
+            "video_duperz.ui.main_window_profiles.QMessageBox.question",
             lambda *args, **kwargs: QMessageBox.StandardButton.No,
         )
         monkeypatch.setattr(

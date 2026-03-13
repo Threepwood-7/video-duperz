@@ -1,13 +1,19 @@
-_commit: v1.7.2
-_src_path: c:/prj/aidev/py/aatemplate
-project_name: video-duperz
-package_name: video_duperz
-description: Windows-first PySide app for perceptual duplicate video detection.
-author_name: MT0z
-author_email: mt0z1@pir0z.yxz
-github_username: Threepwood-7
-project_version: 0.1.0
+# Changes here will be overwritten by Copier.
+_src_path: "c:/prj/aidev/py/aatemplate"
+_commit: "v1.7.4"
+project_name: "video-duperz"
+project_kind: "qt_app"
+package_name: "video_duperz"
+description: "Windows-first PySide app for perceptual duplicate video detection."
+author_name: "MT0z"
+author_email: "mt0z1@pir0z.yxz"
+github_username: "Threepwood-7"
+project_version: "0.1.0"
 runtime_dependencies:
-- numpy>=2.4.2
-- opencv-python>=4.13.0.92
-- PySide6>=6.10.2
+
+  - "numpy>=2.4.2"
+
+  - "opencv-python>=4.13.0.92"
+
+  - "PySide6>=6.10.2"
+

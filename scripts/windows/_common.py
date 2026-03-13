@@ -37,7 +37,9 @@ def ensure_venv(repo_root: Path) -> int:
         return 1
 
     return subprocess.run(
-        [python_exe, str(setup_script)], cwd=repo_root, check=False
+        [python_exe, str(setup_script)],
+        cwd=repo_root,
+        check=False,
     ).returncode
 
 
