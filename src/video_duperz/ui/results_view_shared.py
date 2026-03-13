@@ -1,0 +1,141 @@
+"""Shared constants and helper types for the results view modules."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, TypedDict, cast
+
+from PySide6.QtCore import Qt
+
+
+class DeleteTarget(TypedDict):
+    """Selected result-row metadata used for delete and rename operations."""
+
+    row: int
+    file_id: int
+    group_db_id: int
+    path: str
+
+
+def payload_dict(value: Any) -> dict[str, object]:
+    """Normalize loosely typed worker payloads into string-key dictionaries."""
+    if not isinstance(value, dict):
+        return {}
+    raw_map = cast("dict[object, object]", value)
+    normalized: dict[str, object] = {}
+    for key, raw in raw_map.items():
+        if isinstance(key, str | int | float | bool):
+            normalized[str(key)] = raw
+    return normalized
+
+
+def coerce_int(value: object, default: int = 0) -> int:
+    """Convert a loosely typed payload value into an integer."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    return default
+
+
+RESULTS_HEADERS = [
+    "Group ID",
+    "Checkbox",
+    "=",
+    "Thumbnail",
+    "File Name",
+    "Size (Bytes)",
+    "Resolution",
+    "Duration",
+    "Video Codec",
+    "Audio Codec",
+    "Audio Bitrate",
+    "Audio Lang(s)",
+    "Sub Lang(s)",
+    "HDR",
+    "Bitrate",
+    "Similarity",
+    "Last Modified",
+    "Parent Dir",
+    "Full Path",
+]
+
+COL_GROUP_ID = 0
+COL_CHECK = 1
+COL_IDENTICAL = 2
+COL_THUMB = 3
+COL_FILE_NAME = 4
+COL_SIZE = 5
+COL_RESOLUTION = 6
+COL_DURATION = 7
+COL_VIDEO_CODEC = 8
+COL_AUDIO_CODEC = 9
+COL_AUDIO_BITRATE = 10
+COL_AUDIO_LANGS = 11
+COL_SUB_LANGS = 12
+COL_HDR = 13
+COL_BITRATE = 14
+COL_SIMILARITY = 15
+COL_LAST_MODIFIED = 16
+COL_PARENT_DIR = 17
+COL_FULL_PATH = 18
+
+META_ROLE = Qt.ItemDataRole.UserRole
+THUMB_GAP = 6
+SORT_NONE = "none"
+SORT_GROUP_SIZE_DESC = "group_size_desc"
+SORT_GROUP_SIZE_ASC = "group_size_asc"
+SORT_GROUP_COUNT_DESC = "group_count_desc"
+SORT_GROUP_COUNT_ASC = "group_count_asc"
+SORT_ROW_SIZE_DESC = "row_size_desc"
+SORT_ROW_SIZE_ASC = "row_size_asc"
+SORT_GROUP_SPREAD_DESC = "group_spread_desc"
+SORT_GROUP_SPREAD_ASC = "group_spread_asc"
+VALID_SORT_MODES = {
+    SORT_NONE,
+    SORT_GROUP_SIZE_DESC,
+    SORT_GROUP_SIZE_ASC,
+    SORT_GROUP_COUNT_DESC,
+    SORT_GROUP_COUNT_ASC,
+    SORT_ROW_SIZE_DESC,
+    SORT_ROW_SIZE_ASC,
+    SORT_GROUP_SPREAD_DESC,
+    SORT_GROUP_SPREAD_ASC,
+}
+
+
+@dataclass(slots=True)
+class RowMeta:
+    """Per-row metadata attached to the results table for quick lookup."""
+
+    group_db_id: int
+    file_id: int
+    path: str
+    size: int
+    mtime_ns: int
+    width: int
+    height: int
+    codec: str
+    bitrate: int
+    similarity: float
+    keep_default: bool
+
+
+@dataclass(slots=True)
+class GroupRenderContext:
+    """Cached render state reused while populating one visible group."""
+
+    group_index: int
+    group_db_id: int
+    display_group_id: str
+    group_key: str
+    cached_labels: dict[int, str]
+    cached_errors: dict[int, str]
+    cached_group_error: str
