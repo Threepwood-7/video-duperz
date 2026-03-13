@@ -20,7 +20,6 @@ from .matcher import build_duplicate_groups, find_duplicate_edges
 from .models import (
     MatchStats,
     ScanIssue,
-    ScanLaneSnapshot,
     ScanProgress,
     ScanResult,
     VideoMeta,
@@ -41,10 +40,16 @@ from .pipeline_runtime_context import (
 from .pipeline_runtime_context import (
     worker_cap_message as _worker_cap_message,
 )
+from .pipeline_runtime_lanes import (
+    apply_cancel_state,
+    ensure_lane_state_locked,
+    finalize_task,
+    queue_lane_if_ready_locked,
+    refresh_lane_state_locked,
+    submit_ready_lanes,
+)
 from .pipeline_runtime_progress import (
-    effective_worker_limit_locked,
     emit_progress,
-    lane_runtime_cap_locked,
     notify_event,
 )
 from .probe import ProbeError, ensure_ffprobe_available
@@ -59,49 +64,6 @@ _ScanPlanFn = Callable[..., Any]
 _EnumerateFn = Callable[..., tuple[list[VideoRecord], list[ScanIssue]]]
 _FindEdgesFn = Callable[..., tuple[Any, MatchStats]]
 _BuildGroupsFn = Callable[..., list[Any]]
-
-
-def _ensure_lane_state_locked(
-    ctx: _ScanContext,
-    lane: int,
-    source_root: str = "",
-) -> ScanLaneSnapshot:
-    state = ctx.lane_states.get(lane)
-    if state is None:
-        roots_for_lane = [source_root] if source_root else []
-        state = ScanLaneSnapshot(lane=lane, roots=roots_for_lane, state="pending")
-        ctx.lane_states[lane] = state
-    elif source_root and source_root not in state.roots:
-        state.roots.append(source_root)
-    ctx.lane_queues.setdefault(lane, deque())
-    return state
-
-
-def _refresh_lane_state_locked(ctx: _ScanContext, lane: int) -> None:
-    state = _ensure_lane_state_locked(ctx, lane)
-    queue_size = len(ctx.lane_queues.get(lane, ()))
-    lane_active_count = int(ctx.active_by_lane.get(lane, 0))
-    state.workers = lane_active_count
-    if lane_active_count > 0:
-        state.state = "running"
-    elif queue_size > 0:
-        state.state = "queued"
-    elif ctx.enum_finished and state.completed >= state.discovered:
-        state.state = "done"
-    elif state.discovered > 0:
-        state.state = "idle"
-
-
-def _queue_lane_if_ready_locked(ctx: _ScanContext, lane: int) -> None:
-    queue_size = len(ctx.lane_queues.get(lane, ()))
-    if queue_size <= 0:
-        return
-    if int(ctx.active_by_lane.get(lane, 0)) >= lane_runtime_cap_locked(ctx, lane):
-        return
-    if lane in ctx.ready_set:
-        return
-    ctx.ready_lanes.append(lane)
-    ctx.ready_set.add(lane)
 
 
 def _prepare_total_locked(ctx: _ScanContext) -> int:
@@ -224,7 +186,7 @@ def _on_enumerate_progress(
         if root_from_message:
             lane = ctx.root_to_lane.get(path_key(root_from_message))
             if lane is not None:
-                lane_state = _ensure_lane_state_locked(ctx, lane, root_from_message)
+                lane_state = ensure_lane_state_locked(ctx, lane, root_from_message)
                 if lane_state.state == "pending":
                     lane_state.state = "idle"
         discovered_now = ctx.discovered_files
@@ -282,7 +244,7 @@ def _run_enumeration(ctx: _ScanContext) -> None:
             ctx.stage_seconds["enumerate"] += elapsed
             ctx.enum_finished = True
             for lane_id in list(ctx.lane_states):
-                _refresh_lane_state_locked(ctx, lane_id)
+                refresh_lane_state_locked(ctx, lane_id)
         _queue_enum_item(ctx, ctx.enum_sentinel)
 
 
@@ -312,7 +274,7 @@ def _process_discovered_batch(ctx: _ScanContext, batch: list[VideoRecord]) -> No
             continue
         file_size = max(0, int(getattr(file, "size", 0)))
         with ctx.state_lock:
-            lane_state = _ensure_lane_state_locked(ctx, lane, source_root)
+            lane_state = ensure_lane_state_locked(ctx, lane, source_root)
             lane_state.discovered += 1
             lane_state.discovered_bytes += file_size
             if lane_state.state in {"pending", "enumerating"}:
@@ -370,9 +332,9 @@ def _process_discovered_batch(ctx: _ScanContext, batch: list[VideoRecord]) -> No
             if int(fp.get("algo_version", -1)) == ALGO_VERSION:
                 with ctx.state_lock:
                     ctx.cached_files += 1
-                    lane_state = _ensure_lane_state_locked(ctx, lane, source_root)
+                    lane_state = ensure_lane_state_locked(ctx, lane, source_root)
                     lane_state.completed += 1
-                    _refresh_lane_state_locked(ctx, lane)
+                    refresh_lane_state_locked(ctx, lane)
                 continue
 
         cached_meta = cache.get("meta") if cache else None
@@ -387,11 +349,11 @@ def _process_discovered_batch(ctx: _ScanContext, batch: list[VideoRecord]) -> No
         )
         with ctx.state_lock:
             ctx.lane_queues.setdefault(lane, deque()).append(task)
-            lane_state = _ensure_lane_state_locked(ctx, lane, source_root)
+            lane_state = ensure_lane_state_locked(ctx, lane, source_root)
             lane_state.queued += 1
             ctx.total_analyze_files += 1
-            _queue_lane_if_ready_locked(ctx, lane)
-            _refresh_lane_state_locked(ctx, lane)
+            queue_lane_if_ready_locked(ctx, lane)
+            refresh_lane_state_locked(ctx, lane)
     ctx.last_discovered_batch_at = time.perf_counter()
 
 
@@ -399,48 +361,6 @@ def _on_future_done(ctx: _ScanContext, future: Future[_AnalyzeOutputLike]) -> No
     with ctx.event_cond:
         ctx.done_futures.append(future)
         ctx.event_cond.notify_all()
-
-
-def _submit_next_for_lane(
-    ctx: _ScanContext,
-    executor: ThreadPoolExecutor,
-    lane: int,
-) -> bool:
-    with ctx.state_lock:
-        lane_queue = ctx.lane_queues.get(lane)
-        if not lane_queue:
-            return False
-        lane_active_count = int(ctx.active_by_lane.get(lane, 0))
-        if lane_active_count >= lane_runtime_cap_locked(ctx, lane):
-            return False
-        task = lane_queue.popleft()
-        lane_state = _ensure_lane_state_locked(ctx, lane, task.source_root)
-        lane_state.queued = max(0, lane_state.queued - 1)
-        lane_state.active_file = task.path
-        ctx.active_by_lane[lane] = lane_active_count + 1
-        ctx.active_workers += 1
-        _queue_lane_if_ready_locked(ctx, lane)
-        _refresh_lane_state_locked(ctx, lane)
-    future = executor.submit(ctx.analyze_file, task.path, task.cached_meta)
-    future.add_done_callback(lambda done: _on_future_done(ctx, done))
-    with ctx.state_lock:
-        ctx.futures[future] = task
-    return True
-
-
-def _submit_ready_lanes(ctx: _ScanContext, executor: ThreadPoolExecutor) -> int:
-    submitted = 0
-    while True:
-        with ctx.state_lock:
-            if (
-                len(ctx.futures) >= effective_worker_limit_locked(ctx)
-                or not ctx.ready_lanes
-            ):
-                return submitted
-            lane = ctx.ready_lanes.popleft()
-            ctx.ready_set.discard(lane)
-        if _submit_next_for_lane(ctx, executor, lane):
-            submitted += 1
 
 
 def _record_future_error(
@@ -474,23 +394,6 @@ def _record_future_success(
         ctx.stage_seconds["fingerprint"] += max(0.0, float(output.fingerprint_s))
 
 
-def _finalize_task(ctx: _ScanContext, task: _AnalyzeTask) -> tuple[int, int]:
-    with ctx.state_lock:
-        ctx.analyzed_files += 1
-        ctx.analyzed_bytes += task.size
-        ctx.active_workers = max(0, ctx.active_workers - 1)
-        lane_workers = max(0, int(ctx.active_by_lane.get(task.lane, 0)) - 1)
-        ctx.active_by_lane[task.lane] = lane_workers
-        lane_state = _ensure_lane_state_locked(ctx, task.lane, task.source_root)
-        lane_state.analyzed += 1
-        lane_state.analyzed_bytes += task.size
-        lane_state.completed += 1
-        lane_state.active_file = ""
-        _queue_lane_if_ready_locked(ctx, task.lane)
-        _refresh_lane_state_locked(ctx, task.lane)
-        return ctx.analyzed_files, max(1, ctx.total_analyze_files)
-
-
 def _process_done_futures(ctx: _ScanContext) -> int:
     processed = 0
     while True:
@@ -509,7 +412,7 @@ def _process_done_futures(ctx: _ScanContext) -> int:
             _record_future_error(ctx, task, exc)
         else:
             _record_future_success(ctx, task, output)
-        probe_done, probe_total = _finalize_task(ctx, task)
+        probe_done, probe_total = finalize_task(ctx, task)
         emit_progress(
             ctx,
             "probe",
@@ -518,15 +421,6 @@ def _process_done_futures(ctx: _ScanContext) -> int:
             f"Analyzed {task.path}",
             file_counter=probe_done,
         )
-
-
-def _apply_cancel_state(ctx: _ScanContext) -> None:
-    with ctx.state_lock:
-        ctx.ready_lanes.clear()
-        ctx.ready_set.clear()
-        for lane_id, queue in ctx.lane_queues.items():
-            queue.clear()
-            _refresh_lane_state_locked(ctx, lane_id)
 
 
 def _collect_metrics(ctx: _ScanContext, match_stats: MatchStats) -> dict[str, object]:
@@ -650,7 +544,7 @@ def _run_pipeline_loop(ctx: _ScanContext, executor: ThreadPoolExecutor) -> None:
         if ctx.cancel_event and ctx.cancel_event.is_set():
             ctx.cancel_requested = True
         if ctx.cancel_requested and not ctx.cancel_applied:
-            _apply_cancel_state(ctx)
+            apply_cancel_state(ctx)
             ctx.cancel_applied = True
 
         made_progress = _ingest_discovered_queue(ctx)
@@ -658,7 +552,15 @@ def _run_pipeline_loop(ctx: _ScanContext, executor: ThreadPoolExecutor) -> None:
             made_progress = True
         if _process_done_futures(ctx) > 0:
             made_progress = True
-        if not ctx.cancel_requested and _submit_ready_lanes(ctx, executor) > 0:
+        if (
+            not ctx.cancel_requested
+            and submit_ready_lanes(
+                ctx,
+                executor,
+                lambda done: _on_future_done(ctx, done),
+            )
+            > 0
+        ):
             made_progress = True
 
         _flush_pending_analysis_batches(ctx, force=ctx.cancel_requested)
