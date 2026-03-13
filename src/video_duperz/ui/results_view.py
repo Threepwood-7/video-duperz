@@ -174,8 +174,8 @@ class _GroupRenderContext:
     cached_group_error: str
 
 
-class ResultsView(QWidget):
-    """Results table widget that renders duplicate groups and row actions."""
+class _ResultsViewBase(QWidget):
+    """Base results widget that owns shared state and top-level controls."""
 
     delete_requested = Signal(str, object)  # mode, list[dict]
     status_message = Signal(str)
@@ -291,6 +291,53 @@ class ResultsView(QWidget):
         layout.addWidget(self.thumbnail_note)
         layout.addWidget(self.filter_toolbar)
         layout.addWidget(self.results_table, stretch=1)
+
+    # Typed interface hooks that later mixin layers implement.
+    def _combined_thumbnail_width(self) -> int: ...
+
+    def _on_column_resized(
+        self, _section: int, _old_size: int, _new_size: int
+    ) -> None: ...
+
+    def _on_results_scrolled(self, _value: int) -> None: ...
+
+    def _on_item_changed(self, item: QTableWidgetItem) -> None: ...
+
+    def _schedule_visible_groups_for_compare(self) -> None: ...
+
+    def request_soft_delete_selected(self) -> None: ...
+
+    def request_permanent_delete_selected(self) -> None: ...
+
+    def open_current_in_default_player(self) -> None: ...
+
+    def explore_current_file(self) -> None: ...
+
+    def launch_mediainfo(self) -> None: ...
+
+    @staticmethod
+    def _normalize_column_widths(
+        widths: list[int], expected_count: int
+    ) -> list[int]: ...
+
+    def _set_table_column_widths(self, widths: list[int]) -> None: ...
+
+    def _capture_column_widths(self) -> list[int]: ...
+
+    @staticmethod
+    def _normalize_column_visibility(
+        visibility: list[bool], expected_count: int
+    ) -> list[bool]: ...
+
+    def _rebuild_results_table(self) -> None: ...
+
+    def _invalidate_group_compare_dataset(self) -> None: ...
+
+    def _build_group_compare_payloads(
+        self, groups: list[DuplicateGroup]
+    ) -> dict[str, list[dict[str, object]]]: ...
+
+    def _update_info_label(self) -> None: ...
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
@@ -455,6 +502,34 @@ class ResultsView(QWidget):
             self.filter_exclude_path_edit.text().strip().casefold()
         )
         self._rebuild_results_table()
+
+
+class _ResultsViewTableMixin(_ResultsViewBase):
+    """Results-table rendering, filtering, and sort helper methods."""
+
+    # Typed interface hooks that later mixin layers implement.
+    def _invalidate_thumbnail_token(self) -> None: ...
+
+    def _clear_group_compare_row_state(self) -> None: ...
+
+    def _clear_group_compare_pending(self) -> None: ...
+
+    @staticmethod
+    def _fmt_mtime(mtime_ns: int) -> str: ...
+
+    def _apply_row_style(self, row: int, group_index: int, bold: bool) -> None: ...
+
+    def _queue_thumbnail(
+        self,
+        row_token: str,
+        row: int,
+        file_id: int,
+        path: str,
+        size: int,
+        mtime_ns: int,
+    ) -> None: ...
+
+    def _quality_score_for_item(self, item: DuplicateItem) -> float: ...
 
     def _rebuild_results_table(self) -> None:
         self._invalidate_thumbnail_token()
@@ -756,6 +831,13 @@ class ResultsView(QWidget):
             ]
         return payloads
 
+
+class _ResultsViewCompareMixin(_ResultsViewTableMixin):
+    """Deferred identical-compare queue and result application helpers."""
+
+    # Typed interface hooks that later mixin layers implement.
+    def _row_meta(self, row: int) -> RowMeta | None: ...
+
     def _invalidate_group_compare_dataset(self) -> None:
         self._dataset_serial += 1
         self._dataset_token = f"groups-{self._dataset_serial}"
@@ -930,6 +1012,10 @@ class ResultsView(QWidget):
             tooltip = errors.get(meta.file_id, "") or group_error
             item.setToolTip(tooltip)
 
+
+class _ResultsViewThumbnailMixin(_ResultsViewCompareMixin):
+    """Thumbnail worker orchestration and row metadata helpers."""
+
     def _invalidate_thumbnail_token(self) -> None:
         self._thumbnail_serial += 1
         self._thumbnail_token = f"rows-{self._thumbnail_serial}"
@@ -1093,6 +1179,10 @@ class ResultsView(QWidget):
         if isinstance(payload, RowMeta):
             return payload
         return None
+
+
+class _ResultsViewActionMixin(_ResultsViewThumbnailMixin):
+    """Selection, launch, and table-state helper methods."""
 
     def _group_rows(self) -> dict[int, list[int]]:
         grouped: dict[int, list[int]] = {}
@@ -1399,3 +1489,7 @@ class ResultsView(QWidget):
             return ""
         dt = datetime.fromtimestamp(float(mtime_ns) / 1_000_000_000.0)
         return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+class ResultsView(_ResultsViewActionMixin):
+    """Results table widget that renders duplicate groups and row actions."""
