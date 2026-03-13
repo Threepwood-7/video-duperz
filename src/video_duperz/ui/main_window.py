@@ -144,8 +144,8 @@ def _metric_int(metrics: dict[str, object], key: str, default: int = 0) -> int:
     return default
 
 
-class MainWindow(QMainWindow):
-    """Top-level application window that coordinates sources, scan, and results."""
+class _MainWindowBase(QMainWindow):
+    """Base main-window class that owns widget construction and shared state."""
 
     def __init__(
         self, db: Database, settings: Settings, parent: QWidget | None = None
@@ -213,6 +213,51 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage("Ready")
         self._load_settings_to_widgets()
+
+    # Typed interface hooks that later mixin layers implement.
+    def _on_tab_changed(self, index: int) -> None: ...
+
+    def _build_sources_tab(self) -> None: ...
+
+    def _build_menus(self) -> None: ...
+
+    def _start_scan(self) -> None: ...
+
+    def _rescan_scan(self) -> None: ...
+
+    def _cancel_scan(self) -> None: ...
+
+    def _handle_delete_requested(self, mode: str, targets: list[DeleteTarget]) -> None:
+        ...
+
+    def _load_settings_to_widgets(self) -> None: ...
+
+
+class _MainWindowMenuMixin(_MainWindowBase):
+    """Window menu construction helpers."""
+
+    # Typed interface hooks that later mixin layers implement.
+    def _export_current_scan(self) -> None: ...
+
+    def _clear_recent_roots(self) -> None: ...
+
+    def _clear_saved_scans(self) -> None: ...
+
+    def _clear_cached_thumbnails(self) -> None: ...
+
+    def _request_full_reset(self) -> None: ...
+
+    def _fit_columns(self) -> None: ...
+
+    def _save_current_view(self) -> None: ...
+
+    def _refresh_saved_views_menu(self) -> None: ...
+
+    def _column_toggle_slot(self, column_index: int) -> Callable[[bool], None]: ...
+
+    def _edit_ini_file(self) -> None: ...
+
+    def _show_about(self) -> None: ...
 
     def _build_menus(self) -> None:
         self._build_file_menu()
@@ -378,6 +423,37 @@ class MainWindow(QMainWindow):
         self.about_action.triggered.connect(self._show_about)
         help_menu.addAction(self.about_action)
 
+
+class _MainWindowSourceSetupMixin(_MainWindowMenuMixin):
+    """Source-tab widget construction helpers."""
+
+    # Typed interface hooks that later mixin layers implement.
+    def _refresh_recent_roots_menu(self) -> None: ...
+
+    def _refresh_saved_scans_menu(self) -> None: ...
+
+    def _update_root_buttons_state(self) -> None: ...
+
+    def _add_root(self) -> None: ...
+
+    def _remove_selected_root(self) -> None: ...
+
+    def _remove_all_roots(self) -> None: ...
+
+    def _show_recent_roots_menu(self) -> None: ...
+
+    def _save_current_scan_set_as(self) -> None: ...
+
+    def _show_saved_scans_menu(self) -> None: ...
+
+    def _extensions_preset_changed(self, preset_name: str) -> None: ...
+
+    def _extensions_text_edited(self, _text: str) -> None: ...
+
+    def _refresh_sources_physical_drive_view(self) -> None: ...
+
+    def _thumbnail_size_changed(self) -> None: ...
+
     def _build_sources_tab(self) -> None:
         roots_actions = self._build_sources_root_controls()
         self._build_sources_option_controls()
@@ -509,6 +585,35 @@ class MainWindow(QMainWindow):
         layout.addWidget(QLabel("Thumbnail preview size"))
         layout.addWidget(self.thumbnail_size_combo)
         layout.addStretch(1)
+
+
+class _MainWindowSettingsMixin(_MainWindowSourceSetupMixin):
+    """Settings synchronization and tab-state helper methods."""
+
+    # Typed interface hooks that later mixin layers implement.
+    def _refresh_recent_roots_menu(self) -> None: ...
+
+    def _refresh_saved_views_menu(self) -> None: ...
+
+    def _refresh_saved_scans_menu(self) -> None: ...
+
+    def _update_root_buttons_state(self) -> None: ...
+
+    def _sync_column_toggle_actions(self) -> None: ...
+
+    def _refresh_sources_physical_drive_view(self) -> None: ...
+
+    def _normalized_drive_worker_overrides(self) -> dict[str, int]: ...
+
+    def _normalized_saved_column_views(
+        self,
+    ) -> dict[str, dict[str, list[int] | list[bool]]]: ...
+
+    def _normalized_saved_scan_profiles(self) -> dict[str, SavedScanProfilePayload]: ...
+
+    def _current_probe_worker_mode(self) -> ProbeWorkerMode: ...
+
+    def _current_sources_extensions(self) -> list[str]: ...
 
     def _load_settings_to_widgets(self) -> None:
         self.roots_list.clear()
@@ -673,6 +778,10 @@ class MainWindow(QMainWindow):
         self.extensions_preset_combo.setCurrentIndex(target_index)
         self.extensions_preset_combo.blockSignals(False)
 
+
+class _MainWindowSavedViewsMixin(_MainWindowSettingsMixin):
+    """Column-view and saved-scan menu helper methods."""
+
     def _normalized_saved_column_views(
         self,
     ) -> dict[str, dict[str, list[int] | list[bool]]]:
@@ -798,6 +907,15 @@ class MainWindow(QMainWindow):
             action.blockSignals(True)
             action.setChecked(bool(visibility[index]))
             action.blockSignals(False)
+
+
+class _MainWindowRootsMixin(_MainWindowSavedViewsMixin):
+    """Root-list, recent-root, and basic maintenance helper methods."""
+
+    # Typed interface hooks that later mixin layers implement.
+    def _refresh_sources_physical_drive_view(self) -> None: ...
+
+    def _refresh_saved_scans_menu(self) -> None: ...
 
     def _add_root(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Select scan folder")
@@ -958,6 +1076,13 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(self, "Open Settings Failed", str(exc))
 
+
+class _MainWindowDriveViewMixin(_MainWindowRootsMixin):
+    """Physical-drive planning, diagnostics, and reset helper methods."""
+
+    # Typed interface hooks that later mixin layers implement.
+    def _current_sources_roots(self) -> list[str]: ...
+
     def _normalized_drive_worker_overrides(self) -> dict[str, int]:
         normalized: dict[str, int] = {}
         for raw_identity, raw_value in self._drive_worker_overrides.items():
@@ -1103,6 +1228,13 @@ class MainWindow(QMainWindow):
         pending = bool(self._full_reset_requested)
         self._full_reset_requested = False
         return pending
+
+
+class _MainWindowProfilesMixin(_MainWindowDriveViewMixin):
+    """Saved-profile and scan-launch preparation helper methods."""
+
+    # Typed interface hooks that later mixin layers implement.
+    def _start_scan(self) -> None: ...
 
     def _current_sources_roots(self) -> list[str]:
         return [self.roots_list.item(i).text() for i in range(self.roots_list.count())]
@@ -1476,6 +1608,10 @@ class MainWindow(QMainWindow):
         self._start_scan()
         self.statusBar().showMessage(f"{cleanup_summary} Scan started.")
 
+
+class _MainWindowScanActionMixin(_MainWindowProfilesMixin):
+    """Active scan lifecycle and duplicate-action helper methods."""
+
     def _start_scan(self) -> None:
         self._persist_settings()
         if not self.settings.scan_roots:
@@ -1653,3 +1789,7 @@ class MainWindow(QMainWindow):
         with contextlib.suppress(Exception):
             self.db.close()
         super().closeEvent(event)
+
+
+class MainWindow(_MainWindowScanActionMixin):
+    """Top-level application window that coordinates sources, scan, and results."""
