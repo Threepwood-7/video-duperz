@@ -1,3 +1,5 @@
+"""Duplicate matching heuristics and group-building helpers."""
+
 from __future__ import annotations
 
 import itertools
@@ -24,12 +26,14 @@ PROFILE_THRESHOLD = {
 
 
 def aspect_bin(width: int, height: int) -> float:
+    """Bucket aspect ratios into coarse bins for candidate generation."""
     if height <= 0:
         return 0.0
     return round((width / height) * 4) / 4.0
 
 
 def resolution_bin(width: int, height: int) -> int:
+    """Bucket resolutions by approximate quarter-megapixel increments."""
     pixels = max(0, int(width) * int(height))
     if pixels <= 0:
         return 0
@@ -37,6 +41,7 @@ def resolution_bin(width: int, height: int) -> int:
 
 
 def fps_bin(value: float) -> float:
+    """Bucket frame rates into half-frame-per-second increments."""
     fps = float(value)
     if fps <= 0:
         return 0.0
@@ -44,6 +49,7 @@ def fps_bin(value: float) -> float:
 
 
 def duration_half_sec(duration_s: float) -> int:
+    """Bucket durations into half-second increments."""
     return round(max(0.0, float(duration_s)) * 2.0)
 
 
@@ -76,6 +82,7 @@ def _is_candidate(a: MatchItem, b: MatchItem) -> bool:
 def find_duplicate_edges(
     items: list[MatchItem], profile: str = "balanced"
 ) -> tuple[list[DuplicateEdge], MatchStats]:
+    """Find likely duplicate pairs by bucketing and comparing match items."""
     threshold = PROFILE_THRESHOLD.get(profile, PROFILE_THRESHOLD["balanced"])
     buckets: dict[tuple[int, float, int, float], list[MatchItem]] = defaultdict(list)
     for item in items:
@@ -135,6 +142,7 @@ class _UnionFind:
 def build_duplicate_groups(
     items: list[MatchItem], edges: list[DuplicateEdge], profile: str
 ) -> list[DuplicateGroup]:
+    """Convert duplicate edges into persisted duplicate-group payloads."""
     by_id = {i.file_id: i for i in items}
     uf = _UnionFind()
     for edge in edges:

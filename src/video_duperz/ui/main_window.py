@@ -209,6 +209,14 @@ class MainWindow(QMainWindow):
         self._load_settings_to_widgets()
 
     def _build_menus(self) -> None:
+        self._build_file_menu()
+        self._build_view_menu()
+        self._build_sort_menu()
+        self._build_actions_menu()
+        self._build_tools_menu()
+        self._build_help_menu()
+
+    def _build_file_menu(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
         self.export_action = QAction("&Export Current Scan...", self)
         self.export_action.triggered.connect(self._export_current_scan)
@@ -240,6 +248,7 @@ class MainWindow(QMainWindow):
         self.exit_action.triggered.connect(self.close)
         file_menu.addAction(self.exit_action)
 
+    def _build_view_menu(self) -> None:
         view_menu = self.menuBar().addMenu("&View")
         columns_menu = view_menu.addMenu("&Columns")
 
@@ -264,6 +273,7 @@ class MainWindow(QMainWindow):
             columns_menu.addAction(action)
             self._column_toggle_actions.append(action)
 
+    def _build_sort_menu(self) -> None:
         sort_menu = self.menuBar().addMenu("&Sort")
         self._sort_action_group = QActionGroup(self)
         self._sort_action_group.setExclusive(True)
@@ -296,6 +306,7 @@ class MainWindow(QMainWindow):
             sort_menu.addAction(action)
             self._sort_actions[mode] = action
 
+    def _build_actions_menu(self) -> None:
         actions_menu = self.menuBar().addMenu("&Actions")
         self.keep_best_action = QAction("&Select all, keep best", self)
         self.keep_best_action.triggered.connect(
@@ -348,11 +359,13 @@ class MainWindow(QMainWindow):
         )
         actions_menu.addAction(self.delete_selected_permanent_action)
 
+    def _build_tools_menu(self) -> None:
         tools_menu = self.menuBar().addMenu("&Tools")
         self.edit_ini_action = QAction("Edit &.ini File", self)
         self.edit_ini_action.triggered.connect(self._edit_ini_file)
         tools_menu.addAction(self.edit_ini_action)
 
+    def _build_help_menu(self) -> None:
         help_menu = self.menuBar().addMenu("&Help")
         self.about_action = QAction("&Help", self)
         self.about_action.setShortcut("F1")
@@ -360,6 +373,17 @@ class MainWindow(QMainWindow):
         help_menu.addAction(self.about_action)
 
     def _build_sources_tab(self) -> None:
+        roots_actions = self._build_sources_root_controls()
+        self._build_sources_option_controls()
+        self._build_sources_drive_widgets()
+        self._build_sources_layout(roots_actions)
+        self._recent_roots_menu = QMenu(self)
+        self._refresh_recent_roots_menu()
+        self._saved_scans_menu = QMenu(self)
+        self._refresh_saved_scans_menu()
+        self._update_root_buttons_state()
+
+    def _build_sources_root_controls(self) -> QHBoxLayout:
         self.roots_list = QListWidget(self.sources_tab)
         self.add_root_btn = QPushButton("Add Folder", self.sources_tab)
         self.remove_root_btn = QPushButton("Remove Folder", self.sources_tab)
@@ -383,7 +407,9 @@ class MainWindow(QMainWindow):
         roots_actions.addWidget(self.save_scan_set_btn)
         roots_actions.addWidget(self.load_saved_scan_btn)
         roots_actions.addStretch(1)
+        return roots_actions
 
+    def _build_sources_option_controls(self) -> None:
         self.extensions_preset_combo = QComboBox(self.sources_tab)
         self.extensions_preset_combo.addItems(VIDEO_EXTENSION_PRESET_NAMES)
         default_preset_index = self.extensions_preset_combo.findText(
@@ -414,6 +440,8 @@ class MainWindow(QMainWindow):
         self.thumbnail_size_combo.currentIndexChanged.connect(
             self._thumbnail_size_changed
         )
+
+    def _build_sources_drive_widgets(self) -> None:
         self.sources_drive_summary_label = QLabel(
             "Matched physical drives: 0 | Requested workers: 1 | Effective workers: 0",
             self.sources_tab,
@@ -454,6 +482,7 @@ class MainWindow(QMainWindow):
         drives_header.setSectionResizeMode(7, QHeaderView.ResizeMode.ResizeToContents)
         drives_header.setSectionResizeMode(8, QHeaderView.ResizeMode.Stretch)
 
+    def _build_sources_layout(self, roots_actions: QHBoxLayout) -> None:
         layout = QVBoxLayout(self.sources_tab)
         layout.addWidget(QLabel("Scan Folders"))
         layout.addWidget(self.roots_list, stretch=1)
@@ -474,12 +503,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(QLabel("Thumbnail preview size"))
         layout.addWidget(self.thumbnail_size_combo)
         layout.addStretch(1)
-
-        self._recent_roots_menu = QMenu(self)
-        self._refresh_recent_roots_menu()
-        self._saved_scans_menu = QMenu(self)
-        self._refresh_saved_scans_menu()
-        self._update_root_buttons_state()
 
     def _load_settings_to_widgets(self) -> None:
         self.roots_list.clear()

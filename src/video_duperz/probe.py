@@ -1,3 +1,5 @@
+"""ffprobe integration helpers for extracting video metadata."""
+
 from __future__ import annotations
 
 import json
@@ -9,10 +11,13 @@ from .models import VideoMeta
 
 
 class ProbeError(RuntimeError):
+    """Raised when ffprobe is unavailable or returns unusable metadata."""
+
     pass
 
 
 def ensure_ffprobe_available() -> str:
+    """Return the ffprobe executable path or raise when it is unavailable."""
     path = shutil.which("ffprobe")
     if not path:
         raise ProbeError(
@@ -31,6 +36,7 @@ def _parse_fps(rate: str) -> float:
 
 
 def probe_video(path: str) -> VideoMeta:
+    """Run ffprobe for a path and normalize the result into `VideoMeta`."""
     ensure_ffprobe_available()
     cmd = [
         "ffprobe",

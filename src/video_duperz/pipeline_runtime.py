@@ -1,3 +1,5 @@
+"""Streaming scan runtime that coordinates enumeration, probing, and persistence."""
+
 from __future__ import annotations
 
 import contextlib
@@ -135,6 +137,17 @@ class _ScanContext:
     cancel_thread: Thread | None = None
 
 
+@dataclass(slots=True)
+class _RuntimeSettings:
+    db_batch_size: int
+    db_flush_interval_s: float
+    enum_queue_max: int
+    progress_emit_interval_s: float
+    progress_emit_every_files: int
+    requested_floor: int
+    probe_worker_mode: ProbeWorkerMode
+
+
 def _clamp(value: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, int(value)))
 
@@ -164,6 +177,111 @@ def _should_emit_progress(
     return (time.perf_counter() - last_emit_at) >= progress_emit_interval_s
 
 
+def _build_runtime_settings(
+    max_workers: int,
+    probe_worker_mode: str,
+    *,
+    db_batch_size: int,
+    db_flush_interval_ms: int,
+    enum_queue_max: int,
+    progress_emit_interval_ms: int,
+    progress_emit_every_files: int,
+) -> _RuntimeSettings:
+    """Normalize runtime tuning knobs before creating the scan context."""
+    db_batch_size = _clamp(db_batch_size, 32, 4096)
+    db_flush_interval_ms = _clamp(db_flush_interval_ms, 50, 2000)
+    enum_queue_max = _clamp(enum_queue_max, 256, 32768)
+    progress_emit_interval_ms = _clamp(progress_emit_interval_ms, 50, 2000)
+    progress_emit_every_files = _clamp(progress_emit_every_files, 10, 5000)
+    return _RuntimeSettings(
+        db_batch_size=db_batch_size,
+        db_flush_interval_s=float(db_flush_interval_ms) / 1000.0,
+        enum_queue_max=enum_queue_max,
+        progress_emit_interval_s=float(progress_emit_interval_ms) / 1000.0,
+        progress_emit_every_files=progress_emit_every_files,
+        requested_floor=max(1, int(max_workers)),
+        probe_worker_mode=_normalize_probe_worker_mode(probe_worker_mode),
+    )
+
+
+def _worker_cap_message(scan_plan: Any) -> str | None:
+    """Return the hard-cap warning text when drive limits reduce concurrency."""
+    requested = int(scan_plan.requested_worker_target)
+    effective = int(scan_plan.effective_total_workers)
+    if requested <= effective:
+        return None
+    return (
+        "Requested worker capacity "
+        f"({requested}) reduced to {effective} by per-drive hard caps."
+    )
+
+
+def _build_scan_issues(scan_plan: Any) -> list[ScanIssue]:
+    """Carry forward plan issues and add any worker-cap reduction warning."""
+    issues = list(scan_plan.issues)
+    worker_cap_message = _worker_cap_message(scan_plan)
+    if worker_cap_message is not None:
+        issues.append(
+            ScanIssue(
+                stage="probe",
+                path="",
+                message=worker_cap_message,
+            )
+        )
+    return issues
+
+
+def _build_lane_runtime_caps(
+    scan_plan: Any,
+    probe_worker_mode: ProbeWorkerMode,
+) -> dict[int, int]:
+    """Derive per-lane runtime caps from the scan plan and probe mode."""
+    configured_lane_limits = {
+        int(lane): max(1, int(limit))
+        for lane, limit in scan_plan.lane_worker_limits.items()
+    }
+    if probe_worker_mode == "balanced":
+        return dict.fromkeys(range(len(scan_plan.root_groups)), 1)
+    return {
+        lane: max(1, configured_lane_limits.get(lane, 1))
+        for lane in range(len(scan_plan.root_groups))
+    }
+
+
+def _build_lane_runtime_state(
+    scan_plan: Any,
+) -> tuple[dict[int, ScanLaneSnapshot], dict[int, deque[_AnalyzeTask]]]:
+    """Initialize per-lane telemetry snapshots and pending task queues."""
+    lane_states: dict[int, ScanLaneSnapshot] = {}
+    lane_queues: dict[int, deque[_AnalyzeTask]] = {}
+    for lane_idx, group in enumerate(scan_plan.root_groups):
+        lane_states[lane_idx] = ScanLaneSnapshot(
+            lane=lane_idx,
+            roots=[str(Path(root)) for root in group],
+            state="pending",
+        )
+        lane_queues[lane_idx] = deque()
+    return lane_states, lane_queues
+
+
+def _build_root_to_lane(scan_plan: Any) -> dict[str, int]:
+    """Normalize scan-plan root keys so queued files resolve to the right lane."""
+    return {
+        path_key(root): lane for root, lane in scan_plan.root_to_group_index.items()
+    }
+
+
+def _initial_stage_seconds() -> dict[str, float]:
+    """Track cumulative time spent in the major runtime phases."""
+    return {
+        "enumerate": 0.0,
+        "db_write": 0.0,
+        "probe": 0.0,
+        "fingerprint": 0.0,
+        "matching": 0.0,
+    }
+
+
 def _create_context(
     db: Database,
     roots: list[str],
@@ -186,56 +304,29 @@ def _create_context(
     find_duplicate_edges_fn: _FindEdgesFn,
     build_duplicate_groups_fn: _BuildGroupsFn,
 ) -> _ScanContext:
-    db_batch_size = _clamp(db_batch_size, 32, 4096)
-    db_flush_interval_ms = _clamp(db_flush_interval_ms, 50, 2000)
-    queue_max = _clamp(enum_queue_max, 256, 32768)
-    progress_emit_interval_ms = _clamp(progress_emit_interval_ms, 50, 2000)
-    progress_emit_every_files = _clamp(progress_emit_every_files, 10, 5000)
-    db_flush_interval_s = float(db_flush_interval_ms) / 1000.0
-    progress_emit_interval_s = float(progress_emit_interval_ms) / 1000.0
-
+    runtime_settings = _build_runtime_settings(
+        max_workers,
+        probe_worker_mode,
+        db_batch_size=db_batch_size,
+        db_flush_interval_ms=db_flush_interval_ms,
+        enum_queue_max=enum_queue_max,
+        progress_emit_interval_ms=progress_emit_interval_ms,
+        progress_emit_every_files=progress_emit_every_files,
+    )
     scan_id = db.create_scan(profile=profile, roots=roots, extensions=extensions)
-    requested_floor = max(1, int(max_workers))
     scan_plan = build_scan_plan_fn(
         roots=roots,
-        max_workers=requested_floor,
+        max_workers=runtime_settings.requested_floor,
         drive_worker_overrides=drive_worker_overrides,
     )
-    configured_lane_limits = {
-        int(lane): max(1, int(limit))
-        for lane, limit in scan_plan.lane_worker_limits.items()
-    }
     effective_worker_limit = max(0, int(scan_plan.effective_total_workers))
     executor_worker_limit = max(1, effective_worker_limit)
-    mode = _normalize_probe_worker_mode(probe_worker_mode)
-    lane_runtime_caps = {
-        lane: (1 if mode == "balanced" else max(1, configured_lane_limits.get(lane, 1)))
-        for lane in range(len(scan_plan.root_groups))
-    }
-    issues = list(scan_plan.issues)
-    if scan_plan.requested_worker_target > scan_plan.effective_total_workers:
-        issues.append(
-            ScanIssue(
-                stage="probe",
-                path="",
-                message=(
-                    "Requested worker capacity "
-                    f"({scan_plan.requested_worker_target}) reduced to "
-                    f"{scan_plan.effective_total_workers} by per-drive hard caps."
-                ),
-            )
-        )
-
-    lane_states: dict[int, ScanLaneSnapshot] = {}
-    lane_queues: dict[int, deque[_AnalyzeTask]] = {}
-    for lane_idx, group in enumerate(scan_plan.root_groups):
-        lane_states[lane_idx] = ScanLaneSnapshot(
-            lane=lane_idx,
-            roots=[str(Path(root)) for root in group],
-            state="pending",
-        )
-        lane_queues[lane_idx] = deque()
-
+    lane_runtime_caps = _build_lane_runtime_caps(
+        scan_plan,
+        runtime_settings.probe_worker_mode,
+    )
+    issues = _build_scan_issues(scan_plan)
+    lane_states, lane_queues = _build_lane_runtime_state(scan_plan)
     started_at = time.perf_counter()
     return _ScanContext(
         db=db,
@@ -250,22 +341,20 @@ def _create_context(
         build_scan_plan_fn=build_scan_plan_fn,
         find_duplicate_edges_fn=find_duplicate_edges_fn,
         build_duplicate_groups_fn=build_duplicate_groups_fn,
-        db_batch_size=db_batch_size,
-        db_flush_interval_s=db_flush_interval_s,
-        progress_emit_interval_s=progress_emit_interval_s,
-        progress_emit_every_files=progress_emit_every_files,
+        db_batch_size=runtime_settings.db_batch_size,
+        db_flush_interval_s=runtime_settings.db_flush_interval_s,
+        progress_emit_interval_s=runtime_settings.progress_emit_interval_s,
+        progress_emit_every_files=runtime_settings.progress_emit_every_files,
         scan_id=scan_id,
         issues=issues,
-        requested_floor=requested_floor,
+        requested_floor=runtime_settings.requested_floor,
         scan_plan=scan_plan,
         effective_worker_limit=effective_worker_limit,
         executor_worker_limit=executor_worker_limit,
         lane_runtime_caps=lane_runtime_caps,
         lane_states=lane_states,
         lane_queues=lane_queues,
-        root_to_lane={
-            path_key(root): lane for root, lane in scan_plan.root_to_group_index.items()
-        },
+        root_to_lane=_build_root_to_lane(scan_plan),
         ready_lanes=deque(),
         ready_set=set(),
         active_by_lane=dict.fromkeys(lane_states, 0),
@@ -280,13 +369,7 @@ def _create_context(
         pending_fp_rows=[],
         pending_probe_error_rows=[],
         scan_started_at=started_at,
-        stage_seconds={
-            "enumerate": 0.0,
-            "db_write": 0.0,
-            "probe": 0.0,
-            "fingerprint": 0.0,
-            "matching": 0.0,
-        },
+        stage_seconds=_initial_stage_seconds(),
         flush_count=0,
         flush_rows_total=0,
         rows_since_flush=0,
@@ -311,7 +394,7 @@ def _create_context(
         enum_files=[],
         enum_issues=[],
         enum_error=None,
-        enum_queue=Queue(maxsize=queue_max),
+        enum_queue=Queue(maxsize=runtime_settings.enum_queue_max),
         enum_sentinel=object(),
         last_emit_at=0.0,
         last_emit_stage="",
@@ -1150,18 +1233,15 @@ def _start_runtime_threads(ctx: _ScanContext) -> None:
 
 
 def _emit_worker_cap_warning(ctx: _ScanContext) -> None:
-    if ctx.scan_plan.requested_worker_target <= ctx.scan_plan.effective_total_workers:
+    worker_cap_message = _worker_cap_message(ctx.scan_plan)
+    if worker_cap_message is None:
         return
     _emit_progress(
         ctx,
         "prepare",
         0,
         1,
-        (
-            "Requested worker capacity "
-            f"({ctx.scan_plan.requested_worker_target}) reduced to "
-            f"{ctx.scan_plan.effective_total_workers} by per-drive hard caps."
-        ),
+        worker_cap_message,
         force=True,
     )
 
@@ -1189,6 +1269,7 @@ def run_scan_runtime(
     find_duplicate_edges_fn: _FindEdgesFn = find_duplicate_edges,
     build_duplicate_groups_fn: _BuildGroupsFn = build_duplicate_groups,
 ) -> ScanResult:
+    """Execute the scan runtime with injectable seams for tests and UI workflows."""
     ensure_ffprobe_available_fn()
     ctx = _create_context(
         db,

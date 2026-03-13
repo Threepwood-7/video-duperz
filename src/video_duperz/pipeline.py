@@ -1,3 +1,5 @@
+"""High-level scan orchestration entry points built on the runtime engine."""
+
 from __future__ import annotations
 
 import time
@@ -68,6 +70,7 @@ def run_scan(
     cancel_event: threading.Event | None = None,
     progress_cb: ProgressCallback | None = None,
 ) -> ScanResult:
+    """Run a full scan using the default probe, fingerprint, and matcher pipeline."""
     # Preserve module-level monkeypatch seams while the runtime engine lives
     # in its own module.
     return run_scan_runtime(

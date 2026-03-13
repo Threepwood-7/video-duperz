@@ -1,3 +1,5 @@
+"""Video fingerprint generation utilities built on sampled frame hashes."""
+
 from __future__ import annotations
 
 from statistics import median
@@ -30,10 +32,13 @@ SAMPLE_PERCENTS = [
 
 
 class FingerprintError(RuntimeError):
+    """Raised when fingerprint generation cannot complete for a video."""
+
     pass
 
 
 def sample_timestamps(duration_s: float) -> list[float]:
+    """Choose normalized timestamps used when sampling frames from a video."""
     if duration_s <= 0:
         return [0.0] * len(SAMPLE_PERCENTS)
     return [duration_s * p for p in SAMPLE_PERCENTS]
@@ -50,6 +55,7 @@ def _resize_nearest(gray: np.ndarray, width: int, height: int) -> np.ndarray:
 
 
 def dhash_from_gray(gray_frame: np.ndarray) -> int:
+    """Compute a perceptual dHash value from a grayscale frame."""
     if cv2 is not None:
         gray32 = cv2.resize(gray_frame, (32, 32), interpolation=cv2.INTER_AREA)
         small = cv2.resize(gray32, (9, 8), interpolation=cv2.INTER_AREA)
@@ -64,10 +70,12 @@ def dhash_from_gray(gray_frame: np.ndarray) -> int:
 
 
 def hamming_distance(a: int, b: int) -> int:
+    """Return the bit distance between two dHash values."""
     return (a ^ b).bit_count()
 
 
 def normalized_median_distance(hashes_a: list[int], hashes_b: list[int]) -> float:
+    """Compare two hash sequences using the normalized median Hamming distance."""
     if len(hashes_a) != len(hashes_b) or not hashes_a:
         return 1.0
     distances = [
@@ -77,6 +85,7 @@ def normalized_median_distance(hashes_a: list[int], hashes_b: list[int]) -> floa
 
 
 def compute_video_hashes(path: str, duration_s: float) -> list[int]:
+    """Extract sampled frames from a video and convert them into dHash values."""
     if cv2 is None:
         raise FingerprintError("opencv-python is not installed")
     cap = cv2.VideoCapture(path)
@@ -105,6 +114,7 @@ def compute_video_hashes(path: str, duration_s: float) -> list[int]:
 def build_fingerprint_record(
     file_id: int, duration_s: float, path: str
 ) -> FingerprintRecord:
+    """Build the persisted fingerprint payload for a scanned video file."""
     hashes = compute_video_hashes(path, duration_s)
     return FingerprintRecord(
         file_id=file_id,

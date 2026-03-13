@@ -1,3 +1,5 @@
+"""Export helpers for serializing scan results to CSV and JSON."""
+
 from __future__ import annotations
 
 import csv
@@ -10,6 +12,7 @@ if TYPE_CHECKING:
 
 
 def export_scan(db: Database, scan_id: int, out_dir: str | Path) -> tuple[Path, Path]:
+    """Write the selected scan's duplicate groups to CSV and JSON files."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     groups = db.load_duplicate_groups(scan_id)

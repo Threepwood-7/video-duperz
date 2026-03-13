@@ -1,3 +1,5 @@
+"""Helpers for clearing application data and relaunching the UI when requested."""
+
 from __future__ import annotations
 
 import shutil
@@ -17,6 +19,7 @@ FULL_RESET_DEFAULT_DELAY_MS = 1500
 def run_full_reset(
     delay_ms: int = FULL_RESET_DEFAULT_DELAY_MS, relaunch: bool = False
 ) -> int:
+    """Delete the app data directory after an optional delay and relaunch if asked."""
     try:
         delay = max(0, int(delay_ms))
     except (TypeError, ValueError):

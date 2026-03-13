@@ -1,3 +1,5 @@
+"""Quality heuristics used to choose the preferred file within a group."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -15,15 +17,18 @@ CODEC_RANK = {
 
 
 def codec_rank(codec: str) -> float:
+    """Return a coarse quality weight for a video codec name."""
     return CODEC_RANK.get(codec.lower(), 0.7)
 
 
 def quality_score(item: MatchItem) -> float:
+    """Score a match item by resolution, bitrate, and codec preference."""
     pixels = float(item.width * item.height)
     return 0.65 * pixels + 0.25 * float(item.bitrate) + 0.10 * codec_rank(item.codec)
 
 
 def choose_keep_file_id(items: list[MatchItem]) -> int:
+    """Choose the file id that should be kept by default within a group."""
     if not items:
         raise ValueError("choose_keep_file_id requires at least one item")
     sorted_items = sorted(

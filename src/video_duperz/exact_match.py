@@ -1,3 +1,5 @@
+"""Helpers for exact-match sampling comparisons inside duplicate groups."""
+
 from __future__ import annotations
 
 import hashlib
@@ -15,6 +17,8 @@ _BASE_LABELS: tuple[str, str, str, str] = ("●", "■", "♥", "♦")
 
 @dataclass(slots=True, frozen=True)
 class ExactMatchFile:
+    """Minimal file metadata required for exact-match sampling."""
+
     file_id: int
     path: str
     size: int
@@ -22,6 +26,8 @@ class ExactMatchFile:
 
 @dataclass(slots=True, frozen=True)
 class ExactMatchResult:
+    """Exact-match labels and per-file error details for a group."""
+
     labels: dict[int, str]
     errors: dict[int, str]
 
@@ -45,6 +51,8 @@ def normalize_exact_sample_pair(
     default_a: int = 23,
     default_b: int = 78,
 ) -> tuple[int, int]:
+    """Normalize two sample percentages into an ordered, distinct pair."""
+
     def _normalize_percent(value: int | object, default: int) -> int:
         parsed = _coerce_int(value, default)
         return max(0, min(100, parsed))
@@ -64,6 +72,7 @@ def normalize_exact_sample_pair(
 def sample_offsets(
     file_size: int, block_bytes: int, sample_a_pct: int, sample_b_pct: int
 ) -> list[int]:
+    """Compute stable byte offsets for the exact-match sampling windows."""
     size = max(0, int(file_size))
     block = max(1, int(block_bytes))
     a, b = normalize_exact_sample_pair(sample_a_pct, sample_b_pct)
@@ -132,6 +141,7 @@ def compare_group_files(
     sample_a_pct: int = 23,
     sample_b_pct: int = 78,
 ) -> ExactMatchResult:
+    """Group files by sampled-content signature and return cluster labels."""
     block_bytes = max(1, int(block_mib)) * _MIB
     a, b = normalize_exact_sample_pair(sample_a_pct, sample_b_pct)
     files_list = list(files)

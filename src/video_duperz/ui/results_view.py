@@ -157,6 +157,17 @@ class RowMeta:
     keep_default: bool
 
 
+@dataclass(slots=True)
+class _GroupRenderContext:
+    group_index: int
+    group_db_id: int
+    display_group_id: str
+    group_key: str
+    cached_labels: dict[int, str]
+    cached_errors: dict[int, str]
+    cached_group_error: str
+
+
 class ResultsView(QWidget):
     delete_requested = Signal(str, object)  # mode, list[dict]
     status_message = Signal(str)
@@ -446,139 +457,9 @@ class ResultsView(QWidget):
         try:
             display_groups = self._display_groups()
             for group_index, group in enumerate(display_groups, start=1):
-                group_db_id = int(group.group_id or 0)
-                display_group_id = f"G{group_index:04d}"
-                group_key = self._group_key(group)
-                cached_labels = self._group_compare_cached_labels.get(group_key, {})
-                cached_errors = self._group_compare_cached_errors.get(group_key, {})
-                cached_group_error = self._group_compare_cached_group_error.get(
-                    group_key, ""
-                )
-                self._group_rows_visible.setdefault(group_key, [])
+                render_ctx = self._build_group_render_context(group, group_index)
                 for item in group.items:
-                    row = self.results_table.rowCount()
-                    self.results_table.insertRow(row)
-                    self.results_table.setRowHeight(row, self._thumbnail_h + 8)
-
-                    meta = RowMeta(
-                        group_db_id=group_db_id,
-                        file_id=item.file_id,
-                        path=item.path,
-                        size=item.size,
-                        mtime_ns=item.mtime_ns,
-                        width=item.width,
-                        height=item.height,
-                        codec=item.codec,
-                        bitrate=item.bitrate,
-                        similarity=item.similarity_score,
-                        keep_default=item.keep_default,
-                    )
-
-                    group_item = QTableWidgetItem(display_group_id)
-                    group_item.setData(META_ROLE, meta)
-                    self.results_table.setItem(row, COL_GROUP_ID, group_item)
-
-                    check_item = QTableWidgetItem("")
-                    check_item.setFlags(
-                        Qt.ItemFlag.ItemIsEnabled
-                        | Qt.ItemFlag.ItemIsSelectable
-                        | Qt.ItemFlag.ItemIsUserCheckable
-                    )
-                    check_item.setCheckState(
-                        Qt.CheckState.Checked
-                        if item.file_id in self._checked_file_ids
-                        else Qt.CheckState.Unchecked
-                    )
-                    self.results_table.setItem(row, COL_CHECK, check_item)
-
-                    identical_text = cached_labels.get(item.file_id, "")
-                    identical_item = QTableWidgetItem(identical_text)
-                    identical_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    tooltip = cached_errors.get(item.file_id, "") or cached_group_error
-                    if tooltip:
-                        identical_item.setToolTip(tooltip)
-                    self.results_table.setItem(row, COL_IDENTICAL, identical_item)
-
-                    thumb_item = QTableWidgetItem(
-                        "Loading..." if self._thumbnails_enabled else "N/A"
-                    )
-                    thumb_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    self.results_table.setItem(row, COL_THUMB, thumb_item)
-
-                    file_path = Path(item.path)
-                    self.results_table.setItem(
-                        row, COL_FILE_NAME, QTableWidgetItem(file_path.name)
-                    )
-                    self.results_table.setItem(
-                        row, COL_SIZE, QTableWidgetItem(f"{item.size:,}")
-                    )
-                    self.results_table.setItem(
-                        row,
-                        COL_RESOLUTION,
-                        QTableWidgetItem(f"{item.width}x{item.height}"),
-                    )
-                    self.results_table.setItem(
-                        row, COL_DURATION, QTableWidgetItem(f"{item.duration_s:.1f}s")
-                    )
-                    self.results_table.setItem(
-                        row, COL_VIDEO_CODEC, QTableWidgetItem(item.codec)
-                    )
-                    self.results_table.setItem(
-                        row, COL_AUDIO_CODEC, QTableWidgetItem(item.audio_codec or "")
-                    )
-                    self.results_table.setItem(
-                        row,
-                        COL_AUDIO_BITRATE,
-                        QTableWidgetItem(str(item.audio_bitrate)),
-                    )
-                    self.results_table.setItem(
-                        row,
-                        COL_AUDIO_LANGS,
-                        QTableWidgetItem(item.audio_languages or ""),
-                    )
-                    self.results_table.setItem(
-                        row,
-                        COL_SUB_LANGS,
-                        QTableWidgetItem(item.subtitle_languages or ""),
-                    )
-                    self.results_table.setItem(
-                        row, COL_HDR, QTableWidgetItem("Yes" if item.is_hdr else "No")
-                    )
-                    self.results_table.setItem(
-                        row, COL_BITRATE, QTableWidgetItem(str(item.bitrate))
-                    )
-                    self.results_table.setItem(
-                        row,
-                        COL_SIMILARITY,
-                        QTableWidgetItem(f"{item.similarity_score:.3f}"),
-                    )
-                    self.results_table.setItem(
-                        row,
-                        COL_LAST_MODIFIED,
-                        QTableWidgetItem(self._fmt_mtime(item.mtime_ns)),
-                    )
-                    self.results_table.setItem(
-                        row, COL_PARENT_DIR, QTableWidgetItem(str(file_path.parent))
-                    )
-                    self.results_table.setItem(
-                        row, COL_FULL_PATH, QTableWidgetItem(item.path)
-                    )
-
-                    self._row_group_keys[row] = group_key
-                    self._group_rows_visible[group_key].append(row)
-
-                    self._apply_row_style(
-                        row=row, group_index=group_index, bold=item.keep_default
-                    )
-                    self._thumbnail_rows[item.file_id] = row
-                    self._queue_thumbnail(
-                        row_token=self._thumbnail_token,
-                        row=row,
-                        file_id=item.file_id,
-                        path=item.path,
-                        size=item.size,
-                        mtime_ns=item.mtime_ns,
-                    )
+                    self._populate_results_row(render_ctx, item)
         finally:
             self._rebuilding_table = False
         if self._column_widths:
@@ -589,6 +470,121 @@ class ResultsView(QWidget):
 
         self._update_info_label()
         QTimer.singleShot(0, self._schedule_visible_groups_for_compare)
+
+    def _build_group_render_context(
+        self, group: DuplicateGroup, group_index: int
+    ) -> _GroupRenderContext:
+        group_key = self._group_key(group)
+        self._group_rows_visible.setdefault(group_key, [])
+        return _GroupRenderContext(
+            group_index=group_index,
+            group_db_id=int(group.group_id or 0),
+            display_group_id=f"G{group_index:04d}",
+            group_key=group_key,
+            cached_labels=self._group_compare_cached_labels.get(group_key, {}),
+            cached_errors=self._group_compare_cached_errors.get(group_key, {}),
+            cached_group_error=self._group_compare_cached_group_error.get(
+                group_key, ""
+            ),
+        )
+
+    def _build_row_meta(
+        self, render_ctx: _GroupRenderContext, item: DuplicateItem
+    ) -> RowMeta:
+        return RowMeta(
+            group_db_id=render_ctx.group_db_id,
+            file_id=item.file_id,
+            path=item.path,
+            size=item.size,
+            mtime_ns=item.mtime_ns,
+            width=item.width,
+            height=item.height,
+            codec=item.codec,
+            bitrate=item.bitrate,
+            similarity=item.similarity_score,
+            keep_default=item.keep_default,
+        )
+
+    def _populate_results_row(
+        self, render_ctx: _GroupRenderContext, item: DuplicateItem
+    ) -> None:
+        row = self.results_table.rowCount()
+        self.results_table.insertRow(row)
+        self.results_table.setRowHeight(row, self._thumbnail_h + 8)
+
+        meta = self._build_row_meta(render_ctx, item)
+        group_item = QTableWidgetItem(render_ctx.display_group_id)
+        group_item.setData(META_ROLE, meta)
+        self.results_table.setItem(row, COL_GROUP_ID, group_item)
+
+        check_item = QTableWidgetItem("")
+        check_item.setFlags(
+            Qt.ItemFlag.ItemIsEnabled
+            | Qt.ItemFlag.ItemIsSelectable
+            | Qt.ItemFlag.ItemIsUserCheckable
+        )
+        check_item.setCheckState(
+            Qt.CheckState.Checked
+            if item.file_id in self._checked_file_ids
+            else Qt.CheckState.Unchecked
+        )
+        self.results_table.setItem(row, COL_CHECK, check_item)
+
+        identical_item = QTableWidgetItem(
+            render_ctx.cached_labels.get(item.file_id, "")
+        )
+        identical_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        tooltip = (
+            render_ctx.cached_errors.get(item.file_id, "")
+            or render_ctx.cached_group_error
+        )
+        if tooltip:
+            identical_item.setToolTip(tooltip)
+        self.results_table.setItem(row, COL_IDENTICAL, identical_item)
+
+        thumb_item = QTableWidgetItem(
+            "Loading..." if self._thumbnails_enabled else "N/A"
+        )
+        thumb_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.results_table.setItem(row, COL_THUMB, thumb_item)
+
+        file_path = Path(item.path)
+        row_items = {
+            COL_FILE_NAME: QTableWidgetItem(file_path.name),
+            COL_SIZE: QTableWidgetItem(f"{item.size:,}"),
+            COL_RESOLUTION: QTableWidgetItem(f"{item.width}x{item.height}"),
+            COL_DURATION: QTableWidgetItem(f"{item.duration_s:.1f}s"),
+            COL_VIDEO_CODEC: QTableWidgetItem(item.codec),
+            COL_AUDIO_CODEC: QTableWidgetItem(item.audio_codec or ""),
+            COL_AUDIO_BITRATE: QTableWidgetItem(str(item.audio_bitrate)),
+            COL_AUDIO_LANGS: QTableWidgetItem(item.audio_languages or ""),
+            COL_SUB_LANGS: QTableWidgetItem(item.subtitle_languages or ""),
+            COL_HDR: QTableWidgetItem("Yes" if item.is_hdr else "No"),
+            COL_BITRATE: QTableWidgetItem(str(item.bitrate)),
+            COL_SIMILARITY: QTableWidgetItem(f"{item.similarity_score:.3f}"),
+            COL_LAST_MODIFIED: QTableWidgetItem(self._fmt_mtime(item.mtime_ns)),
+            COL_PARENT_DIR: QTableWidgetItem(str(file_path.parent)),
+            COL_FULL_PATH: QTableWidgetItem(item.path),
+        }
+        for column, table_item in row_items.items():
+            self.results_table.setItem(row, column, table_item)
+
+        self._row_group_keys[row] = render_ctx.group_key
+        self._group_rows_visible[render_ctx.group_key].append(row)
+        self._apply_row_style(
+            row=row,
+            group_index=render_ctx.group_index,
+            bold=item.keep_default,
+        )
+        self._thumbnail_rows[item.file_id] = row
+        self._queue_thumbnail(
+            row_token=self._thumbnail_token,
+            row=row,
+            file_id=item.file_id,
+            path=item.path,
+            size=item.size,
+            mtime_ns=item.mtime_ns,
+        )
 
     def _display_groups(self) -> list[DuplicateGroup]:
         filtered = self._filtered_groups(self._groups)

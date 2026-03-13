@@ -1,3 +1,5 @@
+"""Shared dataclasses and literal types used across the application."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -13,11 +15,14 @@ DEFAULT_THUMBNAIL_SIZE = "96x54"
 
 
 def utc_now_iso() -> str:
+    """Return the current UTC timestamp in ISO-8601 format."""
     return datetime.now(UTC).isoformat()
 
 
 @dataclass(slots=True)
 class SavedScanProfilePayload:
+    """Saved source/profile/extension selections for quickly reloading scans."""
+
     scan_set_key: str
     roots: list[str]
     similarity_profile: SimilarityProfile
@@ -27,6 +32,8 @@ class SavedScanProfilePayload:
 
 @dataclass(slots=True)
 class Settings:
+    """Persisted user settings for scan behavior, UI state, and runtime tuning."""
+
     scan_roots: list[str] = field(default_factory=list)
     recent_scan_roots: list[str] = field(default_factory=list)
     extensions: list[str] = field(default_factory=list)
@@ -70,6 +77,8 @@ class Settings:
 
 @dataclass(slots=True)
 class VideoRecord:
+    """Discovered file-system record tracked during enumeration and scanning."""
+
     path: str
     size: int
     mtime_ns: int
@@ -83,6 +92,8 @@ class VideoRecord:
 
 @dataclass(slots=True)
 class VideoMeta:
+    """Probe metadata captured for a scanned video file."""
+
     duration_s: float
     width: int
     height: int
@@ -99,6 +110,8 @@ class VideoMeta:
 
 @dataclass(slots=True)
 class FingerprintRecord:
+    """Persisted fingerprint payload used during duplicate matching."""
+
     file_id: int
     algo_version: int
     frame_count: int
@@ -108,6 +121,8 @@ class FingerprintRecord:
 
 @dataclass(slots=True)
 class ScanIssue:
+    """Non-fatal issue reported during scan preparation or execution."""
+
     stage: str
     path: str
     message: str
@@ -115,6 +130,8 @@ class ScanIssue:
 
 @dataclass(slots=True)
 class ScanProgress:
+    """Progress snapshot emitted while the scan pipeline advances."""
+
     stage: str
     current: int
     total: int
@@ -141,6 +158,8 @@ class ScanProgress:
 
 @dataclass(slots=True)
 class ScanLaneSnapshot:
+    """Per-lane telemetry snapshot emitted alongside scan progress updates."""
+
     lane: int
     roots: list[str] = field(default_factory=list)
     state: str = "pending"
@@ -160,6 +179,8 @@ class ScanLaneSnapshot:
 
 @dataclass(slots=True)
 class DuplicateEdge:
+    """Weighted duplicate relationship between two matched file ids."""
+
     file_a: int
     file_b: int
     score: float
@@ -167,6 +188,8 @@ class DuplicateEdge:
 
 @dataclass(slots=True)
 class MatchStats:
+    """Counters collected while candidate pairs are filtered and compared."""
+
     total_items: int = 0
     bucket_count: int = 0
     candidate_pairs: int = 0
@@ -178,6 +201,8 @@ class MatchStats:
 
 @dataclass(slots=True)
 class MatchItem:
+    """Normalized match input assembled from persisted metadata and fingerprints."""
+
     file_id: int
     path: str
     size: int
@@ -199,6 +224,8 @@ class MatchItem:
 
 @dataclass(slots=True)
 class DuplicateItem:
+    """UI-ready duplicate item enriched with similarity and chosen action state."""
+
     file_id: int
     path: str
     size: int
@@ -221,6 +248,8 @@ class DuplicateItem:
 
 @dataclass(slots=True)
 class DuplicateGroup:
+    """A persisted set of duplicate items that belong to the same cluster."""
+
     scan_id: int
     profile: str
     created_at: str
@@ -243,12 +272,16 @@ class DuplicateGroup:
 
 @dataclass(slots=True)
 class ActionSelection:
+    """Requested action choice for a single duplicate item."""
+
     file_id: int
     action: ActionKind
 
 
 @dataclass(slots=True)
 class ActionItemResult:
+    """Execution result for one file action within a batch run."""
+
     file_id: int
     source_path: str
     target_path: str | None
@@ -258,6 +291,8 @@ class ActionItemResult:
 
 @dataclass(slots=True)
 class ActionRunResult:
+    """Recorded outcome of a batch rename/delete action run."""
+
     run_id: int
     scan_id: int
     mode: str
@@ -268,6 +303,8 @@ class ActionRunResult:
 
 @dataclass(slots=True)
 class ScanResult:
+    """Final scan payload returned to the CLI and UI layers."""
+
     scan_id: int
     groups: list[DuplicateGroup]
     issues: list[ScanIssue]

@@ -1,3 +1,5 @@
+"""Command-line entry points for the Video Duperz application."""
+
 from __future__ import annotations
 
 import argparse
@@ -243,6 +245,7 @@ def _cmd_clean(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Parse CLI arguments and dispatch to the selected command handler."""
     parser = _build_parser()
     argv_list = list(argv) if argv is not None else sys.argv[1:]
     args = parser.parse_args(argv_list)

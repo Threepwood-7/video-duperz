@@ -1,3 +1,5 @@
+"""Settings defaults, normalization helpers, and QSettings persistence."""
+
 from __future__ import annotations
 
 import json
@@ -82,6 +84,7 @@ _VIDEO_EXTENSION_PRESET_KEYS: dict[str, frozenset[str]] = {
 
 
 def normalize_video_extension_preset_name(value: str | None) -> str:
+    """Return a known preset name, falling back to the default preset."""
     candidate = str(value or "").strip().lower()
     if candidate in VIDEO_EXTENSION_PRESETS:
         return candidate
@@ -89,16 +92,19 @@ def normalize_video_extension_preset_name(value: str | None) -> str:
 
 
 def video_extensions_for_preset(preset_name: str | None) -> list[str]:
+    """Expand a preset name into the configured list of video extensions."""
     normalized_name = normalize_video_extension_preset_name(preset_name)
     return list(VIDEO_EXTENSION_PRESETS[normalized_name])
 
 
 def video_extensions_csv_for_preset(preset_name: str | None) -> str:
+    """Return the display-friendly comma-separated extension list for a preset."""
     normalized_name = normalize_video_extension_preset_name(preset_name)
     return VIDEO_EXTENSION_PRESET_CSV[normalized_name]
 
 
 def detect_video_extension_preset(extensions: list[str]) -> str | None:
+    """Match a normalized extension list back to a known preset when possible."""
     normalized = normalize_extensions(extensions)
     if not normalized:
         return None
@@ -331,21 +337,25 @@ def _normalize_int_range(
 
 
 def default_max_workers() -> int:
+    """Choose a conservative default worker count for desktop scans."""
     cpus = os.cpu_count() or 4
     return min(6, max(2, cpus - 1))
 
 
 def app_data_dir() -> Path:
+    """Return the resolved application data directory for the current user."""
     return resolve_app_data_dir(APP_IDENTITY)
 
 
 def settings_path() -> Path:
+    """Return the backing INI path used by the QSettings store."""
     settings = _settings_store()
     settings.sync()
     return Path(settings.file_name())
 
 
 def db_path() -> Path:
+    """Return the SQLite database path inside the app data directory."""
     return app_data_dir() / "app.db"
 
 
@@ -564,6 +574,7 @@ def _settings_from_raw(raw: dict[str, object], defaults: Settings) -> Settings:
 
 
 def normalize_thumbnail_size(value: str | None) -> str:
+    """Normalize a thumbnail size key to one of the supported options."""
     if not value:
         return DEFAULT_THUMBNAIL_SIZE
     cleaned = str(value).strip().lower()
@@ -573,6 +584,7 @@ def normalize_thumbnail_size(value: str | None) -> str:
 
 
 def default_settings() -> Settings:
+    """Build the default in-memory settings payload for a first launch."""
     return Settings(
         scan_roots=[],
         recent_scan_roots=[],
@@ -602,6 +614,7 @@ def default_settings() -> Settings:
 
 
 def load_settings() -> Settings:
+    """Load persisted settings, creating and saving defaults on first run."""
     defaults = default_settings()
     qs = _settings_store()
     if qs.qsettings.allKeys():
@@ -614,6 +627,7 @@ def load_settings() -> Settings:
 
 
 def save_settings(settings: Settings) -> None:
+    """Persist the provided settings object to the QSettings store."""
     payload = asdict(settings)
     qs = _settings_store()
     qs.clear_all()
