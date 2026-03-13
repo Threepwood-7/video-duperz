@@ -7,12 +7,11 @@ import time
 from collections import deque
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from functools import partial
-from pathlib import Path
-from queue import Empty, Full, Queue
-from threading import Condition, Event, Lock, Thread
-from typing import TYPE_CHECKING, Any, ParamSpec, Protocol, TypeVar
+from queue import Empty, Full
+from threading import Event, Thread
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
 from threep_commons.fs_paths import path_key
 
@@ -20,13 +19,27 @@ from .fingerprint import ALGO_VERSION, FingerprintError
 from .matcher import build_duplicate_groups, find_duplicate_edges
 from .models import (
     MatchStats,
-    ProbeWorkerMode,
     ScanIssue,
     ScanLaneSnapshot,
     ScanProgress,
     ScanResult,
     VideoMeta,
     VideoRecord,
+)
+from .pipeline_runtime_context import (
+    AnalyzeOutputLike as _AnalyzeOutputLike,
+)
+from .pipeline_runtime_context import (
+    AnalyzeTask as _AnalyzeTask,
+)
+from .pipeline_runtime_context import (
+    ScanContext as _ScanContext,
+)
+from .pipeline_runtime_context import (
+    create_context as _create_context,
+)
+from .pipeline_runtime_context import (
+    worker_cap_message as _worker_cap_message,
 )
 from .probe import ProbeError, ensure_ffprobe_available
 from .scanner import build_physical_drive_scan_plan, enumerate_video_files
@@ -41,122 +54,6 @@ _ScanPlanFn = Callable[..., Any]
 _EnumerateFn = Callable[..., tuple[list[VideoRecord], list[ScanIssue]]]
 _FindEdgesFn = Callable[..., tuple[Any, MatchStats]]
 _BuildGroupsFn = Callable[..., list[Any]]
-
-
-class _AnalyzeOutputLike(Protocol):
-    meta: VideoMeta
-    hashes: list[int]
-    probe_s: float
-    fingerprint_s: float
-
-
-@dataclass(slots=True)
-class _AnalyzeTask:
-    file: VideoRecord
-    file_id: int
-    cached_meta: VideoMeta | None
-    lane: int
-    source_root: str
-    path: str
-    size: int
-
-
-@dataclass(slots=True)
-class _ScanContext:
-    db: Database
-    roots: list[str]
-    extensions: list[str]
-    profile: str
-    drive_worker_overrides: dict[str, int] | None
-    cancel_event: Event | None
-    progress_cb: Callable[[ScanProgress], None] | None
-    analyze_file: Callable[[str, VideoMeta | None], _AnalyzeOutputLike]
-    enumerate_video_files_fn: _EnumerateFn
-    build_scan_plan_fn: _ScanPlanFn
-    find_duplicate_edges_fn: _FindEdgesFn
-    build_duplicate_groups_fn: _BuildGroupsFn
-    db_batch_size: int
-    db_flush_interval_s: float
-    progress_emit_interval_s: float
-    progress_emit_every_files: int
-    scan_id: int
-    issues: list[ScanIssue]
-    requested_floor: int
-    scan_plan: Any
-    effective_worker_limit: int
-    executor_worker_limit: int
-    lane_runtime_caps: dict[int, int]
-    lane_states: dict[int, ScanLaneSnapshot]
-    lane_queues: dict[int, deque[_AnalyzeTask]]
-    root_to_lane: dict[str, int]
-    ready_lanes: deque[int]
-    ready_set: set[int]
-    active_by_lane: dict[int, int]
-    futures: dict[Future[_AnalyzeOutputLike], _AnalyzeTask]
-    done_futures: deque[Future[_AnalyzeOutputLike]]
-    event_cond: Condition
-    state_lock: Lock
-    present_paths: set[str]
-    streamed_path_keys: set[str]
-    pending_discovered: list[VideoRecord]
-    pending_meta_rows: list[tuple[int, VideoMeta]]
-    pending_fp_rows: list[tuple[int, int, list[int]]]
-    pending_probe_error_rows: list[tuple[int, str]]
-    scan_started_at: float
-    stage_seconds: dict[str, float]
-    flush_count: int
-    flush_rows_total: int
-    rows_since_flush: int
-    max_queue_depth: int
-    last_tx_flush_at: float
-    last_pending_write_at: float
-    last_discovered_batch_at: float
-    cached_files: int
-    fingerprinted_files: int
-    prepared_files: int
-    discovered_files: int
-    discovered_bytes: int
-    analyzed_files: int
-    analyzed_bytes: int
-    total_analyze_files: int
-    active_workers: int
-    enumerated_roots: int
-    total_roots: int
-    enum_finished: bool
-    cancel_requested: bool
-    cancel_applied: bool
-    enum_files: list[VideoRecord]
-    enum_issues: list[ScanIssue]
-    enum_error: Exception | None
-    enum_queue: Queue[VideoRecord | object]
-    enum_sentinel: object
-    last_emit_at: float
-    last_emit_stage: str
-    last_emit_counter: int
-    enum_thread: Thread | None = None
-    cancel_thread: Thread | None = None
-
-
-@dataclass(slots=True)
-class _RuntimeSettings:
-    db_batch_size: int
-    db_flush_interval_s: float
-    enum_queue_max: int
-    progress_emit_interval_s: float
-    progress_emit_every_files: int
-    requested_floor: int
-    probe_worker_mode: ProbeWorkerMode
-
-
-def _clamp(value: int, minimum: int, maximum: int) -> int:
-    return max(minimum, min(maximum, int(value)))
-
-
-def _normalize_probe_worker_mode(value: str) -> ProbeWorkerMode:
-    mode = str(value or "").strip().lower()
-    if mode == "burst":
-        return "burst"
-    return "balanced"
 
 
 def _should_emit_progress(
@@ -175,231 +72,6 @@ def _should_emit_progress(
     if counter - last_emit_counter >= progress_emit_every_files:
         return True
     return (time.perf_counter() - last_emit_at) >= progress_emit_interval_s
-
-
-def _build_runtime_settings(
-    max_workers: int,
-    probe_worker_mode: str,
-    *,
-    db_batch_size: int,
-    db_flush_interval_ms: int,
-    enum_queue_max: int,
-    progress_emit_interval_ms: int,
-    progress_emit_every_files: int,
-) -> _RuntimeSettings:
-    """Normalize runtime tuning knobs before creating the scan context."""
-    db_batch_size = _clamp(db_batch_size, 32, 4096)
-    db_flush_interval_ms = _clamp(db_flush_interval_ms, 50, 2000)
-    enum_queue_max = _clamp(enum_queue_max, 256, 32768)
-    progress_emit_interval_ms = _clamp(progress_emit_interval_ms, 50, 2000)
-    progress_emit_every_files = _clamp(progress_emit_every_files, 10, 5000)
-    return _RuntimeSettings(
-        db_batch_size=db_batch_size,
-        db_flush_interval_s=float(db_flush_interval_ms) / 1000.0,
-        enum_queue_max=enum_queue_max,
-        progress_emit_interval_s=float(progress_emit_interval_ms) / 1000.0,
-        progress_emit_every_files=progress_emit_every_files,
-        requested_floor=max(1, int(max_workers)),
-        probe_worker_mode=_normalize_probe_worker_mode(probe_worker_mode),
-    )
-
-
-def _worker_cap_message(scan_plan: Any) -> str | None:
-    """Return the hard-cap warning text when drive limits reduce concurrency."""
-    requested = int(scan_plan.requested_worker_target)
-    effective = int(scan_plan.effective_total_workers)
-    if requested <= effective:
-        return None
-    return (
-        "Requested worker capacity "
-        f"({requested}) reduced to {effective} by per-drive hard caps."
-    )
-
-
-def _build_scan_issues(scan_plan: Any) -> list[ScanIssue]:
-    """Carry forward plan issues and add any worker-cap reduction warning."""
-    issues = list(scan_plan.issues)
-    worker_cap_message = _worker_cap_message(scan_plan)
-    if worker_cap_message is not None:
-        issues.append(
-            ScanIssue(
-                stage="probe",
-                path="",
-                message=worker_cap_message,
-            )
-        )
-    return issues
-
-
-def _build_lane_runtime_caps(
-    scan_plan: Any,
-    probe_worker_mode: ProbeWorkerMode,
-) -> dict[int, int]:
-    """Derive per-lane runtime caps from the scan plan and probe mode."""
-    configured_lane_limits = {
-        int(lane): max(1, int(limit))
-        for lane, limit in scan_plan.lane_worker_limits.items()
-    }
-    if probe_worker_mode == "balanced":
-        return dict.fromkeys(range(len(scan_plan.root_groups)), 1)
-    return {
-        lane: max(1, configured_lane_limits.get(lane, 1))
-        for lane in range(len(scan_plan.root_groups))
-    }
-
-
-def _build_lane_runtime_state(
-    scan_plan: Any,
-) -> tuple[dict[int, ScanLaneSnapshot], dict[int, deque[_AnalyzeTask]]]:
-    """Initialize per-lane telemetry snapshots and pending task queues."""
-    lane_states: dict[int, ScanLaneSnapshot] = {}
-    lane_queues: dict[int, deque[_AnalyzeTask]] = {}
-    for lane_idx, group in enumerate(scan_plan.root_groups):
-        lane_states[lane_idx] = ScanLaneSnapshot(
-            lane=lane_idx,
-            roots=[str(Path(root)) for root in group],
-            state="pending",
-        )
-        lane_queues[lane_idx] = deque()
-    return lane_states, lane_queues
-
-
-def _build_root_to_lane(scan_plan: Any) -> dict[str, int]:
-    """Normalize scan-plan root keys so queued files resolve to the right lane."""
-    return {
-        path_key(root): lane for root, lane in scan_plan.root_to_group_index.items()
-    }
-
-
-def _initial_stage_seconds() -> dict[str, float]:
-    """Track cumulative time spent in the major runtime phases."""
-    return {
-        "enumerate": 0.0,
-        "db_write": 0.0,
-        "probe": 0.0,
-        "fingerprint": 0.0,
-        "matching": 0.0,
-    }
-
-
-def _create_context(
-    db: Database,
-    roots: list[str],
-    extensions: list[str],
-    profile: str,
-    max_workers: int,
-    drive_worker_overrides: dict[str, int] | None,
-    probe_worker_mode: str,
-    *,
-    db_batch_size: int,
-    db_flush_interval_ms: int,
-    enum_queue_max: int,
-    progress_emit_interval_ms: int,
-    progress_emit_every_files: int,
-    cancel_event: Event | None,
-    progress_cb: Callable[[ScanProgress], None] | None,
-    analyze_file: Callable[[str, VideoMeta | None], _AnalyzeOutputLike],
-    enumerate_video_files_fn: _EnumerateFn,
-    build_scan_plan_fn: _ScanPlanFn,
-    find_duplicate_edges_fn: _FindEdgesFn,
-    build_duplicate_groups_fn: _BuildGroupsFn,
-) -> _ScanContext:
-    runtime_settings = _build_runtime_settings(
-        max_workers,
-        probe_worker_mode,
-        db_batch_size=db_batch_size,
-        db_flush_interval_ms=db_flush_interval_ms,
-        enum_queue_max=enum_queue_max,
-        progress_emit_interval_ms=progress_emit_interval_ms,
-        progress_emit_every_files=progress_emit_every_files,
-    )
-    scan_id = db.create_scan(profile=profile, roots=roots, extensions=extensions)
-    scan_plan = build_scan_plan_fn(
-        roots=roots,
-        max_workers=runtime_settings.requested_floor,
-        drive_worker_overrides=drive_worker_overrides,
-    )
-    effective_worker_limit = max(0, int(scan_plan.effective_total_workers))
-    executor_worker_limit = max(1, effective_worker_limit)
-    lane_runtime_caps = _build_lane_runtime_caps(
-        scan_plan,
-        runtime_settings.probe_worker_mode,
-    )
-    issues = _build_scan_issues(scan_plan)
-    lane_states, lane_queues = _build_lane_runtime_state(scan_plan)
-    started_at = time.perf_counter()
-    return _ScanContext(
-        db=db,
-        roots=roots,
-        extensions=extensions,
-        profile=profile,
-        drive_worker_overrides=drive_worker_overrides,
-        cancel_event=cancel_event,
-        progress_cb=progress_cb,
-        analyze_file=analyze_file,
-        enumerate_video_files_fn=enumerate_video_files_fn,
-        build_scan_plan_fn=build_scan_plan_fn,
-        find_duplicate_edges_fn=find_duplicate_edges_fn,
-        build_duplicate_groups_fn=build_duplicate_groups_fn,
-        db_batch_size=runtime_settings.db_batch_size,
-        db_flush_interval_s=runtime_settings.db_flush_interval_s,
-        progress_emit_interval_s=runtime_settings.progress_emit_interval_s,
-        progress_emit_every_files=runtime_settings.progress_emit_every_files,
-        scan_id=scan_id,
-        issues=issues,
-        requested_floor=runtime_settings.requested_floor,
-        scan_plan=scan_plan,
-        effective_worker_limit=effective_worker_limit,
-        executor_worker_limit=executor_worker_limit,
-        lane_runtime_caps=lane_runtime_caps,
-        lane_states=lane_states,
-        lane_queues=lane_queues,
-        root_to_lane=_build_root_to_lane(scan_plan),
-        ready_lanes=deque(),
-        ready_set=set(),
-        active_by_lane=dict.fromkeys(lane_states, 0),
-        futures={},
-        done_futures=deque(),
-        event_cond=Condition(),
-        state_lock=Lock(),
-        present_paths=set(),
-        streamed_path_keys=set(),
-        pending_discovered=[],
-        pending_meta_rows=[],
-        pending_fp_rows=[],
-        pending_probe_error_rows=[],
-        scan_started_at=started_at,
-        stage_seconds=_initial_stage_seconds(),
-        flush_count=0,
-        flush_rows_total=0,
-        rows_since_flush=0,
-        max_queue_depth=0,
-        last_tx_flush_at=started_at,
-        last_pending_write_at=started_at,
-        last_discovered_batch_at=started_at,
-        cached_files=0,
-        fingerprinted_files=0,
-        prepared_files=0,
-        discovered_files=0,
-        discovered_bytes=0,
-        analyzed_files=0,
-        analyzed_bytes=0,
-        total_analyze_files=0,
-        active_workers=0,
-        enumerated_roots=0,
-        total_roots=max(1, len(roots)),
-        enum_finished=False,
-        cancel_requested=False,
-        cancel_applied=False,
-        enum_files=[],
-        enum_issues=[],
-        enum_error=None,
-        enum_queue=Queue(maxsize=runtime_settings.enum_queue_max),
-        enum_sentinel=object(),
-        last_emit_at=0.0,
-        last_emit_stage="",
-        last_emit_counter=0,
-    )
 
 
 def _notify_event(ctx: _ScanContext) -> None:
