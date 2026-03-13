@@ -1,3 +1,5 @@
+"""Scan progress widget that presents runtime telemetry and issues."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -23,6 +25,8 @@ if TYPE_CHECKING:
 
 
 class ScanView(QWidget):
+    """UI panel for scan controls, progress events, lane stats, and issues."""
+
     start_requested = Signal()
     rescan_requested = Signal()
     cancel_requested = Signal()

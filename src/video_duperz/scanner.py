@@ -1,3 +1,5 @@
+"""Filesystem enumeration and physical-drive planning helpers for scans."""
+
 from __future__ import annotations
 
 import os
@@ -35,6 +37,8 @@ RootTokens = tuple[str, set[DiskToken]]
 
 @dataclass(slots=True)
 class PhysicalDriveInfo:
+    """Resolved storage details for one scan root or mounted local volume."""
+
     root: str
     volume_identity: str
     disk_tokens: list[DiskToken]
@@ -46,6 +50,8 @@ class PhysicalDriveInfo:
 
 @dataclass(slots=True)
 class PhysicalDriveScanPlan:
+    """Grouped root layout and worker-cap plan for a multi-root scan."""
+
     root_tokens: list[RootTokens]
     root_groups: list[list[str]]
     root_to_group_index: dict[str, int]
@@ -93,6 +99,7 @@ def _candidate_physical_drive_roots(roots: list[str] | None = None) -> list[str]
 
 
 def list_physical_drives(roots: list[str] | None = None) -> list[PhysicalDriveInfo]:
+    """Describe local physical-drive roots, capacity, and disk-token metadata."""
     discovered: list[PhysicalDriveInfo] = []
     for root in _candidate_physical_drive_roots(roots):
         volume_identity = _resolve_volume_identity(root)
@@ -155,6 +162,7 @@ def build_physical_drive_scan_plan(
     max_workers: int,
     drive_worker_overrides: dict[str, int] | None = None,
 ) -> PhysicalDriveScanPlan:
+    """Group roots by physical-drive connectivity and derive lane worker caps."""
     normalized_roots = [str(Path(root)) for root in roots]
     requested_floor = max(1, int(max_workers))
     normalized_overrides = _normalize_worker_override_map(drive_worker_overrides)
@@ -385,6 +393,7 @@ def enumerate_video_files(
     progress_cb: ProgressFn | None = None,
     on_file_discovered: FileDiscoveredFn | None = None,
 ) -> tuple[list[VideoRecord], list[ScanIssue]]:
+    """Enumerate matching video files across the planned physical-drive lanes."""
     ext_set = {e.lower().lstrip(".") for e in extensions}
     found: list[VideoRecord] = []
     issues: list[ScanIssue] = []

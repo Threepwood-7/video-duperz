@@ -1,3 +1,5 @@
+"""Results table, filters, and action helpers for duplicate groups."""
+
 from __future__ import annotations
 
 import subprocess
@@ -44,6 +46,8 @@ if TYPE_CHECKING:
 
 
 class DeleteTarget(TypedDict):
+    """Selected result-row metadata used for delete and rename operations."""
+
     row: int
     file_id: int
     group_db_id: int
@@ -144,6 +148,8 @@ VALID_SORT_MODES = {
 
 @dataclass(slots=True)
 class RowMeta:
+    """Per-row metadata attached to the results table for quick lookup."""
+
     group_db_id: int
     file_id: int
     path: str
@@ -169,6 +175,8 @@ class _GroupRenderContext:
 
 
 class ResultsView(QWidget):
+    """Results table widget that renders duplicate groups and row actions."""
+
     delete_requested = Signal(str, object)  # mode, list[dict]
     status_message = Signal(str)
 

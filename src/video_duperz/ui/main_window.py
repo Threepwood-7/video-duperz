@@ -1,3 +1,5 @@
+"""Main desktop window for configuring scans and managing duplicate results."""
+
 from __future__ import annotations
 
 import contextlib
@@ -86,6 +88,8 @@ MAX_DRIVE_WORKERS = 64
 
 
 class DeleteTarget(TypedDict):
+    """Selected duplicate row metadata used when dispatching delete actions."""
+
     row: int
     file_id: int
     group_db_id: int
@@ -141,6 +145,8 @@ def _metric_int(metrics: dict[str, object], key: str, default: int = 0) -> int:
 
 
 class MainWindow(QMainWindow):
+    """Top-level application window that coordinates sources, scan, and results."""
+
     def __init__(
         self, db: Database, settings: Settings, parent: QWidget | None = None
     ) -> None:

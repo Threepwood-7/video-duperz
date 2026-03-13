@@ -1,3 +1,5 @@
+"""Thumbnail cache and extraction helpers for duplicate preview rendering."""
+
 from __future__ import annotations
 
 import hashlib
