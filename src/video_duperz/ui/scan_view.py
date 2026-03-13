@@ -43,7 +43,8 @@ class ScanView(QWidget):
             "Worker status is shown per lane in the Parallel Lanes table.", self
         )
         self.io_stats_label = QLabel(
-            "I/O Stats: discovered 0 @ 0.00/s, 0.00 MiB/s | analyzed 0 @ 0.00/s, 0.00 MiB/s | cache hit 0.0%",
+            "I/O Stats: discovered 0 @ 0.00/s, 0.00 MiB/s | analyzed 0 @ "
+            "0.00/s, 0.00 MiB/s | cache hit 0.0%",
             self,
         )
         self.lane_table = QTableWidget(0, 12, self)
@@ -129,7 +130,8 @@ class ScanView(QWidget):
         self.worker_progress.setValue(0)
         self.worker_progress.setFormat("Workers 0/0")
         self.io_stats_label.setText(
-            "I/O Stats: discovered 0 @ 0.00/s, 0.00 MiB/s | analyzed 0 @ 0.00/s, 0.00 MiB/s | cache hit 0.0%"
+            "I/O Stats: discovered 0 @ 0.00/s, 0.00 MiB/s | analyzed 0 @ "
+            "0.00/s, 0.00 MiB/s | cache hit 0.0%"
         )
         self.lane_table.setRowCount(0)
         self.progress_list.clear()
@@ -241,8 +243,10 @@ class ScanView(QWidget):
         cache_hit_ratio = float(progress.cache_hit_ratio or 0.0) * 100.0
         self.io_stats_label.setText(
             "I/O Stats: "
-            f"discovered {discovered_files} ({discovered_mib:.2f} MiB) @ {discovered_fps:.2f}/s, {discovered_mibps:.2f} MiB/s | "
-            f"analyzed {analyzed_files} ({analyzed_mib:.2f} MiB) @ {analyzed_fps:.2f}/s, {analyzed_mibps:.2f} MiB/s | "
+            f"discovered {discovered_files} ({discovered_mib:.2f} MiB) @ "
+            f"{discovered_fps:.2f}/s, {discovered_mibps:.2f} MiB/s | "
+            f"analyzed {analyzed_files} ({analyzed_mib:.2f} MiB) @ "
+            f"{analyzed_fps:.2f}/s, {analyzed_mibps:.2f} MiB/s | "
             f"cache hit {cache_hit_ratio:.1f}%"
         )
 

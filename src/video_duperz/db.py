@@ -196,9 +196,12 @@ class Database:
               FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_files_scan_id ON files(scan_id);
-            CREATE INDEX IF NOT EXISTS idx_files_path_stat ON files(path, size, mtime_ns);
-            CREATE INDEX IF NOT EXISTS idx_files_scan_exists ON files(scan_id, exists_flag);
-            CREATE INDEX IF NOT EXISTS idx_files_path_stat_exists ON files(path, size, mtime_ns, exists_flag);
+            CREATE INDEX IF NOT EXISTS idx_files_path_stat
+              ON files(path, size, mtime_ns);
+            CREATE INDEX IF NOT EXISTS idx_files_scan_exists
+              ON files(scan_id, exists_flag);
+            CREATE INDEX IF NOT EXISTS idx_files_path_stat_exists
+              ON files(path, size, mtime_ns, exists_flag);
 
             CREATE TABLE IF NOT EXISTS video_meta(
               file_id INTEGER PRIMARY KEY,
@@ -226,7 +229,8 @@ class Database:
               created_at TEXT NOT NULL,
               FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
             );
-            CREATE INDEX IF NOT EXISTS idx_fingerprints_algo ON fingerprints(algo_version);
+            CREATE INDEX IF NOT EXISTS idx_fingerprints_algo
+              ON fingerprints(algo_version);
 
             CREATE TABLE IF NOT EXISTS duplicate_groups(
               id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -236,7 +240,8 @@ class Database:
               total_size_bytes INTEGER NOT NULL,
               FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
             );
-            CREATE INDEX IF NOT EXISTS idx_duplicate_groups_scan ON duplicate_groups(scan_id);
+            CREATE INDEX IF NOT EXISTS idx_duplicate_groups_scan
+              ON duplicate_groups(scan_id);
 
             CREATE TABLE IF NOT EXISTS duplicate_group_items(
               group_id INTEGER NOT NULL,
@@ -248,7 +253,8 @@ class Database:
               FOREIGN KEY(group_id) REFERENCES duplicate_groups(id) ON DELETE CASCADE,
               FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
             );
-            CREATE INDEX IF NOT EXISTS idx_group_items_file ON duplicate_group_items(file_id);
+            CREATE INDEX IF NOT EXISTS idx_group_items_file
+              ON duplicate_group_items(file_id);
 
             CREATE TABLE IF NOT EXISTS action_runs(
               id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -289,15 +295,18 @@ class Database:
             )
         if "audio_bitrate" not in columns:
             self.conn.execute(
-                "ALTER TABLE video_meta ADD COLUMN audio_bitrate INTEGER NOT NULL DEFAULT 0"
+                "ALTER TABLE video_meta ADD COLUMN audio_bitrate INTEGER "
+                "NOT NULL DEFAULT 0"
             )
         if "audio_languages" not in columns:
             self.conn.execute(
-                "ALTER TABLE video_meta ADD COLUMN audio_languages TEXT NOT NULL DEFAULT ''"
+                "ALTER TABLE video_meta ADD COLUMN audio_languages TEXT "
+                "NOT NULL DEFAULT ''"
             )
         if "subtitle_languages" not in columns:
             self.conn.execute(
-                "ALTER TABLE video_meta ADD COLUMN subtitle_languages TEXT NOT NULL DEFAULT ''"
+                "ALTER TABLE video_meta ADD COLUMN subtitle_languages TEXT "
+                "NOT NULL DEFAULT ''"
             )
         if "is_hdr" not in columns:
             self.conn.execute(
@@ -311,14 +320,16 @@ class Database:
         }
         if "extensions_json" not in columns:
             self.conn.execute(
-                "ALTER TABLE scans ADD COLUMN extensions_json TEXT NOT NULL DEFAULT '[]'"
+                "ALTER TABLE scans ADD COLUMN extensions_json TEXT "
+                "NOT NULL DEFAULT '[]'"
             )
         if "scan_set_key" not in columns:
             self.conn.execute(
                 "ALTER TABLE scans ADD COLUMN scan_set_key TEXT NOT NULL DEFAULT ''"
             )
         self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_scans_set_status ON scans(scan_set_key, status, id DESC)"
+            "CREATE INDEX IF NOT EXISTS idx_scans_set_status "
+            "ON scans(scan_set_key, status, id DESC)"
         )
 
     def _backfill_scan_set_keys(self) -> None:
@@ -356,7 +367,9 @@ class Database:
         )
         cur = self.conn.execute(
             """
-            INSERT INTO scans(created_at, profile, roots_json, extensions_json, scan_set_key, status)
+            INSERT INTO scans(
+              created_at, profile, roots_json, extensions_json, scan_set_key, status
+            )
             VALUES(?, ?, ?, ?, ?, ?)
             """,
             (
@@ -523,8 +536,11 @@ class Database:
             rows = self.conn.execute(
                 f"""
                 SELECT f.id AS file_id, f.path, f.size, f.mtime_ns,
-                       vm.duration_s, vm.width, vm.height, vm.fps, vm.codec, vm.bitrate, vm.has_audio,
-                       vm.audio_codec, vm.audio_bitrate, vm.audio_languages, vm.subtitle_languages, vm.is_hdr,
+                       vm.duration_s, vm.width, vm.height, vm.fps,
+                       vm.codec, vm.bitrate, vm.has_audio,
+                       vm.audio_codec, vm.audio_bitrate,
+                       vm.audio_languages, vm.subtitle_languages,
+                       vm.is_hdr,
                        fp.algo_version, fp.frame_count, fp.hash_blob
                 FROM files f
                 LEFT JOIN video_meta vm ON vm.file_id = f.id
@@ -585,7 +601,8 @@ class Database:
             """
             INSERT INTO video_meta(
               file_id, duration_s, width, height, fps, codec, bitrate, has_audio,
-              audio_codec, audio_bitrate, audio_languages, subtitle_languages, is_hdr, probe_error
+              audio_codec, audio_bitrate, audio_languages,
+              subtitle_languages, is_hdr, probe_error
             )
             VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
             ON CONFLICT(file_id) DO UPDATE SET
@@ -615,7 +632,8 @@ class Database:
             """
             INSERT INTO video_meta(
               file_id, duration_s, width, height, fps, codec, bitrate, has_audio,
-              audio_codec, audio_bitrate, audio_languages, subtitle_languages, is_hdr, probe_error
+              audio_codec, audio_bitrate, audio_languages,
+              subtitle_languages, is_hdr, probe_error
             )
             VALUES(?, 0, 0, 0, 0, '', 0, 0, '', 0, '', '', 0, ?)
             ON CONFLICT(file_id) DO UPDATE SET probe_error = excluded.probe_error
@@ -642,7 +660,9 @@ class Database:
             )
         self.conn.executemany(
             """
-            INSERT INTO fingerprints(file_id, algo_version, frame_count, hash_blob, created_at)
+            INSERT INTO fingerprints(
+              file_id, algo_version, frame_count, hash_blob, created_at
+            )
             VALUES(?, ?, ?, ?, ?)
             ON CONFLICT(file_id) DO UPDATE SET
               algo_version = excluded.algo_version,
@@ -660,8 +680,11 @@ class Database:
         rows = self.conn.execute(
             """
             SELECT f.id AS file_id, f.path, f.size, f.mtime_ns, f.ctime_ns,
-                   vm.duration_s, vm.width, vm.height, vm.fps, vm.codec, vm.bitrate,
-                   vm.audio_codec, vm.audio_bitrate, vm.audio_languages, vm.subtitle_languages, vm.is_hdr,
+                   vm.duration_s, vm.width, vm.height, vm.fps,
+                   vm.codec, vm.bitrate,
+                   vm.audio_codec, vm.audio_bitrate,
+                   vm.audio_languages, vm.subtitle_languages,
+                   vm.is_hdr,
                    fp.hash_blob
             FROM files f
             JOIN video_meta vm ON vm.file_id = f.id
@@ -762,13 +785,15 @@ class Database:
         )
         deleted_groups = int(
             self.conn.execute(
-                f"SELECT COUNT(*) AS c FROM duplicate_groups WHERE scan_id IN ({placeholders})",
+                "SELECT COUNT(*) AS c FROM duplicate_groups "
+                f"WHERE scan_id IN ({placeholders})",
                 params,
             ).fetchone()["c"]
         )
         deleted_actions = int(
             self.conn.execute(
-                f"SELECT COUNT(*) AS c FROM action_runs WHERE scan_id IN ({placeholders})",
+                "SELECT COUNT(*) AS c FROM action_runs "
+                f"WHERE scan_id IN ({placeholders})",
                 params,
             ).fetchone()["c"]
         )
@@ -802,7 +827,9 @@ class Database:
     def insert_duplicate_item(self, group_id: int, item: DuplicateItem) -> None:
         self.conn.execute(
             """
-            INSERT INTO duplicate_group_items(group_id, file_id, similarity_score, keep_default, selected_action)
+            INSERT INTO duplicate_group_items(
+              group_id, file_id, similarity_score, keep_default, selected_action
+            )
             VALUES(?, ?, ?, ?, ?)
             ON CONFLICT(group_id, file_id) DO UPDATE SET
               similarity_score = excluded.similarity_score,
@@ -830,7 +857,9 @@ class Database:
         for group in groups:
             cur = self.conn.execute(
                 """
-                INSERT INTO duplicate_groups(scan_id, profile, created_at, total_size_bytes)
+                INSERT INTO duplicate_groups(
+                  scan_id, profile, created_at, total_size_bytes
+                )
                 VALUES(?, ?, ?, ?)
                 """,
                 (int(scan_id), str(profile), created_at, int(group.total_size_bytes)),
@@ -850,7 +879,9 @@ class Database:
         if item_rows:
             self.conn.executemany(
                 """
-                INSERT INTO duplicate_group_items(group_id, file_id, similarity_score, keep_default, selected_action)
+                INSERT INTO duplicate_group_items(
+                  group_id, file_id, similarity_score, keep_default, selected_action
+                )
                 VALUES(?, ?, ?, ?, ?)
                 ON CONFLICT(group_id, file_id) DO UPDATE SET
                   similarity_score = excluded.similarity_score,
@@ -944,15 +975,20 @@ class Database:
         for gr in group_rows:
             item_rows = self.conn.execute(
                 """
-                SELECT gi.file_id, gi.similarity_score, gi.keep_default, gi.selected_action,
+                SELECT gi.file_id, gi.similarity_score,
+                       gi.keep_default, gi.selected_action,
                        f.path, f.size, f.mtime_ns, f.ctime_ns,
                        vm.duration_s, vm.width, vm.height, vm.bitrate, vm.codec,
-                       vm.audio_codec, vm.audio_bitrate, vm.audio_languages, vm.subtitle_languages, vm.is_hdr
+                       vm.audio_codec, vm.audio_bitrate,
+                       vm.audio_languages, vm.subtitle_languages,
+                       vm.is_hdr
                 FROM duplicate_group_items gi
                 JOIN files f ON f.id = gi.file_id
                 JOIN video_meta vm ON vm.file_id = f.id
                 WHERE gi.group_id = ? AND f.exists_flag = 1
-                ORDER BY gi.keep_default DESC, vm.width * vm.height DESC, vm.bitrate DESC
+                ORDER BY gi.keep_default DESC,
+                         vm.width * vm.height DESC,
+                         vm.bitrate DESC
                 """,
                 (int(gr["id"]),),
             ).fetchall()
@@ -1058,7 +1094,8 @@ class Database:
     def list_latest_scans_by_set(self) -> list[dict[str, Any]]:
         rows = self.conn.execute(
             """
-            SELECT s.id, s.created_at, s.profile, s.roots_json, s.extensions_json, s.scan_set_key, s.status
+            SELECT s.id, s.created_at, s.profile, s.roots_json,
+                   s.extensions_json, s.scan_set_key, s.status
             FROM scans s
             JOIN (
               SELECT scan_set_key, MAX(id) AS latest_id
@@ -1074,7 +1111,8 @@ class Database:
     def list_latest_completed_scans_by_set(self) -> list[dict[str, Any]]:
         rows = self.conn.execute(
             """
-            SELECT s.id, s.created_at, s.profile, s.roots_json, s.extensions_json, s.scan_set_key, s.status
+            SELECT s.id, s.created_at, s.profile, s.roots_json,
+                   s.extensions_json, s.scan_set_key, s.status
             FROM scans s
             JOIN (
               SELECT scan_set_key, MAX(id) AS latest_id
@@ -1147,7 +1185,8 @@ class Database:
         self, scan_id: int, mode: str, status: str = "running"
     ) -> int:
         cur = self.conn.execute(
-            "INSERT INTO action_runs(scan_id, mode, created_at, status) VALUES(?, ?, ?, ?)",
+            "INSERT INTO action_runs(scan_id, mode, created_at, status) "
+            "VALUES(?, ?, ?, ?)",
             (scan_id, mode, utc_now_iso(), status),
         )
         self._commit_if_needed()
@@ -1164,7 +1203,9 @@ class Database:
     ) -> None:
         self.conn.execute(
             """
-            INSERT INTO action_items(run_id, file_id, source_path, target_path, result, error_text)
+            INSERT INTO action_items(
+              run_id, file_id, source_path, target_path, result, error_text
+            )
             VALUES(?, ?, ?, ?, ?, ?)
             """,
             (run_id, file_id, source_path, target_path, result, error_text),

@@ -193,7 +193,10 @@ def build_physical_drive_scan_plan(
                 ScanIssue(
                     stage="enumerate",
                     path=root,
-                    message=f"Physical disk lookup failed; using volume identity fallback: {detail}",
+                    message=(
+                        "Physical disk lookup failed; using volume identity "
+                        f"fallback: {detail}"
+                    ),
                 )
             )
             root_tokens.append((root, {volume_identity or f"root:{idx}"}))

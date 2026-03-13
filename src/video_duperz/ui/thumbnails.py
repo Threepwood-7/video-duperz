@@ -78,7 +78,10 @@ def build_thumbnail_cache_key(
     normalized_size = normalize_thumbnail_size_key(size_key)
     normalized_pct = normalize_frame_percent(frame_pct, 23)
     normalized_slot = str(slot).strip().lower() or "a"
-    payload = f"{path}|{size}|{mtime_ns}|{normalized_size}|{normalized_pct}|{normalized_slot}|{THUMBNAIL_CACHE_VERSION}"
+    payload = (
+        f"{path}|{size}|{mtime_ns}|{normalized_size}|{normalized_pct}|"
+        f"{normalized_slot}|{THUMBNAIL_CACHE_VERSION}"
+    )
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
 

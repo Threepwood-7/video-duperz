@@ -3,7 +3,7 @@ from __future__ import annotations
 import contextlib
 import shutil
 from pathlib import Path
-from typing import Callable, TypedDict, cast
+from typing import TYPE_CHECKING, TypedDict, cast
 
 from PySide6.QtCore import Qt, QThreadPool
 from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QColor, QKeySequence
@@ -72,6 +72,9 @@ from .results_view import (
 from .scan_view import ScanView
 from .thumbnails import thumbnail_cache_dir
 from .workers import ScanWorker
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 THUMBNAIL_SIZE_OPTIONS: tuple[tuple[str, str], ...] = (
     ("Small (80x45)", "80x45"),
@@ -1048,14 +1051,18 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self,
             "About Video Duperz",
-            f"Video Duperz {__version__}\nWindows-first duplicate video finder.\nSettings: {settings_path()}",
+            f"Video Duperz {__version__}\n"
+            "Windows-first duplicate video finder.\n"
+            f"Settings: {settings_path()}",
         )
 
     def _request_full_reset(self) -> None:
         confirm = QMessageBox.question(
             self,
             "Full Reset",
-            "This will close Video Duperz, erase all app data (saved scans, settings, thumbnails), and relaunch.\n\nContinue?",
+            "This will close Video Duperz, erase all app data "
+            "(saved scans, settings, thumbnails), and relaunch.\n\n"
+            "Continue?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if confirm != QMessageBox.StandardButton.Yes:
@@ -1284,7 +1291,10 @@ class MainWindow(QMainWindow):
                 status_text = self._format_scan_status(
                     str(scan_payload.get("status", ""))
                 )
-                label = f"Auto: {self._scan_root_summary(roots)} | {profile} | #{scan_id} | {status_text}"
+                label = (
+                    f"Auto: {self._scan_root_summary(roots)} | {profile} | "
+                    f"#{scan_id} | {status_text}"
+                )
                 action = QAction(label, self)
                 action.triggered.connect(
                     lambda _checked=False, profile_payload=payload: (
@@ -1346,7 +1356,8 @@ class MainWindow(QMainWindow):
             self.results_view.set_scan_context_note("")
             self.tabs.setCurrentWidget(self.sources_tab)
             self.statusBar().showMessage(
-                f"Loaded saved scan profile '{source_name}' ({self._format_scan_status(None)}). Start scan to continue."
+                f"Loaded saved scan profile '{source_name}' "
+                f"({self._format_scan_status(None)}). Start scan to continue."
             )
             return
 
@@ -1359,7 +1370,8 @@ class MainWindow(QMainWindow):
             stamp = self._format_scan_created_at(summary["created_at"])
             when = f" from {stamp}" if stamp else ""
             note = (
-                f"Loaded saved scan profile '{source_name}'. Latest scan #{latest_scan_id}{when} is {status_text}; "
+                f"Loaded saved scan profile '{source_name}'. Latest scan "
+                f"#{latest_scan_id}{when} is {status_text}; "
                 "start scan to continue."
             )
             self.tabs.setCurrentWidget(self.sources_tab)
@@ -1370,7 +1382,10 @@ class MainWindow(QMainWindow):
         self.current_scan_id = latest_scan_id
         self.results_view.load_groups(groups)
         stamp = self._format_scan_created_at(summary["created_at"])
-        note = f"Loaded saved scan #{latest_scan_id} from {stamp}; filesystem may have changed."
+        note = (
+            f"Loaded saved scan #{latest_scan_id} from {stamp}; "
+            "filesystem may have changed."
+        )
         self.results_view.set_scan_context_note(note)
         self.tabs.setCurrentWidget(self.results_view)
         self.statusBar().showMessage(note)
@@ -1397,7 +1412,8 @@ class MainWindow(QMainWindow):
             self,
             "Rescan (Fresh)",
             (
-                "This will permanently delete scan history/artifacts for this scan set and any cached file artifacts "
+                "This will permanently delete scan history/artifacts for this "
+                "scan set and any cached file artifacts "
                 "under the selected folders.\n\n"
                 "All cached thumbnails will also be cleared.\n\n"
                 "Continue with fresh rescan?"
@@ -1517,7 +1533,8 @@ class MainWindow(QMainWindow):
             matching_s = _metric_float(stage_seconds, "matching")
             timing_summary = f", matching {matching_s:.2f}s"
         self.statusBar().showMessage(
-            f"Scan {finished_scan_id} complete: {len(groups)} groups, {len(result.issues)} issues"
+            f"Scan {finished_scan_id} complete: {len(groups)} groups, "
+            f"{len(result.issues)} issues"
             f" (flushes {flush_count}, queue {max_queue_depth}{timing_summary})."
         )
 

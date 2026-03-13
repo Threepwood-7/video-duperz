@@ -221,7 +221,7 @@ def test_list_physical_drives_falls_back_to_volume_token_on_lookup_error(
     assert drives[0].used_percent == 50.0
 
 
-def test_build_physical_drive_scan_plan_resolves_per_root_tokens_and_emits_lookup_fallback(
+def test_build_physical_drive_scan_plan_resolves_root_tokens_and_emits_lookup(
     tmp_path: Path, monkeypatch
 ) -> None:
     root_a = tmp_path / "root_a"

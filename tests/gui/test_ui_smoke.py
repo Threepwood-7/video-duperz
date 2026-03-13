@@ -328,7 +328,8 @@ def test_group_formatting_and_keep_strategy(tmp_path: Path) -> None:
 
         window.results_view.apply_keep_strategy("larger")
         app.processEvents()
-        # In group A both sizes are equal, tie breaks on quality/mtime/path; one row must remain unchecked.
+        # In group A both sizes are equal. Tie breaks on quality/mtime/path,
+        # so one row must remain unchecked.
         group_a_checks = [
             window.results_view.results_table.item(r, 1).checkState()
             for r in range(0, 2)
