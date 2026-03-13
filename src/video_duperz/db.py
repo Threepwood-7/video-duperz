@@ -99,7 +99,7 @@ def _require_lastrowid(cursor: sqlite3.Cursor) -> int:
     return int(cursor.lastrowid)
 
 
-class _DatabaseCore:
+class _DatabaseConnectionMixin:
     """Core SQLite connection, migration, and cached-artifact persistence logic."""
 
     def __init__(self, path: str | Path | None = None) -> None:
@@ -359,6 +359,19 @@ class _DatabaseCore:
                 "UPDATE scans SET scan_set_key = ? WHERE id = ?",
                 (scan_set_key, int(row["id"])),
             )
+
+
+class _DatabaseArtifactMixin:
+    """Scan-row, cached-artifact, and fingerprint persistence helpers."""
+
+    conn: sqlite3.Connection
+
+    @staticmethod
+    def _iter_chunks(values: list[str], chunk_size: int = 300) -> Iterable[list[str]]:
+        raise NotImplementedError
+
+    def _commit_if_needed(self) -> None:
+        raise NotImplementedError
 
     def create_scan(
         self, profile: str, roots: list[str], extensions: list[str] | None = None
@@ -681,8 +694,8 @@ class _DatabaseCore:
         self._commit_if_needed()
 
 
-class _DatabaseResultSetMixin:
-    """Duplicate-group, scan lookup, and action-history database helpers."""
+class _DatabaseScanQueryMixin:
+    """Scan-query and rescan-cleanup helpers backed by the database."""
 
     conn: sqlite3.Connection
 
@@ -820,6 +833,15 @@ class _DatabaseResultSetMixin:
             "deleted_groups": deleted_groups,
             "deleted_actions": deleted_actions,
         }
+
+
+class _DatabaseDuplicateGroupMixin:
+    """Duplicate-group persistence and result-loading helpers."""
+
+    conn: sqlite3.Connection
+
+    def _commit_if_needed(self) -> None:
+        raise NotImplementedError
 
     def insert_duplicate_group(
         self, scan_id: int, profile: str, total_size_bytes: int
@@ -1196,6 +1218,15 @@ class _DatabaseResultSetMixin:
             "file_count": int(file_count_row["c"] if file_count_row is not None else 0),
         }
 
+
+class _DatabaseActionHistoryMixin:
+    """Action-run persistence helpers for rename and delete workflows."""
+
+    conn: sqlite3.Connection
+
+    def _commit_if_needed(self) -> None:
+        raise NotImplementedError
+
     def insert_action_run(
         self, scan_id: int, mode: str, status: str = "running"
     ) -> int:
@@ -1242,5 +1273,11 @@ class _DatabaseResultSetMixin:
         return str(row["path"])
 
 
-class Database(_DatabaseCore, _DatabaseResultSetMixin):
+class Database(
+    _DatabaseConnectionMixin,
+    _DatabaseArtifactMixin,
+    _DatabaseScanQueryMixin,
+    _DatabaseDuplicateGroupMixin,
+    _DatabaseActionHistoryMixin,
+):
     """Repository-style wrapper around the application's SQLite database."""
