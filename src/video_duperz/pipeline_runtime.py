@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import contextlib
 import time
 from collections import deque
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import asdict
 from functools import partial
 from queue import Empty, Full
-from threading import Event, Thread
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
 from threep_commons.fs_paths import path_key
@@ -40,6 +37,16 @@ from .pipeline_runtime_context import (
 from .pipeline_runtime_context import (
     worker_cap_message as _worker_cap_message,
 )
+from .pipeline_runtime_control import (
+    best_effort_end_scan_tx,
+    cancelled_result,
+    completed_result,
+    emit_worker_cap_warning,
+    join_enumeration_thread,
+    pipeline_should_stop,
+    start_runtime_threads,
+    wait_for_pipeline_event,
+)
 from .pipeline_runtime_lanes import (
     apply_cancel_state,
     ensure_lane_state_locked,
@@ -48,14 +55,13 @@ from .pipeline_runtime_lanes import (
     refresh_lane_state_locked,
     submit_ready_lanes,
 )
-from .pipeline_runtime_progress import (
-    emit_progress,
-    notify_event,
-)
+from .pipeline_runtime_progress import emit_progress, notify_event
 from .probe import ProbeError, ensure_ffprobe_available
 from .scanner import build_physical_drive_scan_plan, enumerate_video_files
 
 if TYPE_CHECKING:
+    from threading import Event
+
     from .db import Database
 
 ReturnT = TypeVar("ReturnT")
@@ -423,32 +429,6 @@ def _process_done_futures(ctx: _ScanContext) -> int:
         )
 
 
-def _collect_metrics(ctx: _ScanContext, match_stats: MatchStats) -> dict[str, object]:
-    avg_rows_per_flush = (
-        float(ctx.flush_rows_total) / float(ctx.flush_count)
-        if ctx.flush_count > 0
-        else 0.0
-    )
-    return {
-        "stage_seconds": {
-            name: round(value, 6) for name, value in ctx.stage_seconds.items()
-        },
-        "matching": asdict(match_stats),
-        "flush_count": int(ctx.flush_count),
-        "avg_rows_per_flush": float(avg_rows_per_flush),
-        "max_queue_depth": int(ctx.max_queue_depth),
-    }
-
-
-def _best_effort_end_scan_tx(ctx: _ScanContext) -> None:
-    with contextlib.suppress(Exception):
-        _flush_pending_analysis_batches(ctx, force=True)
-    with contextlib.suppress(Exception):
-        _flush_scan_transaction(ctx, force=True)
-    with contextlib.suppress(Exception):
-        ctx.db.end_scan_transaction()
-
-
 def _ingest_discovered_queue(ctx: _ScanContext) -> bool:
     drained = _drain_enum_queue(ctx)
     if not drained:
@@ -501,44 +481,6 @@ def _process_pending_discovered(ctx: _ScanContext) -> bool:
     return processed_any
 
 
-def _pipeline_should_stop(ctx: _ScanContext) -> bool:
-    with ctx.state_lock:
-        waiting_items = any(bool(queue) for queue in ctx.lane_queues.values())
-        active_count = len(ctx.futures)
-    pending_writes = bool(
-        ctx.pending_meta_rows or ctx.pending_fp_rows or ctx.pending_probe_error_rows
-    )
-    if ctx.cancel_requested and ctx.enum_finished and active_count == 0:
-        _flush_pending_analysis_batches(ctx, force=True)
-        _flush_scan_transaction(ctx, force=True)
-        return True
-    if (
-        ctx.enum_finished
-        and active_count == 0
-        and not waiting_items
-        and not ctx.pending_discovered
-        and not pending_writes
-        and ctx.enum_queue.empty()
-    ):
-        _flush_pending_analysis_batches(ctx, force=True)
-        _flush_scan_transaction(ctx, force=True)
-        return True
-    return False
-
-
-def _wait_for_pipeline_event(ctx: _ScanContext) -> None:
-    pending_writes = bool(
-        ctx.pending_discovered
-        or ctx.pending_meta_rows
-        or ctx.pending_fp_rows
-        or ctx.pending_probe_error_rows
-    )
-    with ctx.event_cond:
-        if not ctx.done_futures and ctx.enum_queue.empty():
-            timeout = ctx.db_flush_interval_s if pending_writes else None
-            ctx.event_cond.wait(timeout=timeout)
-
-
 def _run_pipeline_loop(ctx: _ScanContext, executor: ThreadPoolExecutor) -> None:
     while True:
         if ctx.cancel_event and ctx.cancel_event.is_set():
@@ -566,124 +508,14 @@ def _run_pipeline_loop(ctx: _ScanContext, executor: ThreadPoolExecutor) -> None:
         _flush_pending_analysis_batches(ctx, force=ctx.cancel_requested)
         _flush_scan_transaction(ctx, force=ctx.cancel_requested)
 
-        if _pipeline_should_stop(ctx):
+        if pipeline_should_stop(
+            ctx,
+            lambda: _flush_pending_analysis_batches(ctx, force=True),
+            lambda: _flush_scan_transaction(ctx, force=True),
+        ):
             return
         if not made_progress:
-            _wait_for_pipeline_event(ctx)
-
-
-def _join_enumeration_thread(ctx: _ScanContext) -> None:
-    if ctx.enum_thread is None:
-        return
-    ctx.enum_thread.join(timeout=5.0)
-    if ctx.enum_thread.is_alive():
-        ctx.issues.append(
-            ScanIssue(
-                stage="enumerate",
-                path="",
-                message="Enumeration thread did not stop cleanly after timeout",
-            )
-        )
-
-
-def _cancelled_result(ctx: _ScanContext, scanned_files: int) -> ScanResult:
-    ctx.db.end_scan_transaction()
-    ctx.db.complete_scan(ctx.scan_id, status="cancelled")
-    emit_progress(ctx, "done", 1, 1, "Scan cancelled", force=True)
-    return ScanResult(
-        scan_id=ctx.scan_id,
-        groups=ctx.db.load_duplicate_groups(ctx.scan_id),
-        issues=ctx.issues,
-        scanned_files=scanned_files,
-        cached_files=ctx.cached_files,
-        fingerprinted_files=ctx.fingerprinted_files,
-        metrics=_collect_metrics(ctx, MatchStats()),
-    )
-
-
-def _completed_result(ctx: _ScanContext, scanned_files: int) -> ScanResult:
-    _timed_db_write(
-        ctx,
-        ctx.db.mark_missing_for_scan,
-        len(ctx.present_paths),
-        ctx.scan_id,
-        ctx.present_paths,
-    )
-    _flush_scan_transaction(ctx, force=True)
-    emit_progress(ctx, "matching", 0, 1, "Matching duplicates", force=True)
-    matching_started = time.perf_counter()
-    items = ctx.db.list_match_items_for_scan(
-        scan_id=ctx.scan_id,
-        algo_version=ALGO_VERSION,
-    )
-    edges, match_stats = ctx.find_duplicate_edges_fn(items, profile=ctx.profile)
-    groups = ctx.build_duplicate_groups_fn(
-        items=items,
-        edges=edges,
-        profile=ctx.profile,
-    )
-    with ctx.state_lock:
-        ctx.stage_seconds["matching"] += max(
-            0.0,
-            time.perf_counter() - matching_started,
-        )
-
-    _timed_db_write(ctx, ctx.db.clear_duplicate_groups, 0, ctx.scan_id)
-    group_row_count = len(groups) + sum(len(group.items) for group in groups)
-    _timed_db_write(
-        ctx,
-        ctx.db.insert_duplicate_groups_batch,
-        group_row_count,
-        ctx.scan_id,
-        ctx.profile,
-        groups,
-    )
-    _flush_scan_transaction(ctx, force=True)
-
-    ctx.db.end_scan_transaction()
-    ctx.db.complete_scan(ctx.scan_id, status="done")
-    emit_progress(ctx, "done", 1, 1, "Scan complete", force=True)
-    return ScanResult(
-        scan_id=ctx.scan_id,
-        groups=ctx.db.load_duplicate_groups(ctx.scan_id),
-        issues=ctx.issues,
-        scanned_files=scanned_files,
-        cached_files=ctx.cached_files,
-        fingerprinted_files=ctx.fingerprinted_files,
-        metrics=_collect_metrics(ctx, match_stats),
-    )
-
-
-def _start_runtime_threads(ctx: _ScanContext) -> None:
-    ctx.db.begin_scan_transaction()
-    ctx.enum_thread = Thread(
-        target=lambda: _run_enumeration(ctx),
-        name="video-duperz-enumeration",
-        daemon=True,
-    )
-    ctx.enum_thread.start()
-    if ctx.cancel_event is None:
-        return
-    cancel_event = ctx.cancel_event
-    ctx.cancel_thread = Thread(
-        target=lambda: (cancel_event.wait(), notify_event(ctx)),
-        daemon=True,
-    )
-    ctx.cancel_thread.start()
-
-
-def _emit_worker_cap_warning(ctx: _ScanContext) -> None:
-    worker_cap_message = _worker_cap_message(ctx.scan_plan)
-    if worker_cap_message is None:
-        return
-    emit_progress(
-        ctx,
-        "prepare",
-        0,
-        1,
-        worker_cap_message,
-        force=True,
-    )
+            wait_for_pipeline_event(ctx)
 
 
 def run_scan_runtime(
@@ -732,13 +564,13 @@ def run_scan_runtime(
         find_duplicate_edges_fn=find_duplicate_edges_fn,
         build_duplicate_groups_fn=build_duplicate_groups_fn,
     )
-    _start_runtime_threads(ctx)
-    _emit_worker_cap_warning(ctx)
+    start_runtime_threads(ctx, lambda: _run_enumeration(ctx))
+    emit_worker_cap_warning(ctx, _worker_cap_message(ctx.scan_plan))
 
     try:
         with ThreadPoolExecutor(max_workers=ctx.executor_worker_limit) as executor:
             _run_pipeline_loop(ctx, executor)
-        _join_enumeration_thread(ctx)
+        join_enumeration_thread(ctx)
         if ctx.enum_error and not ctx.cancel_requested:
             raise ctx.enum_error
         ctx.issues.extend(ctx.enum_issues)
@@ -746,8 +578,22 @@ def run_scan_runtime(
             len(ctx.enum_files) if ctx.enum_files else len(ctx.present_paths)
         )
         if ctx.cancel_requested:
-            return _cancelled_result(ctx, scanned_files)
-        return _completed_result(ctx, scanned_files)
+            return cancelled_result(ctx, scanned_files)
+        return completed_result(
+            ctx,
+            scanned_files,
+            lambda write_fn, row_count, *args: _timed_db_write(
+                ctx,
+                write_fn,
+                row_count,
+                *args,
+            ),
+            lambda: _flush_scan_transaction(ctx, force=True),
+        )
     except Exception:
-        _best_effort_end_scan_tx(ctx)
+        best_effort_end_scan_tx(
+            lambda: _flush_pending_analysis_batches(ctx, force=True),
+            lambda: _flush_scan_transaction(ctx, force=True),
+            ctx.db.end_scan_transaction,
+        )
         raise
