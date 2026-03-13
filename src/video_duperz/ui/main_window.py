@@ -34,13 +34,15 @@ from threep_commons.desktop import open_path_in_default_app
 
 from .. import __version__
 from ..config import (
-    DEFAULT_VIDEO_EXTENSION_PRESET,
     MAX_RECENT_ROOTS,
-    VIDEO_EXTENSION_PRESET_NAMES,
-    detect_video_extension_preset,
     normalize_thumbnail_size,
     save_settings,
     settings_path,
+)
+from ..config_video_presets import (
+    DEFAULT_VIDEO_EXTENSION_PRESET,
+    VIDEO_EXTENSION_PRESET_NAMES,
+    detect_video_extension_preset,
     video_extensions_csv_for_preset,
 )
 from ..db import Database
