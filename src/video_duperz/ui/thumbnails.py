@@ -27,10 +27,12 @@ FramePercentInput = int | float | str | None
 
 
 def opencv_available() -> bool:
+    """Return whether OpenCV-backed thumbnail extraction is available."""
     return cv2 is not None
 
 
 def normalize_thumbnail_size_key(size_key: str | None) -> str:
+    """Normalize a thumbnail size key to one of the supported presets."""
     if not size_key:
         return DEFAULT_THUMBNAIL_SIZE
     cleaned = str(size_key).strip().lower()
@@ -40,18 +42,21 @@ def normalize_thumbnail_size_key(size_key: str | None) -> str:
 
 
 def thumbnail_dimensions(size_key: str) -> tuple[int, int]:
+    """Resolve a thumbnail size key into pixel dimensions."""
     return THUMBNAIL_SIZES.get(
         normalize_thumbnail_size_key(size_key), THUMBNAIL_SIZES[DEFAULT_THUMBNAIL_SIZE]
     )
 
 
 def thumbnail_cache_dir() -> Path:
+    """Return the thumbnail cache directory, creating it when needed."""
     path = app_data_dir() / "thumbnails"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
 def normalize_frame_percent(value: FramePercentInput, fallback: int) -> int:
+    """Normalize a frame-position percentage into the inclusive 0-100 range."""
     try:
         parsed = int(float(value if value is not None else fallback))
     except (TypeError, ValueError):
@@ -62,6 +67,7 @@ def normalize_frame_percent(value: FramePercentInput, fallback: int) -> int:
 def normalize_frame_pair(
     frame_a_pct: FramePercentInput, frame_b_pct: FramePercentInput
 ) -> tuple[int, int]:
+    """Normalize two frame percentages into a stable distinct pair."""
     a = normalize_frame_percent(frame_a_pct, 23)
     b = normalize_frame_percent(frame_b_pct, 77)
     if a == b:
@@ -77,6 +83,7 @@ def build_thumbnail_cache_key(
     frame_pct: int,
     slot: str,
 ) -> str:
+    """Build a deterministic cache key for one thumbnail frame variant."""
     normalized_size = normalize_thumbnail_size_key(size_key)
     normalized_pct = normalize_frame_percent(frame_pct, 23)
     normalized_slot = str(slot).strip().lower() or "a"
@@ -90,6 +97,7 @@ def build_thumbnail_cache_key(
 def thumbnail_cache_path(
     path: str, size: int, mtime_ns: int, size_key: str, frame_pct: int, slot: str
 ) -> Path:
+    """Return the cache path for a single extracted thumbnail frame."""
     cache_key = build_thumbnail_cache_key(
         path=path,
         size=size,
@@ -109,6 +117,7 @@ def thumbnail_pair_cache_paths(
     frame_a_pct: int,
     frame_b_pct: int,
 ) -> tuple[Path, Path]:
+    """Return cache paths for the paired preview frames of one video."""
     a, b = normalize_frame_pair(frame_a_pct, frame_b_pct)
     cache_a = thumbnail_cache_path(
         path, size=size, mtime_ns=mtime_ns, size_key=size_key, frame_pct=a, slot="a"
@@ -175,6 +184,7 @@ def extract_thumbnail_at(
     target_h: int,
     frame_pct: int,
 ) -> tuple[bool, str | None]:
+    """Extract and save a letterboxed preview thumbnail at the requested frame."""
     if target_w <= 0 or target_h <= 0:
         return False, "invalid target size"
     if cv2 is None:
@@ -202,6 +212,7 @@ def extract_thumbnail_pair(
     frame_a_pct: int,
     frame_b_pct: int,
 ) -> tuple[bool, str | None]:
+    """Extract and save the paired preview thumbnails for one video file."""
     a, b = normalize_frame_pair(frame_a_pct, frame_b_pct)
     ok_a, err_a = extract_thumbnail_at(
         path, output_path_a, target_w=target_w, target_h=target_h, frame_pct=a

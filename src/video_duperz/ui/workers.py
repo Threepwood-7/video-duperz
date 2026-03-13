@@ -1,3 +1,5 @@
+"""Background worker helpers used by the UI for scans and preview tasks."""
+
 from __future__ import annotations
 
 import traceback
@@ -17,12 +19,16 @@ from .thumbnails import extract_thumbnail_pair, normalize_frame_pair
 
 
 class ScanWorkerSignals(QObject):
+    """Signals emitted by the background scan worker."""
+
     progress = Signal(object)
     finished = Signal(object)
     error = Signal(str)
 
 
 class ScanWorker(QRunnable):
+    """Background QRunnable that executes the scan pipeline off the UI thread."""
+
     def __init__(
         self,
         db_file: str,
@@ -82,11 +88,15 @@ class ScanWorker(QRunnable):
 
 
 class ThumbnailWorkerSignals(QObject):
+    """Signals emitted while a thumbnail pair worker completes or fails."""
+
     ready = Signal(object)
     error = Signal(object)
 
 
 class ThumbnailPairWorker(QRunnable):
+    """Background QRunnable that materializes cached thumbnail pairs."""
+
     def __init__(
         self,
         row_token: str,
@@ -150,11 +160,15 @@ class ThumbnailPairWorker(QRunnable):
 
 
 class ExactMatchWorkerSignals(QObject):
+    """Signals emitted while exact-match labels are computed for a group."""
+
     ready = Signal(object)
     error = Signal(object)
 
 
 class ExactMatchGroupWorker(QRunnable):
+    """Background QRunnable that compares one visible group for exact matches."""
+
     def __init__(
         self,
         row_token: str,
