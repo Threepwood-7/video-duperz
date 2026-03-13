@@ -41,158 +41,24 @@ from .pipeline_runtime_context import (
 from .pipeline_runtime_context import (
     worker_cap_message as _worker_cap_message,
 )
+from .pipeline_runtime_progress import (
+    effective_worker_limit_locked,
+    emit_progress,
+    lane_runtime_cap_locked,
+    notify_event,
+)
 from .probe import ProbeError, ensure_ffprobe_available
 from .scanner import build_physical_drive_scan_plan, enumerate_video_files
 
 if TYPE_CHECKING:
     from .db import Database
 
-_MIB = 1024.0 * 1024.0
 ReturnT = TypeVar("ReturnT")
 P = ParamSpec("P")
 _ScanPlanFn = Callable[..., Any]
 _EnumerateFn = Callable[..., tuple[list[VideoRecord], list[ScanIssue]]]
 _FindEdgesFn = Callable[..., tuple[Any, MatchStats]]
 _BuildGroupsFn = Callable[..., list[Any]]
-
-
-def _should_emit_progress(
-    *,
-    stage: str,
-    counter: int,
-    force: bool,
-    last_emit_stage: str,
-    last_emit_counter: int,
-    last_emit_at: float,
-    progress_emit_every_files: int,
-    progress_emit_interval_s: float,
-) -> bool:
-    if force or stage != last_emit_stage:
-        return True
-    if counter - last_emit_counter >= progress_emit_every_files:
-        return True
-    return (time.perf_counter() - last_emit_at) >= progress_emit_interval_s
-
-
-def _notify_event(ctx: _ScanContext) -> None:
-    with ctx.event_cond:
-        ctx.event_cond.notify_all()
-
-
-def _effective_worker_limit_locked(ctx: _ScanContext) -> int:
-    return max(0, int(ctx.effective_worker_limit))
-
-
-def _lane_runtime_cap_locked(ctx: _ScanContext, lane: int) -> int:
-    return max(1, int(ctx.lane_runtime_caps.get(lane, 1)))
-
-
-def _rate(value: int, elapsed_s: float) -> float:
-    if elapsed_s <= 0.0:
-        return 0.0
-    return float(value) / elapsed_s
-
-
-def _mib_per_s(byte_count: int, elapsed_s: float) -> float:
-    if elapsed_s <= 0.0:
-        return 0.0
-    return float(byte_count) / _MIB / elapsed_s
-
-
-def _clone_lane_snapshots_locked(
-    ctx: _ScanContext,
-    elapsed_s: float,
-) -> list[ScanLaneSnapshot]:
-    snapshots: list[ScanLaneSnapshot] = []
-    for lane_id in sorted(ctx.lane_states):
-        lane = ctx.lane_states[lane_id]
-        snapshots.append(
-            ScanLaneSnapshot(
-                lane=lane.lane,
-                roots=list(lane.roots),
-                state=lane.state,
-                discovered=lane.discovered,
-                discovered_bytes=lane.discovered_bytes,
-                queued=lane.queued,
-                analyzed=lane.analyzed,
-                analyzed_bytes=lane.analyzed_bytes,
-                completed=lane.completed,
-                discovered_files_per_s=_rate(lane.discovered, elapsed_s),
-                discovered_mib_per_s=_mib_per_s(lane.discovered_bytes, elapsed_s),
-                analyzed_files_per_s=_rate(lane.analyzed, elapsed_s),
-                analyzed_mib_per_s=_mib_per_s(lane.analyzed_bytes, elapsed_s),
-                active_file=lane.active_file,
-                workers=lane.workers,
-            )
-        )
-    return snapshots
-
-
-def _emit_progress(
-    ctx: _ScanContext,
-    stage: str,
-    current: int,
-    total: int,
-    message: str,
-    *,
-    force: bool = False,
-    file_counter: int | None = None,
-) -> None:
-    elapsed_s = max(0.0, time.perf_counter() - ctx.scan_started_at)
-    with ctx.state_lock:
-        snapshots = _clone_lane_snapshots_locked(ctx, elapsed_s)
-        counter = int(
-            file_counter
-            if file_counter is not None
-            else max(ctx.prepared_files, ctx.analyzed_files)
-        )
-        if not _should_emit_progress(
-            stage=stage,
-            counter=counter,
-            force=force,
-            last_emit_stage=ctx.last_emit_stage,
-            last_emit_counter=ctx.last_emit_counter,
-            last_emit_at=ctx.last_emit_at,
-            progress_emit_every_files=ctx.progress_emit_every_files,
-            progress_emit_interval_s=ctx.progress_emit_interval_s,
-        ):
-            return
-        ctx.last_emit_at = time.perf_counter()
-        ctx.last_emit_stage = stage
-        ctx.last_emit_counter = counter
-        cache_ratio = (
-            float(ctx.cached_files) / float(ctx.prepared_files)
-            if ctx.prepared_files > 0
-            else 0.0
-        )
-        if ctx.progress_cb is None:
-            return
-        ctx.progress_cb(
-            ScanProgress(
-                stage=stage,
-                current=current,
-                total=total,
-                message=message,
-                active_workers=ctx.active_workers,
-                worker_limit=_effective_worker_limit_locked(ctx),
-                enumerated_roots=ctx.enumerated_roots,
-                total_roots=ctx.total_roots,
-                prepared_files=ctx.prepared_files,
-                discovered_files=ctx.discovered_files,
-                discovered_bytes=ctx.discovered_bytes,
-                analyzed_files=ctx.analyzed_files,
-                analyzed_bytes=ctx.analyzed_bytes,
-                cached_files=ctx.cached_files,
-                discovered_files_per_s=_rate(ctx.discovered_files, elapsed_s),
-                discovered_mib_per_s=_mib_per_s(ctx.discovered_bytes, elapsed_s),
-                analyzed_files_per_s=_rate(ctx.analyzed_files, elapsed_s),
-                analyzed_mib_per_s=_mib_per_s(ctx.analyzed_bytes, elapsed_s),
-                cache_hit_ratio=cache_ratio,
-                elapsed_s=elapsed_s,
-                total_analyze_files=ctx.total_analyze_files,
-                lane_snapshots=snapshots,
-            )
-        )
 
 
 def _ensure_lane_state_locked(
@@ -230,7 +96,7 @@ def _queue_lane_if_ready_locked(ctx: _ScanContext, lane: int) -> None:
     queue_size = len(ctx.lane_queues.get(lane, ()))
     if queue_size <= 0:
         return
-    if int(ctx.active_by_lane.get(lane, 0)) >= _lane_runtime_cap_locked(ctx, lane):
+    if int(ctx.active_by_lane.get(lane, 0)) >= lane_runtime_cap_locked(ctx, lane):
         return
     if lane in ctx.ready_set:
         return
@@ -330,7 +196,7 @@ def _queue_enum_item(ctx: _ScanContext, item: object) -> None:
                 continue
     with ctx.state_lock:
         ctx.max_queue_depth = max(ctx.max_queue_depth, int(ctx.enum_queue.qsize()))
-    _notify_event(ctx)
+    notify_event(ctx)
 
 
 def _on_file_discovered(ctx: _ScanContext, file: object) -> None:
@@ -362,7 +228,7 @@ def _on_enumerate_progress(
                 if lane_state.state == "pending":
                     lane_state.state = "idle"
         discovered_now = ctx.discovered_files
-    _emit_progress(
+    emit_progress(
         ctx,
         "enumerate",
         current,
@@ -475,7 +341,7 @@ def _process_discovered_batch(ctx: _ScanContext, batch: list[VideoRecord]) -> No
             }
         )
         valid.append((file, lane, source_root, file_size, path))
-        _emit_progress(
+        emit_progress(
             ctx,
             "prepare",
             prepared_now,
@@ -545,7 +411,7 @@ def _submit_next_for_lane(
         if not lane_queue:
             return False
         lane_active_count = int(ctx.active_by_lane.get(lane, 0))
-        if lane_active_count >= _lane_runtime_cap_locked(ctx, lane):
+        if lane_active_count >= lane_runtime_cap_locked(ctx, lane):
             return False
         task = lane_queue.popleft()
         lane_state = _ensure_lane_state_locked(ctx, lane, task.source_root)
@@ -567,7 +433,7 @@ def _submit_ready_lanes(ctx: _ScanContext, executor: ThreadPoolExecutor) -> int:
     while True:
         with ctx.state_lock:
             if (
-                len(ctx.futures) >= _effective_worker_limit_locked(ctx)
+                len(ctx.futures) >= effective_worker_limit_locked(ctx)
                 or not ctx.ready_lanes
             ):
                 return submitted
@@ -644,7 +510,7 @@ def _process_done_futures(ctx: _ScanContext) -> int:
         else:
             _record_future_success(ctx, task, output)
         probe_done, probe_total = _finalize_task(ctx, task)
-        _emit_progress(
+        emit_progress(
             ctx,
             "probe",
             probe_done,
@@ -821,7 +687,7 @@ def _join_enumeration_thread(ctx: _ScanContext) -> None:
 def _cancelled_result(ctx: _ScanContext, scanned_files: int) -> ScanResult:
     ctx.db.end_scan_transaction()
     ctx.db.complete_scan(ctx.scan_id, status="cancelled")
-    _emit_progress(ctx, "done", 1, 1, "Scan cancelled", force=True)
+    emit_progress(ctx, "done", 1, 1, "Scan cancelled", force=True)
     return ScanResult(
         scan_id=ctx.scan_id,
         groups=ctx.db.load_duplicate_groups(ctx.scan_id),
@@ -842,7 +708,7 @@ def _completed_result(ctx: _ScanContext, scanned_files: int) -> ScanResult:
         ctx.present_paths,
     )
     _flush_scan_transaction(ctx, force=True)
-    _emit_progress(ctx, "matching", 0, 1, "Matching duplicates", force=True)
+    emit_progress(ctx, "matching", 0, 1, "Matching duplicates", force=True)
     matching_started = time.perf_counter()
     items = ctx.db.list_match_items_for_scan(
         scan_id=ctx.scan_id,
@@ -874,7 +740,7 @@ def _completed_result(ctx: _ScanContext, scanned_files: int) -> ScanResult:
 
     ctx.db.end_scan_transaction()
     ctx.db.complete_scan(ctx.scan_id, status="done")
-    _emit_progress(ctx, "done", 1, 1, "Scan complete", force=True)
+    emit_progress(ctx, "done", 1, 1, "Scan complete", force=True)
     return ScanResult(
         scan_id=ctx.scan_id,
         groups=ctx.db.load_duplicate_groups(ctx.scan_id),
@@ -898,7 +764,7 @@ def _start_runtime_threads(ctx: _ScanContext) -> None:
         return
     cancel_event = ctx.cancel_event
     ctx.cancel_thread = Thread(
-        target=lambda: (cancel_event.wait(), _notify_event(ctx)),
+        target=lambda: (cancel_event.wait(), notify_event(ctx)),
         daemon=True,
     )
     ctx.cancel_thread.start()
@@ -908,7 +774,7 @@ def _emit_worker_cap_warning(ctx: _ScanContext) -> None:
     worker_cap_message = _worker_cap_message(ctx.scan_plan)
     if worker_cap_message is None:
         return
-    _emit_progress(
+    emit_progress(
         ctx,
         "prepare",
         0,

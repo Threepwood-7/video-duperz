@@ -32,6 +32,8 @@ _BuildGroupsFn = Callable[..., list[Any]]
 
 
 class AnalyzeOutputLike(Protocol):
+    """Protocol describing the probe and fingerprint payload of one analysis."""
+
     meta: VideoMeta
     hashes: list[int]
     probe_s: float
@@ -40,6 +42,8 @@ class AnalyzeOutputLike(Protocol):
 
 @dataclass(slots=True)
 class AnalyzeTask:
+    """Queued analysis work item for a single discovered file."""
+
     file: VideoRecord
     file_id: int
     cached_meta: VideoMeta | None
@@ -51,6 +55,8 @@ class AnalyzeTask:
 
 @dataclass(slots=True)
 class ScanContext:
+    """Mutable shared state used by the streaming runtime threads."""
+
     db: Database
     roots: list[str]
     extensions: list[str]
