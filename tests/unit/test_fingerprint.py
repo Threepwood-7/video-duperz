@@ -52,8 +52,8 @@ def test_risky_formats_bypass_opencv() -> None:
     )
 
     provenance = json.loads(result.provenance_json)
-    assert seen_backends == ["pyav"]
-    assert result.decoder_backend == "pyav"
+    assert seen_backends == ["ffmpeg"]
+    assert result.decoder_backend == "ffmpeg"
     assert provenance["risky_format_bypass"] is True
 
 
@@ -90,7 +90,7 @@ def test_non_risky_formats_try_opencv_first_then_fallback() -> None:
     assert provenance["attempts"][1]["status"] == "success"
 
 
-def test_pyav_failure_falls_back_to_ffmpeg() -> None:
+def test_ffmpeg_failure_falls_back_to_pyav() -> None:
     seen_backends: list[str] = []
 
     def _runner(
@@ -101,8 +101,8 @@ def test_pyav_failure_falls_back_to_ffmpeg() -> None:
     ) -> _DecoderAttemptResult:
         _ = path, duration_s, timeout_s
         seen_backends.append(decoder_backend)
-        if decoder_backend == "pyav":
-            return _DecoderAttemptResult(status="error", message="pyav failed")
+        if decoder_backend == "ffmpeg":
+            return _DecoderAttemptResult(status="error", message="ffmpeg failed")
         return _DecoderAttemptResult(status="success", hashes=[7, 8, 9])
 
     result = build_fingerprint_record_with_fallback(
@@ -112,9 +112,9 @@ def test_pyav_failure_falls_back_to_ffmpeg() -> None:
         attempt_runner=_runner,
     )
 
-    assert seen_backends == ["pyav", "ffmpeg"]
-    assert result.decoder_backend == "ffmpeg"
-    assert result.fallback_decoder == "ffmpeg"
+    assert seen_backends == ["ffmpeg", "pyav"]
+    assert result.decoder_backend == "pyav"
+    assert result.fallback_decoder == "pyav"
 
 
 def test_full_decoder_chain_failure_raises_fingerprint_error() -> None:

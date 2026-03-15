@@ -479,7 +479,7 @@ def _is_risky_fingerprint_format(path: str) -> bool:
 def _decoder_sequence_for_path(path: str) -> list[FrameDecodeBackendId]:
     """Return the ordered decoder chain for one file path."""
     if _is_risky_fingerprint_format(path):
-        return ["pyav", "ffmpeg"]
+        return ["ffmpeg", "pyav"]
     return ["opencv", "pyav", "ffmpeg"]
 
 
