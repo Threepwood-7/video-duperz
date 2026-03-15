@@ -211,7 +211,9 @@ def _duration_seconds_from_container(
     time_base = getattr(av_module, "time_base", None)
     scale = _ratio_to_float(time_base)
     if scale > 0.0:
-        return max(0.0, float(duration) * scale)
+        if scale <= 1.0:
+            return max(0.0, float(duration) * scale)
+        return max(0.0, float(duration) / scale)
     return max(0.0, float(duration) / 1_000_000.0)
 
 
@@ -340,9 +342,7 @@ class _FfprobeBackend:
                 )
         except subprocess.CalledProcessError as exc:
             stderr = exc.stderr if isinstance(exc.stderr, str) else ""
-            raise ProbeError(
-                stderr.strip() or f"ffprobe failed for {path}"
-            ) from exc
+            raise ProbeError(stderr.strip() or f"ffprobe failed for {path}") from exc
         stdout = proc.stdout
         try:
             raw_payload: object = json.loads(stdout)

@@ -201,6 +201,63 @@ def test_probe_video_pyav_maps_metadata(monkeypatch: pytest.MonkeyPatch) -> None
     )
 
 
+def test_probe_video_pyav_handles_integer_time_base_duration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeCodecContext:
+        def __init__(self, *, name: str, width: int, height: int) -> None:
+            self.name = name
+            self.width = width
+            self.height = height
+            self.bit_rate = 0
+            self.color_trc = ""
+            self.color_primaries = ""
+            self.codec = SimpleNamespace(name=name)
+
+    class _FakeStream:
+        def __init__(self) -> None:
+            self.type = "video"
+            self.codec_context = _FakeCodecContext(
+                name="h264",
+                width=1280,
+                height=720,
+            )
+            self.average_rate = Fraction(24, 1)
+            self.duration = 1680
+            self.time_base = Fraction(1, 24)
+            self.metadata: dict[str, str] = {}
+            self.bit_rate = 0
+            self.width = 1280
+            self.height = 720
+
+    class _FakeContainer:
+        def __init__(self) -> None:
+            self.duration = 310_822_993
+            self.bit_rate = 2_000_000
+            self.streams = [_FakeStream()]
+
+        def __enter__(self) -> _FakeContainer:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "video_duperz.probe._import_av",
+        lambda: SimpleNamespace(
+            time_base=1_000_000,
+            open=lambda _path: _FakeContainer(),
+        ),
+    )
+
+    meta = probe_video(r"C:\videos\sample.mp4", backend="pyav")
+
+    assert meta.duration_s == pytest.approx(310.822993)
+    assert meta.width == 1280
+    assert meta.height == 720
+    assert meta.codec == "h264"
+
+
 def test_ensure_probe_backend_available_raises_for_missing_pyav(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
