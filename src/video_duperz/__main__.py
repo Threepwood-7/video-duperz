@@ -17,11 +17,17 @@ from .config import load_settings
 from .constants import APP_IDENTITY
 from .db import Database
 from .exporters import export_scan
+from .fingerprint import (
+    FingerprintError,
+    ensure_fingerprint_fallback_chain_available,
+    run_fingerprint_child_from_stdio,
+)
 from .pipeline import run_scan
 from .probe import ProbeError, ensure_probe_backend_available
 
 
 def _metrics_map(value: object) -> dict[str, object]:
+    """Normalize one loosely typed metrics payload into a string-keyed map."""
     if isinstance(value, dict):
         normalized: dict[str, object] = {}
         raw_map = cast("dict[object, object]", value)
@@ -33,6 +39,7 @@ def _metrics_map(value: object) -> dict[str, object]:
 
 
 def _metric_float(metrics: dict[str, object], key: str, default: float = 0.0) -> float:
+    """Read one floating-point metric from a metrics payload."""
     value = metrics.get(key, default)
     if isinstance(value, bool):
         return float(value)
@@ -47,6 +54,7 @@ def _metric_float(metrics: dict[str, object], key: str, default: float = 0.0) ->
 
 
 def _metric_int(metrics: dict[str, object], key: str, default: int = 0) -> int:
+    """Read one integer metric from a metrics payload."""
     value = metrics.get(key, default)
     if isinstance(value, bool):
         return int(value)
@@ -119,10 +127,17 @@ def _build_parser() -> argparse.ArgumentParser:
         "--relaunch", action="store_true", help="Relaunch GUI after cleanup"
     )
     clean.set_defaults(func=_cmd_clean)
+
+    fingerprint_child = sub.add_parser(
+        "fingerprint-child",
+        help=argparse.SUPPRESS,
+    )
+    fingerprint_child.set_defaults(func=_cmd_fingerprint_child)
     return parser
 
 
 def _apply_runtime_overrides(args: argparse.Namespace) -> None:
+    """Apply CLI runtime directory overrides before app startup."""
     if args.config_dir:
         os.environ["CONFIG_DIR"] = str(Path(args.config_dir).expanduser())
     if args.data_dir:
@@ -138,9 +153,10 @@ def _cmd_gui(_args: argparse.Namespace) -> int:
     settings = load_settings()
     try:
         ensure_probe_backend_available(settings.probe_backend)
-    except ProbeError as exc:
+        ensure_fingerprint_fallback_chain_available()
+    except (ProbeError, FingerprintError) as exc:
         app = QApplication(sys.argv)
-        QMessageBox.critical(None, "Probe Backend Unavailable", str(exc))
+        QMessageBox.critical(None, "Scan Backend Unavailable", str(exc))
         return 2
 
     app = QApplication(sys.argv)
@@ -175,10 +191,12 @@ def _cmd_gui(_args: argparse.Namespace) -> int:
 
 
 def _cmd_scan(args: argparse.Namespace) -> int:
+    """Run one headless scan using the persisted application settings."""
     settings = load_settings()
     try:
         ensure_probe_backend_available(settings.probe_backend)
-    except ProbeError as exc:
+        ensure_fingerprint_fallback_chain_available()
+    except (ProbeError, FingerprintError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
@@ -225,6 +243,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
 
 
 def _cmd_export(args: argparse.Namespace) -> int:
+    """Export one persisted scan to CSV and JSON files."""
     out = Path(args.out)
     with Database() as db:
         scan_id = args.scan_id if args.scan_id is not None else db.latest_scan_id()
@@ -239,10 +258,16 @@ def _cmd_export(args: argparse.Namespace) -> int:
 
 
 def _cmd_clean(args: argparse.Namespace) -> int:
+    """Execute the guarded full-reset cleaner command."""
     if not bool(args.full_reset):
         print("ERROR: --full-reset is required for clean", file=sys.stderr)
         return 2
     return int(run_full_reset(delay_ms=args.delay_ms, relaunch=bool(args.relaunch)))
+
+
+def _cmd_fingerprint_child(_args: argparse.Namespace) -> int:
+    """Execute one hidden fingerprint decoder child request."""
+    return int(run_fingerprint_child_from_stdio())
 
 
 def main(argv: list[str] | None = None) -> int:

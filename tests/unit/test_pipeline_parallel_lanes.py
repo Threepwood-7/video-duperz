@@ -127,6 +127,15 @@ class _FakeDb:
         _ = rows, probe_backend
         return None
 
+    def save_fingerprint_provenance_batch(
+        self,
+        rows: list[tuple[int, str, str]],
+        *,
+        probe_backend: str = "pyav",
+    ) -> None:
+        _ = rows, probe_backend
+        return None
+
     def save_fingerprint(
         self,
         file_id: int,
@@ -232,13 +241,20 @@ def test_run_scan_pyav_backend_routes_probe_calls(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         pipeline,
-        "build_fingerprint_record",
-        lambda **kwargs: SimpleNamespace(hashes=[1, 2, 3]),
+        "build_fingerprint_record_with_fallback",
+        lambda **kwargs: SimpleNamespace(
+            record=SimpleNamespace(hashes=[1, 2, 3]),
+            decoder_backend="opencv",
+            provenance_json="{}",
+        ),
     )
     monkeypatch.setattr(
         pipeline,
         "ensure_probe_backend_available",
         lambda backend="ffprobe": calls.append(("ensure", backend)),
+    )
+    monkeypatch.setattr(
+        pipeline, "ensure_fingerprint_fallback_chain_available", lambda: None
     )
     monkeypatch.setattr(
         pipeline,
@@ -294,6 +310,9 @@ def test_run_scan_probe_parallel_lanes_and_telemetry(monkeypatch) -> None:
     lane_by_path = {file.path: file.parallel_lane for file in files}
 
     monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
+    monkeypatch.setattr(
+        pipeline, "ensure_fingerprint_fallback_chain_available", lambda: None
+    )
     monkeypatch.setattr(
         pipeline, "enumerate_video_files", lambda **kwargs: (list(files), [])
     )
@@ -411,6 +430,9 @@ def test_run_scan_burst_mode_allows_multiple_workers_per_lane_up_to_caps(
 
     monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
     monkeypatch.setattr(
+        pipeline, "ensure_fingerprint_fallback_chain_available", lambda: None
+    )
+    monkeypatch.setattr(
         pipeline, "enumerate_video_files", lambda **kwargs: (list(files), [])
     )
     monkeypatch.setattr(
@@ -487,6 +509,9 @@ def test_run_scan_reports_worker_capacity_reduction_when_hard_caps_apply(
 
     monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
     monkeypatch.setattr(
+        pipeline, "ensure_fingerprint_fallback_chain_available", lambda: None
+    )
+    monkeypatch.setattr(
         pipeline, "enumerate_video_files", lambda **kwargs: (list(files), [])
     )
     monkeypatch.setattr(
@@ -554,6 +579,9 @@ def test_run_scan_streams_enumeration_into_analysis(monkeypatch) -> None:
 
     monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
     monkeypatch.setattr(
+        pipeline, "ensure_fingerprint_fallback_chain_available", lambda: None
+    )
+    monkeypatch.setattr(
         pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
     )
     monkeypatch.setattr(
@@ -609,6 +637,9 @@ def test_run_scan_cancellation_during_streaming_overlap(monkeypatch) -> None:
     cancel_event = Event()
 
     monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
+    monkeypatch.setattr(
+        pipeline, "ensure_fingerprint_fallback_chain_available", lambda: None
+    )
     monkeypatch.setattr(
         pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
     )

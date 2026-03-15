@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from threep_commons.fs_paths import path_key
 
 from .models import (
+    FrameDecodeBackendId,
     ProbeBackendId,
     ProbeWorkerMode,
     ScanIssue,
@@ -39,6 +40,8 @@ class AnalyzeOutputLike(Protocol):
     hashes: list[int]
     probe_s: float
     fingerprint_s: float
+    fingerprint_decoder_backend: FrameDecodeBackendId
+    fingerprint_provenance_json: str
 
 
 @dataclass(slots=True)
@@ -97,6 +100,7 @@ class ScanContext:
     pending_discovered: list[VideoRecord]
     pending_meta_rows: list[tuple[int, VideoMeta]]
     pending_fp_rows: list[tuple[int, int, list[int]]]
+    pending_fp_provenance_rows: list[tuple[int, FrameDecodeBackendId, str]]
     pending_probe_error_rows: list[tuple[int, str]]
     scan_started_at: float
     stage_seconds: dict[str, float]
@@ -347,6 +351,7 @@ def create_context(
         pending_discovered=[],
         pending_meta_rows=[],
         pending_fp_rows=[],
+        pending_fp_provenance_rows=[],
         pending_probe_error_rows=[],
         scan_started_at=started_at,
         stage_seconds=_initial_stage_seconds(),

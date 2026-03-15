@@ -11,7 +11,7 @@ from .db_shared import (
     encode_hashes,
     require_lastrowid,
 )
-from .models import ProbeBackendId, VideoMeta, utc_now_iso
+from .models import FrameDecodeBackendId, ProbeBackendId, VideoMeta, utc_now_iso
 from .scan_sets import (
     build_scan_set_key,
     normalize_extensions,
@@ -437,6 +437,41 @@ class DatabaseArtifactMixin:
               algo_version = excluded.algo_version,
               frame_count = excluded.frame_count,
               hash_blob = excluded.hash_blob,
+              created_at = excluded.created_at
+            """,
+            payload,
+        )
+        self._commit_if_needed()
+
+    def save_fingerprint_provenance_batch(
+        self,
+        rows: list[tuple[int, FrameDecodeBackendId, str]],
+        *,
+        probe_backend: ProbeBackendId = "pyav",
+    ) -> None:
+        """Persist quiet decoder provenance for multiple fingerprint rows."""
+        if not rows:
+            return
+        created_at = utc_now_iso()
+        payload = [
+            (
+                int(file_id),
+                str(probe_backend),
+                str(decoder_backend),
+                str(attempts_json),
+                created_at,
+            )
+            for file_id, decoder_backend, attempts_json in rows
+        ]
+        self.conn.executemany(
+            """
+            INSERT INTO fingerprint_decoder_provenance(
+              file_id, probe_backend, decoder_backend, attempts_json, created_at
+            )
+            VALUES(?, ?, ?, ?, ?)
+            ON CONFLICT(file_id, probe_backend) DO UPDATE SET
+              decoder_backend = excluded.decoder_backend,
+              attempts_json = excluded.attempts_json,
               created_at = excluded.created_at
             """,
             payload,

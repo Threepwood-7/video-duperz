@@ -8,9 +8,18 @@ from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING
 
-from .fingerprint import build_fingerprint_record
+from .fingerprint import (
+    build_fingerprint_record_with_fallback,
+    ensure_fingerprint_fallback_chain_available,
+)
 from .matcher import build_duplicate_groups, find_duplicate_edges
-from .models import ProbeBackendId, ScanProgress, ScanResult, VideoMeta
+from .models import (
+    FrameDecodeBackendId,
+    ProbeBackendId,
+    ScanProgress,
+    ScanResult,
+    VideoMeta,
+)
 from .pipeline_runtime import run_scan_runtime
 from .probe import ensure_ffprobe_available, ensure_probe_backend_available, probe_video
 from .scanner import build_physical_drive_scan_plan, enumerate_video_files
@@ -25,13 +34,18 @@ ProgressCallback = Callable[[ScanProgress], None]
 
 @dataclass(slots=True)
 class _AnalyzeOutput:
+    """Collected probe and fingerprint payload produced for one file."""
+
     meta: VideoMeta
     hashes: list[int]
     probe_s: float = 0.0
     fingerprint_s: float = 0.0
+    fingerprint_decoder_backend: FrameDecodeBackendId = "opencv"
+    fingerprint_provenance_json: str = ""
 
 
 def _analyze_file(path: str, cached_meta: VideoMeta | None) -> _AnalyzeOutput:
+    """Analyze one file through the legacy ffprobe-primary path."""
     return _analyze_file_with_probe(
         path,
         cached_meta,
@@ -45,6 +59,7 @@ def _analyze_file_with_probe(
     *,
     probe_video_fn: Callable[[str], VideoMeta],
 ) -> _AnalyzeOutput:
+    """Probe and fingerprint one file through the configured backend."""
     if cached_meta is None:
         probe_started = time.perf_counter()
         meta = probe_video_fn(path)
@@ -53,7 +68,7 @@ def _analyze_file_with_probe(
         meta = cached_meta
         probe_s = 0.0
     fp_started = time.perf_counter()
-    fp_record = build_fingerprint_record(
+    fp_result = build_fingerprint_record_with_fallback(
         file_id=0,
         duration_s=meta.duration_s,
         path=path,
@@ -61,9 +76,11 @@ def _analyze_file_with_probe(
     fingerprint_s = max(0.0, time.perf_counter() - fp_started)
     return _AnalyzeOutput(
         meta=meta,
-        hashes=fp_record.hashes,
+        hashes=fp_result.record.hashes,
         probe_s=probe_s,
         fingerprint_s=fingerprint_s,
+        fingerprint_decoder_backend=fp_result.decoder_backend,
+        fingerprint_provenance_json=fp_result.provenance_json,
     )
 
 
@@ -97,6 +114,7 @@ def run_scan(
         ensure_available_fn = partial(
             ensure_probe_backend_available, backend=probe_backend
         )
+    ensure_fingerprint_fallback_chain_available()
     # Preserve module-level monkeypatch seams while the runtime engine lives
     # in its own module.
     return run_scan_runtime(

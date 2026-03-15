@@ -102,6 +102,9 @@ def test_cmd_gui_spawns_cleaner_when_full_reset_requested(monkeypatch) -> None:
     monkeypatch.setattr(
         app_main, "ensure_probe_backend_available", lambda *_a, **_k: None
     )
+    monkeypatch.setattr(
+        app_main, "ensure_fingerprint_fallback_chain_available", lambda: None
+    )
 
     class _FakeDb:
         def close(self) -> None:
@@ -166,3 +169,41 @@ def test_cmd_gui_spawns_cleaner_when_full_reset_requested(monkeypatch) -> None:
         "--full-reset",
     ]
     assert "--relaunch" in called[0]
+
+
+def test_cmd_gui_reports_fingerprint_backend_failures(monkeypatch) -> None:
+    monkeypatch.setattr(
+        app_main, "load_settings", lambda: types.SimpleNamespace(probe_backend="pyav")
+    )
+    monkeypatch.setattr(
+        app_main, "ensure_probe_backend_available", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        app_main,
+        "ensure_fingerprint_fallback_chain_available",
+        lambda: (_ for _ in ()).throw(app_main.FingerprintError("ffmpeg missing")),
+    )
+
+    class _FakeApp:
+        def __init__(self, _argv):
+            pass
+
+    critical_calls: list[tuple[str, str]] = []
+
+    class _FakeMsgBox:
+        @staticmethod
+        def critical(_parent, title: str, message: str) -> None:
+            critical_calls.append((title, message))
+
+    qtwidgets = types.SimpleNamespace(QApplication=_FakeApp, QMessageBox=_FakeMsgBox)
+    monkeypatch.setitem(sys.modules, "PySide6.QtWidgets", qtwidgets)
+    fake_main_window_module = types.ModuleType("video_duperz.ui.main_window")
+    fake_main_window_module.MainWindow = object  # type: ignore[attr-defined]
+    monkeypatch.setitem(
+        sys.modules, "video_duperz.ui.main_window", fake_main_window_module
+    )
+
+    rc = app_main._cmd_gui(argparse.Namespace())
+
+    assert rc == 2
+    assert critical_calls == [("Scan Backend Unavailable", "ffmpeg missing")]

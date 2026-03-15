@@ -18,7 +18,7 @@ from .scan_sets import (
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 class DatabaseConnectionMixin:
@@ -178,6 +178,18 @@ class DatabaseConnectionMixin:
             CREATE INDEX IF NOT EXISTS idx_fingerprints_file_backend
               ON fingerprints(file_id, probe_backend);
 
+            CREATE TABLE IF NOT EXISTS fingerprint_decoder_provenance(
+              file_id INTEGER NOT NULL,
+              probe_backend TEXT NOT NULL DEFAULT 'pyav',
+              decoder_backend TEXT NOT NULL,
+              attempts_json TEXT NOT NULL DEFAULT '[]',
+              created_at TEXT NOT NULL,
+              PRIMARY KEY(file_id, probe_backend),
+              FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_fingerprint_decoder_provenance_file_backend
+              ON fingerprint_decoder_provenance(file_id, probe_backend);
+
             CREATE TABLE IF NOT EXISTS duplicate_groups(
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               scan_id INTEGER NOT NULL,
@@ -226,10 +238,29 @@ class DatabaseConnectionMixin:
         )
         self._ensure_video_meta_columns()
         self._ensure_backend_scoped_cache_tables()
+        self._ensure_fingerprint_decoder_provenance_table()
         self._ensure_scan_columns()
         self._backfill_scan_set_keys()
         self.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         self.conn.commit()
+
+    def _ensure_fingerprint_decoder_provenance_table(self) -> None:
+        """Create the quiet fingerprint decoder provenance table when absent."""
+        self.conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS fingerprint_decoder_provenance(
+              file_id INTEGER NOT NULL,
+              probe_backend TEXT NOT NULL DEFAULT 'pyav',
+              decoder_backend TEXT NOT NULL,
+              attempts_json TEXT NOT NULL DEFAULT '[]',
+              created_at TEXT NOT NULL,
+              PRIMARY KEY(file_id, probe_backend),
+              FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_fingerprint_decoder_provenance_file_backend
+              ON fingerprint_decoder_provenance(file_id, probe_backend);
+            """
+        )
 
     def _ensure_backend_scoped_cache_tables(self) -> None:
         """Rebuild cache tables so every probe backend can store rows per file."""

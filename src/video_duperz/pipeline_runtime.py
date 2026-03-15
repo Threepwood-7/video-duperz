@@ -125,6 +125,7 @@ def _flush_pending_analysis_batches(
     pending_total = (
         len(ctx.pending_meta_rows)
         + len(ctx.pending_fp_rows)
+        + len(ctx.pending_fp_provenance_rows)
         + len(ctx.pending_probe_error_rows)
     )
     if pending_total <= 0:
@@ -152,6 +153,16 @@ def _flush_pending_analysis_batches(
         _timed_db_write(
             ctx,
             ctx.db.save_fingerprints_batch,
+            len(chunk),
+            chunk,
+            probe_backend=ctx.probe_backend,
+        )
+    while ctx.pending_fp_provenance_rows:
+        chunk = ctx.pending_fp_provenance_rows[: ctx.db_batch_size]
+        del ctx.pending_fp_provenance_rows[: len(chunk)]
+        _timed_db_write(
+            ctx,
+            ctx.db.save_fingerprint_provenance_batch,
             len(chunk),
             chunk,
             probe_backend=ctx.probe_backend,
@@ -416,6 +427,13 @@ def _record_future_success(
     if task.cached_meta is None:
         ctx.pending_meta_rows.append((task.file_id, output.meta))
     ctx.pending_fp_rows.append((task.file_id, ALGO_VERSION, output.hashes))
+    ctx.pending_fp_provenance_rows.append(
+        (
+            task.file_id,
+            output.fingerprint_decoder_backend,
+            output.fingerprint_provenance_json,
+        )
+    )
     ctx.fingerprinted_files += 1
     with ctx.state_lock:
         ctx.stage_seconds["probe"] += max(0.0, float(output.probe_s))

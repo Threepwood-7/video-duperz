@@ -311,6 +311,9 @@ def test_scan_batch_methods_roundtrip() -> None:
             ]
         )
         db.save_fingerprints_batch([(file_a, ALGO_VERSION, [1, 2, 3, 4])])
+        db.save_fingerprint_provenance_batch(
+            [(file_a, "pyav", '{"decoder_backend":"pyav"}')]
+        )
         db.save_probe_errors_batch([(file_b, "probe failed")])
 
         group = DuplicateGroup(
@@ -377,6 +380,17 @@ def test_scan_batch_methods_roundtrip() -> None:
         assert "meta" in cached["D:/Videos/a.mp4"]
         assert "fingerprint" in cached["D:/Videos/a.mp4"]
         assert cached["D:/Videos/a.mp4"]["fingerprint"]["algo_version"] == ALGO_VERSION
+        provenance_row = db.conn.execute(
+            """
+            SELECT decoder_backend, attempts_json
+            FROM fingerprint_decoder_provenance
+            WHERE file_id = ? AND probe_backend = 'pyav'
+            """,
+            (file_a,),
+        ).fetchone()
+        assert provenance_row is not None
+        assert str(provenance_row["decoder_backend"]) == "pyav"
+        assert str(provenance_row["attempts_json"]) == '{"decoder_backend":"pyav"}'
 
 
 def test_cached_artifacts_are_probe_backend_specific() -> None:
