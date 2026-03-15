@@ -17,8 +17,9 @@ from .config import load_settings
 from .constants import APP_IDENTITY
 from .db import Database
 from .exporters import export_scan
-from .pipeline import run_scan
-from .probe import ProbeError, ensure_probe_backend_available
+from .fingerprint import FingerprintError
+from .pipeline import ensure_analyze_fallback_chain_available, run_scan
+from .probe import ProbeError
 
 
 def _metrics_map(value: object) -> dict[str, object]:
@@ -137,10 +138,10 @@ def _cmd_gui(_args: argparse.Namespace) -> int:
 
     settings = load_settings()
     try:
-        ensure_probe_backend_available(settings.probe_backend)
-    except ProbeError as exc:
+        ensure_analyze_fallback_chain_available(settings.probe_backend)
+    except (ProbeError, FingerprintError) as exc:
         app = QApplication(sys.argv)
-        QMessageBox.critical(None, "Probe Backend Unavailable", str(exc))
+        QMessageBox.critical(None, "Analyze Toolchain Unavailable", str(exc))
         return 2
 
     app = QApplication(sys.argv)
@@ -177,8 +178,8 @@ def _cmd_gui(_args: argparse.Namespace) -> int:
 def _cmd_scan(args: argparse.Namespace) -> int:
     settings = load_settings()
     try:
-        ensure_probe_backend_available(settings.probe_backend)
-    except ProbeError as exc:
+        ensure_analyze_fallback_chain_available(settings.probe_backend)
+    except (ProbeError, FingerprintError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 

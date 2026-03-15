@@ -18,7 +18,7 @@ from .scan_sets import (
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 class DatabaseConnectionMixin:
@@ -184,7 +184,7 @@ class DatabaseConnectionMixin:
               stage TEXT NOT NULL,
               message TEXT NOT NULL,
               created_at TEXT NOT NULL,
-              PRIMARY KEY(file_id, probe_backend),
+              PRIMARY KEY(file_id, probe_backend, stage),
               FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_analysis_issues_scan_backend
@@ -366,7 +366,7 @@ class DatabaseConnectionMixin:
                   stage TEXT NOT NULL,
                   message TEXT NOT NULL,
                   created_at TEXT NOT NULL,
-                  PRIMARY KEY(file_id, probe_backend),
+                  PRIMARY KEY(file_id, probe_backend, stage),
                   FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
                 );
                 CREATE INDEX IF NOT EXISTS idx_analysis_issues_scan_backend
@@ -374,7 +374,11 @@ class DatabaseConnectionMixin:
                 """
             )
             return
-        if columns.get("file_id") == 1 and columns.get("probe_backend") == 2:
+        if (
+            columns.get("file_id") == 1
+            and columns.get("probe_backend") == 2
+            and columns.get("stage") == 3
+        ):
             return
         self.conn.executescript(
             """
@@ -384,7 +388,7 @@ class DatabaseConnectionMixin:
               stage TEXT NOT NULL,
               message TEXT NOT NULL,
               created_at TEXT NOT NULL,
-              PRIMARY KEY(file_id, probe_backend),
+              PRIMARY KEY(file_id, probe_backend, stage),
               FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
             );
             INSERT INTO analysis_issues_new(

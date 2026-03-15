@@ -256,18 +256,21 @@ def test_run_scan_pyav_backend_routes_probe_calls(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         pipeline,
-        "build_fingerprint_record",
-        lambda **kwargs: SimpleNamespace(hashes=[1, 2, 3]),
+        "build_fingerprint_record_with_fallback",
+        lambda **kwargs: SimpleNamespace(
+            record=SimpleNamespace(hashes=[1, 2, 3]),
+            fallback_decoder=None,
+        ),
     )
     monkeypatch.setattr(
         pipeline,
-        "ensure_probe_backend_available",
+        "ensure_analyze_fallback_chain_available",
         lambda backend="ffprobe": calls.append(("ensure", backend)),
     )
     monkeypatch.setattr(
         pipeline,
         "probe_video",
-        lambda path, *, backend="ffprobe": (
+        lambda path, *, backend="ffprobe", relaxed=False: (
             calls.append(("probe", backend, path))
             or SimpleNamespace(
                 duration_s=1.0,
@@ -306,6 +309,167 @@ def test_run_scan_pyav_backend_routes_probe_calls(monkeypatch) -> None:
     assert ("probe", "pyav", "lane0-a.mp4") in calls
 
 
+def test_run_scan_records_probe_fallback_provenance(monkeypatch) -> None:
+    files = [_video("lane0-a.mp4", lane=0)]
+    calls: list[tuple[str, bool, str]] = []
+
+    monkeypatch.setattr(
+        pipeline, "ensure_analyze_fallback_chain_available", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        pipeline, "enumerate_video_files", lambda **kwargs: (list(files), [])
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_physical_drive_scan_plan",
+        lambda roots, max_workers, drive_worker_overrides=None: _lane_plan_for_roots(
+            roots,
+            lane_worker_limits={0: 1},
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
+    )
+    monkeypatch.setattr(
+        pipeline, "build_duplicate_groups", lambda items, edges, profile: []
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_fingerprint_record_with_fallback",
+        lambda **kwargs: SimpleNamespace(
+            record=SimpleNamespace(hashes=[1, 2, 3]),
+            fallback_decoder=None,
+        ),
+    )
+
+    def _fake_probe(
+        path: str,
+        *,
+        backend: str = "ffprobe",
+        relaxed: bool = False,
+    ):
+        calls.append((backend, relaxed, path))
+        if backend == "pyav":
+            raise RuntimeError("pyav analyze failed")
+        return VideoMeta(
+            duration_s=1.0,
+            width=1920,
+            height=1080,
+            fps=24.0,
+            codec="h264",
+            bitrate=1,
+            has_audio=True,
+            audio_codec="aac",
+            audio_bitrate=1,
+            audio_languages="eng",
+            subtitle_languages="",
+            is_hdr=False,
+        )
+
+    monkeypatch.setattr(pipeline, "probe_video", _fake_probe)
+
+    db = _FakeDb()
+    result = pipeline.run_scan(
+        db=db,
+        roots=["root-0"],
+        extensions=["mp4"],
+        profile="balanced",
+        max_workers=1,
+        probe_backend="pyav",
+        probe_worker_mode="balanced",
+        db_batch_size=32,
+        db_flush_interval_ms=50,
+        enum_queue_max=256,
+        progress_emit_interval_ms=50,
+        progress_emit_every_files=10,
+    )
+
+    assert result.fingerprinted_files == 1
+    assert ("pyav", False, "lane0-a.mp4") in calls
+    assert ("ffprobe", True, "lane0-a.mp4") in calls
+    assert any(
+        probe_backend == "pyav"
+        and stage == "probe_fallback"
+        and "ffprobe fallback succeeded" in message
+        for _file_id, probe_backend, stage, message in db.analysis_issue_rows
+    )
+
+
+def test_run_scan_records_fingerprint_fallback_provenance(monkeypatch) -> None:
+    files = [_video("lane0-a.mp4", lane=0)]
+
+    monkeypatch.setattr(
+        pipeline, "ensure_analyze_fallback_chain_available", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        pipeline, "enumerate_video_files", lambda **kwargs: (list(files), [])
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_physical_drive_scan_plan",
+        lambda roots, max_workers, drive_worker_overrides=None: _lane_plan_for_roots(
+            roots,
+            lane_worker_limits={0: 1},
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
+    )
+    monkeypatch.setattr(
+        pipeline, "build_duplicate_groups", lambda items, edges, profile: []
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "probe_video",
+        lambda path, *, backend="ffprobe", relaxed=False: VideoMeta(
+            duration_s=1.0,
+            width=1920,
+            height=1080,
+            fps=24.0,
+            codec="h264",
+            bitrate=1,
+            has_audio=True,
+            audio_codec="aac",
+            audio_bitrate=1,
+            audio_languages="eng",
+            subtitle_languages="",
+            is_hdr=False,
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_fingerprint_record_with_fallback",
+        lambda **kwargs: SimpleNamespace(
+            record=SimpleNamespace(hashes=[1, 2, 3]),
+            fallback_decoder="ffmpeg",
+        ),
+    )
+
+    db = _FakeDb()
+    result = pipeline.run_scan(
+        db=db,
+        roots=["root-0"],
+        extensions=["mp4"],
+        profile="balanced",
+        max_workers=1,
+        probe_backend="pyav",
+        probe_worker_mode="balanced",
+        db_batch_size=32,
+        db_flush_interval_ms=50,
+        enum_queue_max=256,
+        progress_emit_interval_ms=50,
+        progress_emit_every_files=10,
+    )
+
+    assert result.fingerprinted_files == 1
+    assert any(
+        probe_backend == "pyav"
+        and stage == "fingerprint_fallback"
+        and "ffmpeg fallback succeeded" in message
+        for _file_id, probe_backend, stage, message in db.analysis_issue_rows
+    )
+
+
 def test_run_scan_probe_parallel_lanes_and_telemetry(monkeypatch) -> None:
     files = [
         _video("lane0-a.mp4", lane=0),
@@ -317,7 +481,9 @@ def test_run_scan_probe_parallel_lanes_and_telemetry(monkeypatch) -> None:
     ]
     lane_by_path = {file.path: file.parallel_lane for file in files}
 
-    monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
+    monkeypatch.setattr(
+        pipeline, "ensure_analyze_fallback_chain_available", lambda *_a, **_k: None
+    )
     monkeypatch.setattr(
         pipeline, "enumerate_video_files", lambda **kwargs: (list(files), [])
     )
@@ -433,7 +599,9 @@ def test_run_scan_burst_mode_allows_multiple_workers_per_lane_up_to_caps(
     ]
     lane_by_path = {file.path: file.parallel_lane for file in files}
 
-    monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
+    monkeypatch.setattr(
+        pipeline, "ensure_analyze_fallback_chain_available", lambda *_a, **_k: None
+    )
     monkeypatch.setattr(
         pipeline, "enumerate_video_files", lambda **kwargs: (list(files), [])
     )
@@ -509,7 +677,9 @@ def test_run_scan_reports_worker_capacity_reduction_when_hard_caps_apply(
         _video("lane1-a.mp4", lane=1),
     ]
 
-    monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
+    monkeypatch.setattr(
+        pipeline, "ensure_analyze_fallback_chain_available", lambda *_a, **_k: None
+    )
     monkeypatch.setattr(
         pipeline, "enumerate_video_files", lambda **kwargs: (list(files), [])
     )
@@ -576,7 +746,9 @@ def test_run_scan_streams_enumeration_into_analysis(monkeypatch) -> None:
     timeline: dict[str, float] = {}
     analyze_starts: list[float] = []
 
-    monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
+    monkeypatch.setattr(
+        pipeline, "ensure_analyze_fallback_chain_available", lambda *_a, **_k: None
+    )
     monkeypatch.setattr(
         pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
     )
@@ -632,7 +804,9 @@ def test_run_scan_cancellation_during_streaming_overlap(monkeypatch) -> None:
     ]
     cancel_event = Event()
 
-    monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
+    monkeypatch.setattr(
+        pipeline, "ensure_analyze_fallback_chain_available", lambda *_a, **_k: None
+    )
     monkeypatch.setattr(
         pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
     )
@@ -690,7 +864,9 @@ def test_run_scan_marks_timed_out_analysis_for_manual_review(
         _video("lane1-stuck.mp4", lane=1),
     ]
 
-    monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
+    monkeypatch.setattr(
+        pipeline, "ensure_analyze_fallback_chain_available", lambda *_a, **_k: None
+    )
     monkeypatch.setattr(
         pipeline, "enumerate_video_files", lambda **kwargs: (list(files), [])
     )

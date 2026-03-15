@@ -321,7 +321,7 @@ class DatabaseArtifactMixin:
         file_id: int,
         probe_backend: ProbeBackendId = "pyav",
     ) -> None:
-        """Delete one backend-scoped analysis issue row for a file."""
+        """Delete all backend-scoped analysis issue rows for a file."""
         self.delete_analysis_issues_batch([int(file_id)], probe_backend=probe_backend)
 
     def save_video_meta_batch(
@@ -490,8 +490,7 @@ class DatabaseArtifactMixin:
               file_id, probe_backend, stage, message, created_at
             )
             VALUES(?, ?, ?, ?, ?)
-            ON CONFLICT(file_id, probe_backend) DO UPDATE SET
-              stage = excluded.stage,
+            ON CONFLICT(file_id, probe_backend, stage) DO UPDATE SET
               message = excluded.message,
               created_at = excluded.created_at
             """,

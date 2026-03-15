@@ -6,7 +6,12 @@ from types import SimpleNamespace
 import pytest
 
 from video_duperz.models import VideoMeta
-from video_duperz.probe import ProbeError, ensure_probe_backend_available, probe_video
+from video_duperz.probe import (
+    ProbeError,
+    ensure_probe_backend_available,
+    ensure_probe_fallback_chain_available,
+    probe_video,
+)
 
 
 def test_probe_video_ffprobe_uses_hidden_window_kwargs_and_resolved_executable(
@@ -199,6 +204,70 @@ def test_probe_video_pyav_maps_metadata(monkeypatch: pytest.MonkeyPatch) -> None
         subtitle_languages="pol",
         is_hdr=True,
     )
+
+
+def test_probe_video_ffprobe_relaxed_mode_adds_lenient_args(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorded: dict[str, object] = {}
+    payload = {
+        "format": {"duration": "1.0", "bit_rate": "1000"},
+        "streams": [
+            {
+                "codec_type": "video",
+                "codec_name": "h264",
+                "width": 1280,
+                "height": 720,
+                "r_frame_rate": "24/1",
+            }
+        ],
+    }
+
+    monkeypatch.setattr(
+        "video_duperz.probe.ensure_ffprobe_available",
+        lambda: r"C:\ffmpeg\bin\ffprobe.exe",
+    )
+
+    def _fake_run(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+        recorded["cmd"] = list(cmd)
+        recorded["kwargs"] = dict(kwargs)
+        return SimpleNamespace(stdout=__import__("json").dumps(payload))
+
+    monkeypatch.setattr("video_duperz.probe.subprocess.run", _fake_run)
+
+    probe_video(r"C:\videos\sample.mp4", backend="ffprobe", relaxed=True)
+
+    assert recorded["cmd"][:11] == [
+        r"C:\ffmpeg\bin\ffprobe.exe",
+        "-v",
+        "error",
+        "-analyzeduration",
+        "200M",
+        "-probesize",
+        "200M",
+        "-fflags",
+        "+discardcorrupt+genpts",
+        "-err_detect",
+        "ignore_err",
+    ]
+
+
+def test_ensure_probe_fallback_chain_checks_primary_and_alternate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def _fake_ensure(backend: str = "pyav") -> None:
+        calls.append(backend)
+
+    monkeypatch.setattr(
+        "video_duperz.probe.ensure_probe_backend_available",
+        _fake_ensure,
+    )
+
+    ensure_probe_fallback_chain_available("pyav")
+
+    assert calls == ["pyav", "ffprobe"]
 
 
 def test_ensure_probe_backend_available_raises_for_missing_pyav(

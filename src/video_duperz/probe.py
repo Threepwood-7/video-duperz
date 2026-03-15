@@ -30,7 +30,7 @@ class ProbeBackend(Protocol):
 
         ...
 
-    def probe_video(self, path: str) -> VideoMeta:
+    def probe_video(self, path: str, *, relaxed: bool = False) -> VideoMeta:
         """Extract `VideoMeta` for one video path."""
 
         ...
@@ -70,7 +70,11 @@ class _AvModuleLike(Protocol):
 
     time_base: object
 
-    def open(self, path: str) -> _AvContainerLike:
+    def open(
+        self,
+        path: str,
+        options: dict[str, str] | None = None,
+    ) -> _AvContainerLike:
         """Open one media container."""
 
         ...
@@ -93,6 +97,13 @@ def ensure_probe_backend_available(backend: ProbeBackendId = "pyav") -> None:
     get_probe_backend(backend).ensure_available()
 
 
+def ensure_probe_fallback_chain_available(backend: ProbeBackendId = "pyav") -> None:
+    """Raise when the selected backend or its alternate fallback is unavailable."""
+    primary_backend = "ffprobe" if backend == "ffprobe" else "pyav"
+    ensure_probe_backend_available(primary_backend)
+    ensure_probe_backend_available(_alternate_probe_backend(primary_backend))
+
+
 def get_probe_backend(backend: ProbeBackendId = "pyav") -> ProbeBackend:
     """Return the selected probe backend implementation."""
 
@@ -101,10 +112,15 @@ def get_probe_backend(backend: ProbeBackendId = "pyav") -> ProbeBackend:
     return _FFPROBE_BACKEND
 
 
-def probe_video(path: str, *, backend: ProbeBackendId = "pyav") -> VideoMeta:
+def probe_video(
+    path: str,
+    *,
+    backend: ProbeBackendId = "pyav",
+    relaxed: bool = False,
+) -> VideoMeta:
     """Run the selected probe backend and normalize the result into `VideoMeta`."""
 
-    return get_probe_backend(backend).probe_video(path)
+    return get_probe_backend(backend).probe_video(path, relaxed=relaxed)
 
 
 def _parse_fps(rate: str) -> float:
@@ -202,6 +218,39 @@ def _ratio_to_float(value: object) -> float:
             return 0.0
 
 
+def _alternate_probe_backend(backend: ProbeBackendId) -> ProbeBackendId:
+    """Return the alternate metadata backend for fallback retries."""
+    if backend == "ffprobe":
+        return "pyav"
+    return "ffprobe"
+
+
+def _relaxed_media_options() -> dict[str, str]:
+    """Return tolerant FFmpeg/libav options used on fallback attempts."""
+    return {
+        "analyzeduration": "200M",
+        "probesize": "200M",
+        "fflags": "+discardcorrupt+genpts",
+        "err_detect": "ignore_err",
+    }
+
+
+def _open_av_container(
+    av_module: _AvModuleLike,
+    path: str,
+    *,
+    relaxed: bool,
+) -> _AvContainerLike:
+    """Open one media container with a safe relaxed-options fallback."""
+    if not relaxed:
+        return av_module.open(path)
+    options = _relaxed_media_options()
+    try:
+        return av_module.open(path, options=options)
+    except TypeError:
+        return av_module.open(path)
+
+
 def _duration_seconds_from_container(
     container: _AvContainerLike, av_module: _AvModuleLike
 ) -> float:
@@ -283,7 +332,7 @@ class _FfprobeBackend:
     def ensure_available(self) -> str:
         return ensure_ffprobe_available()
 
-    def probe_video(self, path: str) -> VideoMeta:
+    def probe_video(self, path: str, *, relaxed: bool = False) -> VideoMeta:
         ffprobe_path = self.ensure_available()
         hidden_kwargs = windows_no_window_run_kwargs()
         creationflags_raw = hidden_kwargs.get("creationflags", 0)
@@ -302,17 +351,34 @@ class _FfprobeBackend:
             ffprobe_path,
             "-v",
             "error",
-            "-show_entries",
-            (
-                "format=duration,bit_rate:"
-                "stream=index,codec_type,codec_name,width,height,r_frame_rate,bit_rate,"
-                "color_transfer,color_primaries,color_space,pix_fmt:"
-                "stream_tags=language"
-            ),
-            "-of",
-            "json",
-            path,
         ]
+        if relaxed:
+            cmd.extend(
+                [
+                    "-analyzeduration",
+                    "200M",
+                    "-probesize",
+                    "200M",
+                    "-fflags",
+                    "+discardcorrupt+genpts",
+                    "-err_detect",
+                    "ignore_err",
+                ]
+            )
+        cmd.extend(
+            [
+                "-show_entries",
+                (
+                    "format=duration,bit_rate:"
+                    "stream=index,codec_type,codec_name,width,height,r_frame_rate,bit_rate,"
+                    "color_transfer,color_primaries,color_space,pix_fmt:"
+                    "stream_tags=language"
+                ),
+                "-of",
+                "json",
+                path,
+            ]
+        )
         try:
             if startupinfo is not None:
                 proc = subprocess.run(
@@ -435,10 +501,10 @@ class _PyAvBackend:
     def ensure_available(self) -> _AvModuleLike:
         return _import_av()
 
-    def probe_video(self, path: str) -> VideoMeta:
+    def probe_video(self, path: str, *, relaxed: bool = False) -> VideoMeta:
         av_module = self.ensure_available()
         try:
-            container: _AvContainerLike = av_module.open(path)
+            container = _open_av_container(av_module, path, relaxed=relaxed)
         except Exception as exc:
             raise ProbeError(f"PyAV failed to open {path}: {exc}") from exc
         try:

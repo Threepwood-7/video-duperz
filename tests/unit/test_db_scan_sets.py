@@ -484,14 +484,25 @@ def test_analysis_issues_are_probe_backend_scoped_and_clearable() -> None:
         )
         db.save_analysis_issue(
             file_id,
+            "fingerprint_fallback",
+            "primary frame decoder opencv failed; ffmpeg fallback succeeded",
+            probe_backend="pyav",
+        )
+        db.save_analysis_issue(
+            file_id,
             "analyze_timeout",
             "ffprobe timeout placeholder",
             probe_backend="ffprobe",
         )
 
         persisted = db.list_analysis_issues_for_scan(scan_id)
-        assert len(persisted) == 2
+        assert len(persisted) == 3
         assert {str(item["probe_backend"]) for item in persisted} == {"ffprobe", "pyav"}
+        assert {
+            str(item["stage"])
+            for item in persisted
+            if str(item["probe_backend"]) == "pyav"
+        } == {"analyze_timeout", "fingerprint_fallback"}
 
         db.delete_analysis_issue(file_id, probe_backend="pyav")
         remaining = db.list_analysis_issues_for_scan(scan_id)

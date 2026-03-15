@@ -57,9 +57,9 @@ A Windows-first PySide6 app for finding perceptual duplicate videos using dhash 
 
 - **Windows** (10 or later)
 - **Python 3.13+**
-- **ffprobe** (from ffmpeg suite) installed and available in PATH
+- **ffmpeg** and **ffprobe** (from ffmpeg suite) installed and available in PATH
 
-Runtime dependencies: `PySide6 >=6.10.2`, `numpy >=2.4.2`, `opencv-python >=4.13.0.92`.
+Runtime dependencies: `PySide6 >=6.10.2`, `numpy >=2.4.2`, `opencv-python >=4.13.0.92`, `av`.
 
 ## Installation
 
@@ -225,8 +225,8 @@ video-duperz/
 |       |-- db.py                    # SQLite database layer
 |       |-- scanner.py               # File enumeration and physical drive detection
 |       |-- pipeline.py              # Scan orchestration (enumerate/probe/fingerprint/match)
-|       |-- probe.py                 # ffprobe wrapper for video metadata
-|       |-- fingerprint.py           # dhash computation and hamming distance
+|       |-- probe.py                 # PyAV/ffprobe metadata probing with fallback
+|       |-- fingerprint.py           # dhash computation with OpenCV/PyAV/ffmpeg fallbacks
 |       |-- matcher.py               # Duplicate edge detection and grouping
 |       |-- quality.py               # Quality scoring for keep decisions
 |       |-- exact_match.py           # Byte-level identical file detection
@@ -248,6 +248,7 @@ video-duperz/
 |       |-- run_app_gui.pyw          # Launch GUI without console window
 |       `-- run_tests.py             # Run tests via hatch run test
 |-- docs/
+|   |-- CHANGELOG.md
 |   |-- dev-packaging.md
 |   `-- images/
 |       |-- ui-01-overview.png
@@ -266,8 +267,8 @@ video-duperz/
 - CLI entry point (`__main__.py`) dispatches to `gui`, `scan`, `export`, or `clean` commands.
 - **Scan pipeline** (`pipeline.py`) orchestrates five stages:
   1. **Enumerate** - discover video files with physical drive-aware lane distribution
-  2. **Probe** - extract metadata (duration, resolution, fps, codec, bitrate, HDR, audio) via ffprobe
-  3. **Fingerprint** - compute 12 dhash values per video using OpenCV frame sampling
+  2. **Probe** - extract metadata through the selected backend with automatic alternate-backend fallback
+  3. **Fingerprint** - compute 12 dhash values using OpenCV first, then PyAV and ffmpeg fallbacks for difficult files
   4. **Match** - bucket files by characteristics, find duplicate pairs, compute similarity scores
   5. **Results** - group duplicates and determine default keep file by quality score
 - **Physical drive mapping** (`scanner.py`) uses Windows kernel32 APIs to map volumes to physical drives and allocate I/O workers per drive.
@@ -325,19 +326,25 @@ uv lock --check
 
 ## Troubleshooting
 
-### ffprobe not found
+### ffmpeg or ffprobe not found
 
-The app checks for ffprobe at startup. If missing, an error dialog is shown and the app exits.
+The app checks for the full analyze fallback toolchain at startup. If `ffmpeg`, `ffprobe`, or PyAV fallback support is unavailable, an error is shown and the app exits.
 
 ```bat
+ffmpeg -version
 ffprobe -version
 ```
 
 Install via Chocolatey, Scoop, or WinGet if needed.
 
-### OpenCV import errors
+### Corrupted or partially broken files
 
-OpenCV (`opencv-python`) is required for optimal frame extraction. If missing, a fallback numpy-based resize is used, but fingerprinting quality may be reduced.
+The scan pipeline now retries difficult files through multiple fallback paths:
+
+- metadata: selected backend, then the alternate backend
+- fingerprint frames: OpenCV, then PyAV, then ffmpeg
+
+This lenient fallback chain is enabled by default so damaged files get a better chance to finish scanning before being marked as failed.
 
 ### Database errors
 

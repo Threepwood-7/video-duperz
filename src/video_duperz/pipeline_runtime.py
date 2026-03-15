@@ -58,7 +58,7 @@ from .pipeline_runtime_lanes import (
     submit_ready_lanes,
 )
 from .pipeline_runtime_progress import emit_progress, notify_event
-from .probe import ProbeError, ensure_ffprobe_available
+from .probe import ProbeError
 from .scanner import build_physical_drive_scan_plan, enumerate_video_files
 
 if TYPE_CHECKING:
@@ -444,6 +444,28 @@ def _record_future_success(
     output: _AnalyzeOutputLike,
 ) -> None:
     ctx.pending_analysis_issue_clear_ids.add(task.file_id)
+    if output.probe_fallback_backend is not None:
+        ctx.pending_analysis_issue_rows.append(
+            (
+                task.file_id,
+                "probe_fallback",
+                (
+                    f"primary probe backend {ctx.probe_backend} failed; "
+                    f"{output.probe_fallback_backend} fallback succeeded"
+                ),
+            )
+        )
+    if output.fingerprint_fallback_decoder is not None:
+        ctx.pending_analysis_issue_rows.append(
+            (
+                task.file_id,
+                "fingerprint_fallback",
+                (
+                    "primary frame decoder opencv failed; "
+                    f"{output.fingerprint_fallback_decoder} fallback succeeded"
+                ),
+            )
+        )
     if task.cached_meta is None:
         ctx.pending_meta_rows.append((task.file_id, output.meta))
     ctx.pending_fp_rows.append((task.file_id, ALGO_VERSION, output.hashes))
@@ -644,14 +666,12 @@ def run_scan_runtime(
     cancel_event: Event | None = None,
     progress_cb: Callable[[ScanProgress], None] | None = None,
     analyze_file: Callable[[str, VideoMeta | None], _AnalyzeOutputLike],
-    ensure_ffprobe_available_fn: Callable[[], object] = ensure_ffprobe_available,
     enumerate_video_files_fn: _EnumerateFn = enumerate_video_files,
     build_scan_plan_fn: _ScanPlanFn = build_physical_drive_scan_plan,
     find_duplicate_edges_fn: _FindEdgesFn = find_duplicate_edges,
     build_duplicate_groups_fn: _BuildGroupsFn = build_duplicate_groups,
 ) -> ScanResult:
     """Execute the scan runtime with injectable seams for tests and UI workflows."""
-    ensure_ffprobe_available_fn()
     ctx = _create_context(
         db,
         roots,

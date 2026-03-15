@@ -100,7 +100,7 @@ def test_run_full_reset_failure_does_not_relaunch(tmp_path: Path, monkeypatch) -
 
 def test_cmd_gui_spawns_cleaner_when_full_reset_requested(monkeypatch) -> None:
     monkeypatch.setattr(
-        app_main, "ensure_probe_backend_available", lambda *_a, **_k: None
+        app_main, "ensure_analyze_fallback_chain_available", lambda *_a, **_k: None
     )
 
     class _FakeDb:

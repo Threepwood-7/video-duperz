@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from threep_commons.fs_paths import path_key
 
 from .models import (
+    FrameDecodeBackendId,
     ProbeBackendId,
     ProbeWorkerMode,
     ScanIssue,
@@ -39,6 +40,8 @@ class AnalyzeOutputLike(Protocol):
     hashes: list[int]
     probe_s: float
     fingerprint_s: float
+    probe_fallback_backend: ProbeBackendId | None
+    fingerprint_fallback_decoder: FrameDecodeBackendId | None
 
 
 @dataclass(slots=True)

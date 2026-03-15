@@ -18,6 +18,7 @@ def _tools_available() -> bool:
     return bool(
         shutil.which("ffmpeg")
         and shutil.which("ffprobe")
+        and importlib.util.find_spec("av")
         and importlib.util.find_spec("cv2")
     )
 
