@@ -11,7 +11,7 @@ from .db_shared import (
     encode_hashes,
     require_lastrowid,
 )
-from .models import VideoMeta, utc_now_iso
+from .models import ProbeBackendId, VideoMeta, utc_now_iso
 from .scan_sets import (
     build_scan_set_key,
     normalize_extensions,
@@ -43,6 +43,7 @@ class DatabaseArtifactMixin:
         profile: str,
         roots: list[str],
         extensions: list[str] | None = None,
+        probe_backend: ProbeBackendId = "pyav",
     ) -> int:
         """Insert a new scan row and return its id."""
         normalized_roots = normalize_roots_for_display(roots)
@@ -56,15 +57,17 @@ class DatabaseArtifactMixin:
         cursor = self.conn.execute(
             """
             INSERT INTO scans(
-              created_at, profile, roots_json, extensions_json, scan_set_key, status
+              created_at, profile, roots_json, extensions_json,
+              probe_backend, scan_set_key, status
             )
-            VALUES(?, ?, ?, ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 utc_now_iso(),
                 normalized_profile,
                 json.dumps(normalized_roots),
                 json.dumps(normalized_extensions),
+                str(probe_backend),
                 scan_set_key,
                 "running",
             ),
@@ -200,16 +203,19 @@ class DatabaseArtifactMixin:
         path: str,
         size: int,
         mtime_ns: int,
+        probe_backend: ProbeBackendId = "pyav",
     ) -> dict[str, Any] | None:
         """Load cached artifacts for one file stat tuple."""
         cached = self.load_cached_artifacts_batch(
-            [{"path": path, "size": int(size), "mtime_ns": int(mtime_ns)}]
+            [{"path": path, "size": int(size), "mtime_ns": int(mtime_ns)}],
+            probe_backend=probe_backend,
         )
         return cached.get(path)
 
     def load_cached_artifacts_batch(
         self,
         files: Sequence[Mapping[str, object]],
+        probe_backend: ProbeBackendId = "pyav",
     ) -> dict[str, dict[str, Any]]:
         """Load cached metadata and fingerprints for matching file stat tuples."""
         if not files:
@@ -239,11 +245,13 @@ class DatabaseArtifactMixin:
                        vm.is_hdr,
                        fp.algo_version, fp.frame_count, fp.hash_blob
                 FROM files f
-                LEFT JOIN video_meta vm ON vm.file_id = f.id
-                LEFT JOIN fingerprints fp ON fp.file_id = f.id
+                LEFT JOIN video_meta vm
+                  ON vm.file_id = f.id AND vm.probe_backend = ?
+                LEFT JOIN fingerprints fp
+                  ON fp.file_id = f.id AND fp.probe_backend = ?
                 WHERE f.path IN ({placeholders}) AND f.exists_flag = 1
                 """,
-                tuple(chunk),
+                (str(probe_backend), str(probe_backend), *chunk),
             ).fetchall()
             for row in rows:
                 path = str(row["path"])
@@ -255,37 +263,78 @@ class DatabaseArtifactMixin:
                     or int(row["mtime_ns"]) != expected[1]
                 ):
                     continue
-                out[path] = self._row_to_cached_artifacts(cast("sqlite3.Row", row))
+                artifacts = self._row_to_cached_artifacts(cast("sqlite3.Row", row))
+                if len(artifacts) <= 1:
+                    continue
+                out[path] = artifacts
         return out
 
-    def save_video_meta(self, file_id: int, meta: VideoMeta) -> None:
+    def save_video_meta(
+        self,
+        file_id: int,
+        meta: VideoMeta,
+        probe_backend: ProbeBackendId = "pyav",
+    ) -> None:
         """Persist video metadata for one file row."""
-        self.save_video_meta_batch([(int(file_id), meta)])
+        self.save_video_meta_batch([(int(file_id), meta)], probe_backend=probe_backend)
 
-    def save_probe_error(self, file_id: int, error: str) -> None:
+    def save_probe_error(
+        self,
+        file_id: int,
+        error: str,
+        probe_backend: ProbeBackendId = "pyav",
+    ) -> None:
         """Persist one probe error row for a file."""
-        self.save_probe_errors_batch([(int(file_id), str(error))])
+        self.save_probe_errors_batch(
+            [(int(file_id), str(error))],
+            probe_backend=probe_backend,
+        )
 
     def save_fingerprint(
         self,
         file_id: int,
         algo_version: int,
         hashes: list[int],
+        probe_backend: ProbeBackendId = "pyav",
     ) -> None:
         """Persist one fingerprint row for a file."""
-        self.save_fingerprints_batch([(int(file_id), int(algo_version), list(hashes))])
+        self.save_fingerprints_batch(
+            [(int(file_id), int(algo_version), list(hashes))],
+            probe_backend=probe_backend,
+        )
 
-    def save_video_meta_batch(self, rows: list[tuple[int, VideoMeta]]) -> None:
+    def save_video_meta_batch(
+        self,
+        rows: list[tuple[int, VideoMeta]],
+        *,
+        probe_backend: ProbeBackendId = "pyav",
+    ) -> None:
         """Persist multiple video metadata rows."""
         if not rows:
             return
         payload: list[
-            tuple[int, float, int, int, float, str, int, int, str, int, str, str, int]
+            tuple[
+                int,
+                str,
+                float,
+                int,
+                int,
+                float,
+                str,
+                int,
+                int,
+                str,
+                int,
+                str,
+                str,
+                int,
+            ]
         ] = []
         for file_id, meta in rows:
             payload.append(
                 (
                     int(file_id),
+                    str(probe_backend),
                     float(meta.duration_s),
                     int(meta.width),
                     int(meta.height),
@@ -303,12 +352,12 @@ class DatabaseArtifactMixin:
         self.conn.executemany(
             """
             INSERT INTO video_meta(
-              file_id, duration_s, width, height, fps, codec, bitrate, has_audio,
-              audio_codec, audio_bitrate, audio_languages,
+              file_id, probe_backend, duration_s, width, height, fps,
+              codec, bitrate, has_audio, audio_codec, audio_bitrate, audio_languages,
               subtitle_languages, is_hdr, probe_error
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
-            ON CONFLICT(file_id) DO UPDATE SET
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+            ON CONFLICT(file_id, probe_backend) DO UPDATE SET
               duration_s = excluded.duration_s,
               width = excluded.width,
               height = excluded.height,
@@ -327,36 +376,51 @@ class DatabaseArtifactMixin:
         )
         self._commit_if_needed()
 
-    def save_probe_errors_batch(self, rows: list[tuple[int, str]]) -> None:
+    def save_probe_errors_batch(
+        self,
+        rows: list[tuple[int, str]],
+        *,
+        probe_backend: ProbeBackendId = "pyav",
+    ) -> None:
         """Persist multiple probe error rows."""
         if not rows:
             return
-        payload = [(int(file_id), str(error)[:500]) for file_id, error in rows]
+        payload = [
+            (int(file_id), str(probe_backend), str(error)[:500])
+            for file_id, error in rows
+        ]
         self.conn.executemany(
             """
             INSERT INTO video_meta(
-              file_id, duration_s, width, height, fps, codec, bitrate, has_audio,
-              audio_codec, audio_bitrate, audio_languages,
+              file_id, probe_backend, duration_s, width, height, fps,
+              codec, bitrate, has_audio, audio_codec, audio_bitrate, audio_languages,
               subtitle_languages, is_hdr, probe_error
             )
-            VALUES(?, 0, 0, 0, 0, '', 0, 0, '', 0, '', '', 0, ?)
-            ON CONFLICT(file_id) DO UPDATE SET probe_error = excluded.probe_error
+            VALUES(?, ?, 0, 0, 0, 0, '', 0, 0, '', 0, '', '', 0, ?)
+            ON CONFLICT(file_id, probe_backend) DO UPDATE SET
+              probe_error = excluded.probe_error
             """,
             payload,
         )
         self._commit_if_needed()
 
-    def save_fingerprints_batch(self, rows: list[tuple[int, int, list[int]]]) -> None:
+    def save_fingerprints_batch(
+        self,
+        rows: list[tuple[int, int, list[int]]],
+        *,
+        probe_backend: ProbeBackendId = "pyav",
+    ) -> None:
         """Persist multiple fingerprint rows."""
         if not rows:
             return
         created_at = utc_now_iso()
-        payload: list[tuple[int, int, int, bytes, str]] = []
+        payload: list[tuple[int, str, int, int, bytes, str]] = []
         for file_id, algo_version, hashes in rows:
             normalized_hashes = list(hashes)
             payload.append(
                 (
                     int(file_id),
+                    str(probe_backend),
                     int(algo_version),
                     len(normalized_hashes),
                     encode_hashes(normalized_hashes),
@@ -366,10 +430,10 @@ class DatabaseArtifactMixin:
         self.conn.executemany(
             """
             INSERT INTO fingerprints(
-              file_id, algo_version, frame_count, hash_blob, created_at
+              file_id, probe_backend, algo_version, frame_count, hash_blob, created_at
             )
-            VALUES(?, ?, ?, ?, ?)
-            ON CONFLICT(file_id) DO UPDATE SET
+            VALUES(?, ?, ?, ?, ?, ?)
+            ON CONFLICT(file_id, probe_backend) DO UPDATE SET
               algo_version = excluded.algo_version,
               frame_count = excluded.frame_count,
               hash_blob = excluded.hash_blob,

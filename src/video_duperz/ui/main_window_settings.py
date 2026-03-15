@@ -21,7 +21,13 @@ from ..config_video_presets import (
     detect_video_extension_preset,
     video_extensions_csv_for_preset,
 )
-from ..models import ProbeWorkerMode, SavedScanProfilePayload, Settings, utc_now_iso
+from ..models import (
+    ProbeBackendId,
+    ProbeWorkerMode,
+    SavedScanProfilePayload,
+    Settings,
+    utc_now_iso,
+)
 from ..scan_sets import (
     build_scan_set_key,
     normalize_extensions,
@@ -58,6 +64,8 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
 
     def _normalized_saved_scan_profiles(self) -> dict[str, SavedScanProfilePayload]: ...
 
+    def _current_probe_backend(self) -> ProbeBackendId: ...
+
     def _current_probe_worker_mode(self) -> ProbeWorkerMode: ...
 
     def _current_sources_extensions(self) -> list[str]: ...
@@ -82,6 +90,10 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
         self.extensions_preset_combo.blockSignals(False)
         idx = self.profile_combo.findText(self.settings.similarity_profile)
         self.profile_combo.setCurrentIndex(max(0, idx))
+        probe_backend_index = self.probe_backend_combo.findText(
+            self.settings.probe_backend
+        )
+        self.probe_backend_combo.setCurrentIndex(max(0, probe_backend_index))
         self.max_workers_spin.setValue(max(1, int(self.settings.max_workers)))
         probe_index = self.probe_mode_combo.findText(self.settings.probe_worker_mode)
         self.probe_mode_combo.setCurrentIndex(max(0, probe_index))
@@ -150,6 +162,7 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
             saved_scan_profiles=self._normalized_saved_scan_profiles(),
             keep_rule="best_quality",
             drive_worker_overrides=drive_worker_overrides,
+            probe_backend=self._current_probe_backend(),
             probe_worker_mode=self._current_probe_worker_mode(),
             scan_db_batch_size=self.settings.scan_db_batch_size,
             scan_db_flush_interval_ms=self.settings.scan_db_flush_interval_ms,

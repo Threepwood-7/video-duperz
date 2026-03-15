@@ -38,12 +38,15 @@ def test_db_migration_backfills_scan_set_columns(tmp_path: Path) -> None:
             for row in db.conn.execute("PRAGMA table_info(scans)").fetchall()
         }
         assert "extensions_json" in cols
+        assert "probe_backend" in cols
         assert "scan_set_key" in cols
         row = db.conn.execute(
-            "SELECT scan_set_key, extensions_json FROM scans WHERE id = 1"
+            "SELECT scan_set_key, extensions_json, probe_backend "
+            "FROM scans WHERE id = 1"
         ).fetchone()
         assert str(row["scan_set_key"])
         assert str(row["extensions_json"]) == "[]"
+        assert str(row["probe_backend"]) == "ffprobe"
 
 
 def test_latest_scan_queries_by_scan_set() -> None:
@@ -374,3 +377,83 @@ def test_scan_batch_methods_roundtrip() -> None:
         assert "meta" in cached["D:/Videos/a.mp4"]
         assert "fingerprint" in cached["D:/Videos/a.mp4"]
         assert cached["D:/Videos/a.mp4"]["fingerprint"]["algo_version"] == ALGO_VERSION
+
+
+def test_cached_artifacts_are_probe_backend_specific() -> None:
+    with Database(":memory:") as db:
+        scan_id = db.create_scan(
+            profile="balanced", roots=["D:/Videos"], extensions=["mp4"]
+        )
+        file_id = db.upsert_file(
+            path="D:/Videos/a.mp4",
+            size=10,
+            mtime_ns=11,
+            ctime_ns=11,
+            ext="mp4",
+            scan_id=scan_id,
+        )
+        meta = VideoMeta(
+            duration_s=12.0,
+            width=1920,
+            height=1080,
+            fps=30.0,
+            codec="h264",
+            bitrate=1000,
+            has_audio=True,
+            audio_codec="aac",
+            audio_bitrate=128000,
+            audio_languages="eng",
+            subtitle_languages="",
+            is_hdr=False,
+        )
+        db.save_video_meta(file_id, meta, probe_backend="ffprobe")
+        db.save_fingerprint(
+            file_id,
+            algo_version=ALGO_VERSION,
+            hashes=[1, 2, 3, 4],
+            probe_backend="ffprobe",
+        )
+        db.save_video_meta(
+            file_id,
+            VideoMeta(
+                duration_s=24.0,
+                width=1280,
+                height=720,
+                fps=60.0,
+                codec="hevc",
+                bitrate=2000,
+                has_audio=False,
+                audio_codec="",
+                audio_bitrate=0,
+                audio_languages="",
+                subtitle_languages="",
+                is_hdr=True,
+            ),
+            probe_backend="pyav",
+        )
+        db.save_fingerprint(
+            file_id,
+            algo_version=ALGO_VERSION,
+            hashes=[9, 8, 7, 6],
+            probe_backend="pyav",
+        )
+
+        ffprobe_cache = db.get_cached_artifacts(
+            "D:/Videos/a.mp4",
+            size=10,
+            mtime_ns=11,
+            probe_backend="ffprobe",
+        )
+        pyav_cache = db.get_cached_artifacts(
+            "D:/Videos/a.mp4",
+            size=10,
+            mtime_ns=11,
+            probe_backend="pyav",
+        )
+
+        assert ffprobe_cache is not None
+        assert pyav_cache is not None
+        assert ffprobe_cache["meta"].codec == "h264"
+        assert pyav_cache["meta"].codec == "hevc"
+        assert ffprobe_cache["fingerprint"]["hashes"] == [1, 2, 3, 4]
+        assert pyav_cache["fingerprint"]["hashes"] == [9, 8, 7, 6]

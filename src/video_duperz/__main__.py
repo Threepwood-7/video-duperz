@@ -18,7 +18,7 @@ from .constants import APP_IDENTITY
 from .db import Database
 from .exporters import export_scan
 from .pipeline import run_scan
-from .probe import ProbeError, ensure_ffprobe_available
+from .probe import ProbeError, ensure_probe_backend_available
 
 
 def _metrics_map(value: object) -> dict[str, object]:
@@ -135,16 +135,16 @@ def _cmd_gui(_args: argparse.Namespace) -> int:
 
     from .ui.main_window import MainWindow
 
+    settings = load_settings()
     try:
-        ensure_ffprobe_available()
+        ensure_probe_backend_available(settings.probe_backend)
     except ProbeError as exc:
         app = QApplication(sys.argv)
-        QMessageBox.critical(None, "ffprobe Missing", str(exc))
+        QMessageBox.critical(None, "Probe Backend Unavailable", str(exc))
         return 2
 
     app = QApplication(sys.argv)
     db = Database()
-    settings = load_settings()
     window = MainWindow(db=db, settings=settings)
     window.show()
     exit_code = app.exec()
@@ -175,13 +175,13 @@ def _cmd_gui(_args: argparse.Namespace) -> int:
 
 
 def _cmd_scan(args: argparse.Namespace) -> int:
+    settings = load_settings()
     try:
-        ensure_ffprobe_available()
+        ensure_probe_backend_available(settings.probe_backend)
     except ProbeError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
-    settings = load_settings()
     extensions = settings.normalized_extensions()
     with Database() as db:
         result = run_scan(
@@ -191,6 +191,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             profile=args.profile,
             max_workers=settings.max_workers,
             drive_worker_overrides=settings.drive_worker_overrides,
+            probe_backend=settings.probe_backend,
             probe_worker_mode=settings.probe_worker_mode,
             db_batch_size=settings.scan_db_batch_size,
             db_flush_interval_ms=settings.scan_db_flush_interval_ms,

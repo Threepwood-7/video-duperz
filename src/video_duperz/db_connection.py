@@ -18,7 +18,7 @@ from .scan_sets import (
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 5
 
 
 class DatabaseConnectionMixin:
@@ -117,6 +117,7 @@ class DatabaseConnectionMixin:
               profile TEXT NOT NULL,
               roots_json TEXT NOT NULL,
               extensions_json TEXT NOT NULL DEFAULT '[]',
+              probe_backend TEXT NOT NULL DEFAULT 'pyav',
               scan_set_key TEXT NOT NULL DEFAULT '',
               status TEXT NOT NULL
             );
@@ -141,7 +142,8 @@ class DatabaseConnectionMixin:
               ON files(path, size, mtime_ns, exists_flag);
 
             CREATE TABLE IF NOT EXISTS video_meta(
-              file_id INTEGER PRIMARY KEY,
+              file_id INTEGER NOT NULL,
+              probe_backend TEXT NOT NULL DEFAULT 'pyav',
               duration_s REAL NOT NULL,
               width INTEGER NOT NULL,
               height INTEGER NOT NULL,
@@ -155,19 +157,26 @@ class DatabaseConnectionMixin:
               subtitle_languages TEXT NOT NULL DEFAULT '',
               is_hdr INTEGER NOT NULL DEFAULT 0,
               probe_error TEXT,
+              PRIMARY KEY(file_id, probe_backend),
               FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
             );
+            CREATE INDEX IF NOT EXISTS idx_video_meta_file_backend
+              ON video_meta(file_id, probe_backend);
 
             CREATE TABLE IF NOT EXISTS fingerprints(
-              file_id INTEGER PRIMARY KEY,
+              file_id INTEGER NOT NULL,
+              probe_backend TEXT NOT NULL DEFAULT 'pyav',
               algo_version INTEGER NOT NULL,
               frame_count INTEGER NOT NULL,
               hash_blob BLOB NOT NULL,
               created_at TEXT NOT NULL,
+              PRIMARY KEY(file_id, probe_backend),
               FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_fingerprints_algo
               ON fingerprints(algo_version);
+            CREATE INDEX IF NOT EXISTS idx_fingerprints_file_backend
+              ON fingerprints(file_id, probe_backend);
 
             CREATE TABLE IF NOT EXISTS duplicate_groups(
               id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -216,10 +225,116 @@ class DatabaseConnectionMixin:
             """
         )
         self._ensure_video_meta_columns()
+        self._ensure_backend_scoped_cache_tables()
         self._ensure_scan_columns()
         self._backfill_scan_set_keys()
         self.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         self.conn.commit()
+
+    def _ensure_backend_scoped_cache_tables(self) -> None:
+        """Rebuild cache tables so every probe backend can store rows per file."""
+        video_meta_pk = {
+            str(row["name"]): int(row["pk"])
+            for row in self.conn.execute("PRAGMA table_info(video_meta)").fetchall()
+        }
+        if video_meta_pk.get("file_id") != 1 or video_meta_pk.get("probe_backend") != 2:
+            self.conn.executescript(
+                """
+                CREATE TABLE video_meta_new(
+                  file_id INTEGER NOT NULL,
+                  probe_backend TEXT NOT NULL DEFAULT 'pyav',
+                  duration_s REAL NOT NULL,
+                  width INTEGER NOT NULL,
+                  height INTEGER NOT NULL,
+                  fps REAL NOT NULL,
+                  codec TEXT NOT NULL,
+                  bitrate INTEGER NOT NULL,
+                  has_audio INTEGER NOT NULL,
+                  audio_codec TEXT NOT NULL DEFAULT '',
+                  audio_bitrate INTEGER NOT NULL DEFAULT 0,
+                  audio_languages TEXT NOT NULL DEFAULT '',
+                  subtitle_languages TEXT NOT NULL DEFAULT '',
+                  is_hdr INTEGER NOT NULL DEFAULT 0,
+                  probe_error TEXT,
+                  PRIMARY KEY(file_id, probe_backend),
+                  FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+                );
+                INSERT INTO video_meta_new(
+                  file_id, probe_backend, duration_s, width, height, fps,
+                  codec, bitrate, has_audio, audio_codec, audio_bitrate,
+                  audio_languages,
+                  subtitle_languages, is_hdr, probe_error
+                )
+                SELECT
+                  file_id,
+                  CASE
+                    WHEN TRIM(COALESCE(probe_backend, '')) = '' THEN 'ffprobe'
+                    ELSE probe_backend
+                  END,
+                  duration_s,
+                  width,
+                  height,
+                  fps,
+                  codec,
+                  bitrate,
+                  has_audio,
+                  audio_codec,
+                  audio_bitrate,
+                  audio_languages,
+                  subtitle_languages,
+                  is_hdr,
+                  probe_error
+                FROM video_meta;
+                DROP TABLE video_meta;
+                ALTER TABLE video_meta_new RENAME TO video_meta;
+                CREATE INDEX idx_video_meta_file_backend
+                  ON video_meta(file_id, probe_backend);
+                """
+            )
+
+        fingerprints_pk = {
+            str(row["name"]): int(row["pk"])
+            for row in self.conn.execute("PRAGMA table_info(fingerprints)").fetchall()
+        }
+        if (
+            fingerprints_pk.get("file_id") != 1
+            or fingerprints_pk.get("probe_backend") != 2
+        ):
+            self.conn.executescript(
+                """
+                CREATE TABLE fingerprints_new(
+                  file_id INTEGER NOT NULL,
+                  probe_backend TEXT NOT NULL DEFAULT 'pyav',
+                  algo_version INTEGER NOT NULL,
+                  frame_count INTEGER NOT NULL,
+                  hash_blob BLOB NOT NULL,
+                  created_at TEXT NOT NULL,
+                  PRIMARY KEY(file_id, probe_backend),
+                  FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+                );
+                INSERT INTO fingerprints_new(
+                  file_id, probe_backend, algo_version, frame_count,
+                  hash_blob, created_at
+                )
+                SELECT
+                  file_id,
+                  CASE
+                    WHEN TRIM(COALESCE(probe_backend, '')) = '' THEN 'ffprobe'
+                    ELSE probe_backend
+                  END,
+                  algo_version,
+                  frame_count,
+                  hash_blob,
+                  created_at
+                FROM fingerprints;
+                DROP TABLE fingerprints;
+                ALTER TABLE fingerprints_new RENAME TO fingerprints;
+                CREATE INDEX idx_fingerprints_algo
+                  ON fingerprints(algo_version);
+                CREATE INDEX idx_fingerprints_file_backend
+                  ON fingerprints(file_id, probe_backend);
+                """
+            )
 
     def _ensure_video_meta_columns(self) -> None:
         """Add newly introduced video metadata columns to legacy databases."""
@@ -227,6 +342,15 @@ class DatabaseConnectionMixin:
             str(row["name"])
             for row in self.conn.execute("PRAGMA table_info(video_meta)").fetchall()
         }
+        if "probe_backend" not in columns:
+            self.conn.execute(
+                "ALTER TABLE video_meta ADD COLUMN probe_backend TEXT NOT NULL "
+                "DEFAULT 'ffprobe'"
+            )
+        self.conn.execute(
+            "UPDATE video_meta SET probe_backend = 'ffprobe' "
+            "WHERE TRIM(COALESCE(probe_backend, '')) = ''"
+        )
         if "audio_codec" not in columns:
             self.conn.execute(
                 "ALTER TABLE video_meta ADD COLUMN audio_codec TEXT NOT NULL DEFAULT ''"
@@ -250,6 +374,19 @@ class DatabaseConnectionMixin:
             self.conn.execute(
                 "ALTER TABLE video_meta ADD COLUMN is_hdr INTEGER NOT NULL DEFAULT 0"
             )
+        fp_columns = {
+            str(row["name"])
+            for row in self.conn.execute("PRAGMA table_info(fingerprints)").fetchall()
+        }
+        if "probe_backend" not in fp_columns:
+            self.conn.execute(
+                "ALTER TABLE fingerprints "
+                "ADD COLUMN probe_backend TEXT NOT NULL DEFAULT 'ffprobe'"
+            )
+        self.conn.execute(
+            "UPDATE fingerprints SET probe_backend = 'ffprobe' "
+            "WHERE TRIM(COALESCE(probe_backend, '')) = ''"
+        )
 
     def _ensure_scan_columns(self) -> None:
         """Add newly introduced scan columns and indexes to legacy databases."""
@@ -262,10 +399,19 @@ class DatabaseConnectionMixin:
                 "ALTER TABLE scans ADD COLUMN extensions_json TEXT "
                 "NOT NULL DEFAULT '[]'"
             )
+        if "probe_backend" not in columns:
+            self.conn.execute(
+                "ALTER TABLE scans ADD COLUMN probe_backend TEXT NOT NULL "
+                "DEFAULT 'ffprobe'"
+            )
         if "scan_set_key" not in columns:
             self.conn.execute(
                 "ALTER TABLE scans ADD COLUMN scan_set_key TEXT NOT NULL DEFAULT ''"
             )
+        self.conn.execute(
+            "UPDATE scans SET probe_backend = 'ffprobe' "
+            "WHERE TRIM(COALESCE(probe_backend, '')) = ''"
+        )
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_scans_set_status "
             "ON scans(scan_set_key, status, id DESC)"

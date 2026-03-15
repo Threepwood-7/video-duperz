@@ -1219,6 +1219,7 @@ def test_sources_tab_drive_workers_and_probe_mode_persist_across_reload(
         assert isinstance(spin_b, QSpinBox)
         spin_a.setValue(4)
         spin_b.setValue(2)
+        window.probe_backend_combo.setCurrentText("pyav")
         window.probe_mode_combo.setCurrentText("burst")
         app.processEvents()
 
@@ -1228,6 +1229,7 @@ def test_sources_tab_drive_workers_and_probe_mode_persist_across_reload(
 
     loaded = load_settings()
     assert loaded.drive_worker_overrides == {"volume:a": 4, "volume:b": 2}
+    assert loaded.probe_backend == "pyav"
     assert loaded.probe_worker_mode == "burst"
 
     with Database(tmp_path / "app.db") as db:
@@ -1235,6 +1237,7 @@ def test_sources_tab_drive_workers_and_probe_mode_persist_across_reload(
         reloaded_window.show()
         app.processEvents()
 
+        assert reloaded_window.probe_backend_combo.currentText() == "pyav"
         assert reloaded_window.probe_mode_combo.currentText() == "burst"
         reloaded_spin_a = reloaded_window.sources_drive_table.cellWidget(0, 6)
         reloaded_spin_b = reloaded_window.sources_drive_table.cellWidget(1, 6)

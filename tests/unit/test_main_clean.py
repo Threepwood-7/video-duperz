@@ -99,14 +99,20 @@ def test_run_full_reset_failure_does_not_relaunch(tmp_path: Path, monkeypatch) -
 
 
 def test_cmd_gui_spawns_cleaner_when_full_reset_requested(monkeypatch) -> None:
-    monkeypatch.setattr(app_main, "ensure_ffprobe_available", lambda: None)
+    monkeypatch.setattr(
+        app_main, "ensure_probe_backend_available", lambda *_a, **_k: None
+    )
 
     class _FakeDb:
         def close(self) -> None:
             return None
 
     monkeypatch.setattr(app_main, "Database", lambda: _FakeDb())
-    monkeypatch.setattr(app_main, "load_settings", lambda: object())
+    monkeypatch.setattr(
+        app_main,
+        "load_settings",
+        lambda: types.SimpleNamespace(probe_backend="ffprobe"),
+    )
 
     class _FakeApp:
         def __init__(self, _argv):

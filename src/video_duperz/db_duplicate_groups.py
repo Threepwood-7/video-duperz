@@ -222,13 +222,15 @@ class DatabaseDuplicateGroupMixin:
                        vm.is_hdr
                 FROM duplicate_group_items gi
                 JOIN files f ON f.id = gi.file_id
-                JOIN video_meta vm ON vm.file_id = f.id
+                JOIN scans s ON s.id = ?
+                JOIN video_meta vm
+                  ON vm.file_id = f.id AND vm.probe_backend = s.probe_backend
                 WHERE gi.group_id = ? AND f.exists_flag = 1
                 ORDER BY gi.keep_default DESC,
                          vm.width * vm.height DESC,
                          vm.bitrate DESC
                 """,
-                (int(group_row["id"]),),
+                (int(group_row["scan_id"]), int(group_row["id"])),
             ).fetchall()
             items = [
                 DuplicateItem(

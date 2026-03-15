@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from threep_commons.fs_paths import path_key
 
 from .models import (
+    ProbeBackendId,
     ProbeWorkerMode,
     ScanIssue,
     ScanLaneSnapshot,
@@ -61,6 +62,7 @@ class ScanContext:
     roots: list[str]
     extensions: list[str]
     profile: str
+    probe_backend: ProbeBackendId
     drive_worker_overrides: dict[str, int] | None
     cancel_event: Event | None
     progress_cb: Callable[[ScanProgress], None] | None
@@ -257,6 +259,7 @@ def create_context(
     roots: list[str],
     extensions: list[str],
     profile: str,
+    probe_backend: ProbeBackendId,
     max_workers: int,
     drive_worker_overrides: dict[str, int] | None,
     probe_worker_mode: str,
@@ -284,7 +287,12 @@ def create_context(
         progress_emit_interval_ms=progress_emit_interval_ms,
         progress_emit_every_files=progress_emit_every_files,
     )
-    scan_id = db.create_scan(profile=profile, roots=roots, extensions=extensions)
+    scan_id = db.create_scan(
+        profile=profile,
+        roots=roots,
+        extensions=extensions,
+        probe_backend=probe_backend,
+    )
     scan_plan = build_scan_plan_fn(
         roots=roots,
         max_workers=runtime_settings.requested_floor,
@@ -304,6 +312,7 @@ def create_context(
         roots=roots,
         extensions=extensions,
         profile=profile,
+        probe_backend=probe_backend,
         drive_worker_overrides=drive_worker_overrides,
         cancel_event=cancel_event,
         progress_cb=progress_cb,

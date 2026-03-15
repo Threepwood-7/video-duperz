@@ -492,8 +492,13 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         self.max_workers_spin.valueChanged.connect(
             self._refresh_sources_physical_drive_view
         )
+        self.probe_backend_combo = QComboBox(self.sources_tab)
+        self.probe_backend_combo.addItems(["pyav", "ffprobe"])
         self.probe_mode_combo = QComboBox(self.sources_tab)
         self.probe_mode_combo.addItems(["balanced", "burst"])
+        self.probe_backend_combo.currentTextChanged.connect(
+            self._refresh_sources_physical_drive_view
+        )
         self.probe_mode_combo.currentTextChanged.connect(
             self._refresh_sources_physical_drive_view
         )
@@ -558,6 +563,8 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         layout.addWidget(self.profile_combo)
         layout.addWidget(QLabel("Max Workers total"))
         layout.addWidget(self.max_workers_spin)
+        layout.addWidget(QLabel("Probe backend"))
+        layout.addWidget(self.probe_backend_combo)
         layout.addWidget(QLabel("Probe mode"))
         layout.addWidget(self.probe_mode_combo)
         layout.addWidget(QLabel("Physical drives"))

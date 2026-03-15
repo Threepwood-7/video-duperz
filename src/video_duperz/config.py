@@ -18,6 +18,7 @@ from .models import (
     DEFAULT_THUMBNAIL_SIZE,
     THUMBNAIL_SIZE_CHOICES,
     KeepRule,
+    ProbeBackendId,
     ProbeWorkerMode,
     SavedScanProfilePayload,
     Settings,
@@ -36,6 +37,7 @@ MAX_SAVED_SCAN_PROFILES = 200
 SETTINGS_FILE_NAME = f"{SETTINGS_APP_NAME}.ini"
 MAX_DRIVE_WORKERS = 64
 PROBE_WORKER_MODES: tuple[str, str] = ("balanced", "burst")
+PROBE_BACKEND_IDS: tuple[str, str] = ("ffprobe", "pyav")
 DEFAULT_SCAN_DB_BATCH_SIZE = 512
 DEFAULT_SCAN_DB_FLUSH_INTERVAL_MS = 200
 DEFAULT_SCAN_ENUM_QUEUE_MAX = 4096
@@ -253,6 +255,15 @@ def _normalize_probe_worker_mode(
     return default
 
 
+def _normalize_probe_backend(
+    value: object, default: ProbeBackendId = "pyav"
+) -> ProbeBackendId:
+    text = str(value or "").strip().lower()
+    if text in PROBE_BACKEND_IDS:
+        return cast("ProbeBackendId", text)
+    return default
+
+
 def _normalize_int_range(
     value: object, default: int, minimum: int, maximum: int
 ) -> int:
@@ -371,6 +382,7 @@ def _read_qsettings_payload(
             qs.value("drive_worker_overrides"),
             defaults.drive_worker_overrides,
         ),
+        "probe_backend": qs.value("probe_backend", defaults.probe_backend),
         "probe_worker_mode": qs.value("probe_worker_mode", defaults.probe_worker_mode),
         "scan_db_batch_size": qs.value(
             "scan_db_batch_size", defaults.scan_db_batch_size
@@ -450,6 +462,10 @@ def _settings_from_raw(raw: dict[str, object], defaults: Settings) -> Settings:
         drive_worker_overrides=_normalize_drive_worker_overrides(
             raw.get("drive_worker_overrides", defaults.drive_worker_overrides),
         ),
+        probe_backend=_normalize_probe_backend(
+            raw.get("probe_backend", defaults.probe_backend),
+            default=defaults.probe_backend,
+        ),
         probe_worker_mode=_normalize_probe_worker_mode(
             raw.get("probe_worker_mode", defaults.probe_worker_mode),
             default=defaults.probe_worker_mode,
@@ -528,6 +544,7 @@ def default_settings() -> Settings:
         saved_scan_profiles={},
         keep_rule="best_quality",
         drive_worker_overrides={},
+        probe_backend="pyav",
         probe_worker_mode="balanced",
         scan_db_batch_size=DEFAULT_SCAN_DB_BATCH_SIZE,
         scan_db_flush_interval_ms=DEFAULT_SCAN_DB_FLUSH_INTERVAL_MS,

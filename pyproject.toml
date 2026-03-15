@@ -25,6 +25,8 @@ dependencies = [
 
   "opencv-python>=4.13.0.92",
 
+  "av",
+
   "PySide6>=6.10.2",
 
 ]

@@ -60,6 +60,7 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
             profile=self.settings.similarity_profile,
             max_workers=self.settings.max_workers,
             drive_worker_overrides=self.settings.drive_worker_overrides,
+            probe_backend=self.settings.probe_backend,
             probe_worker_mode=self.settings.probe_worker_mode,
             db_batch_size=self.settings.scan_db_batch_size,
             db_flush_interval_ms=self.settings.scan_db_flush_interval_ms,

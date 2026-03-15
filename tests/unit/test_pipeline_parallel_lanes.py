@@ -17,8 +17,13 @@ class _FakeDb:
         self._path_to_id: dict[str, int] = {}
 
     def create_scan(
-        self, profile: str, roots: list[str], extensions: list[str] | None = None
+        self,
+        profile: str,
+        roots: list[str],
+        extensions: list[str] | None = None,
+        probe_backend: str = "pyav",
     ) -> int:
+        _ = profile, roots, extensions, probe_backend
         return self._scan_id
 
     def begin_scan_transaction(self) -> None:
@@ -60,35 +65,76 @@ class _FakeDb:
         return self._next_file_id
 
     def load_cached_artifacts_batch(
-        self, files: list[dict[str, object]]
+        self,
+        files: list[dict[str, object]],
+        probe_backend: str = "pyav",
     ) -> dict[str, dict]:
-        _ = files
+        _ = files, probe_backend
         return {}
 
-    def get_cached_artifacts(self, path: str, size: int, mtime_ns: int) -> dict:
+    def get_cached_artifacts(
+        self,
+        path: str,
+        size: int,
+        mtime_ns: int,
+        probe_backend: str = "pyav",
+    ) -> dict:
+        _ = path, size, mtime_ns, probe_backend
         return {}
 
-    def save_probe_errors_batch(self, rows: list[tuple[int, str]]) -> None:
-        _ = rows
+    def save_probe_errors_batch(
+        self,
+        rows: list[tuple[int, str]],
+        *,
+        probe_backend: str = "pyav",
+    ) -> None:
+        _ = rows, probe_backend
         return None
 
-    def save_probe_error(self, file_id: int, text: str) -> None:
+    def save_probe_error(
+        self,
+        file_id: int,
+        text: str,
+        probe_backend: str = "pyav",
+    ) -> None:
+        _ = file_id, text, probe_backend
         return None
 
-    def save_video_meta_batch(self, rows: list[tuple[int, object]]) -> None:
-        _ = rows
+    def save_video_meta_batch(
+        self,
+        rows: list[tuple[int, object]],
+        *,
+        probe_backend: str = "pyav",
+    ) -> None:
+        _ = rows, probe_backend
         return None
 
-    def save_video_meta(self, file_id: int, meta: object) -> None:
+    def save_video_meta(
+        self,
+        file_id: int,
+        meta: object,
+        probe_backend: str = "pyav",
+    ) -> None:
+        _ = file_id, meta, probe_backend
         return None
 
-    def save_fingerprints_batch(self, rows: list[tuple[int, int, list[int]]]) -> None:
-        _ = rows
+    def save_fingerprints_batch(
+        self,
+        rows: list[tuple[int, int, list[int]]],
+        *,
+        probe_backend: str = "pyav",
+    ) -> None:
+        _ = rows, probe_backend
         return None
 
     def save_fingerprint(
-        self, file_id: int, algo_version: int, hashes: list[int]
+        self,
+        file_id: int,
+        algo_version: int,
+        hashes: list[int],
+        probe_backend: str = "pyav",
     ) -> None:
+        _ = file_id, algo_version, hashes, probe_backend
         return None
 
     def list_match_items_for_scan(self, scan_id: int, algo_version: int) -> list:
@@ -163,6 +209,79 @@ def _lane_plan_for_roots(
     )
 
 
+def test_run_scan_pyav_backend_routes_probe_calls(monkeypatch) -> None:
+    files = [_video("lane0-a.mp4", lane=0)]
+    calls: list[object] = []
+
+    monkeypatch.setattr(
+        pipeline, "enumerate_video_files", lambda **kwargs: (list(files), [])
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_physical_drive_scan_plan",
+        lambda roots, max_workers, drive_worker_overrides=None: _lane_plan_for_roots(
+            roots,
+            lane_worker_limits={0: 1},
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
+    )
+    monkeypatch.setattr(
+        pipeline, "build_duplicate_groups", lambda items, edges, profile: []
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_fingerprint_record",
+        lambda **kwargs: SimpleNamespace(hashes=[1, 2, 3]),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "ensure_probe_backend_available",
+        lambda backend="ffprobe": calls.append(("ensure", backend)),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "probe_video",
+        lambda path, *, backend="ffprobe": (
+            calls.append(("probe", backend, path))
+            or SimpleNamespace(
+                duration_s=1.0,
+                width=1920,
+                height=1080,
+                fps=24.0,
+                codec="h264",
+                bitrate=1,
+                has_audio=True,
+                audio_codec="aac",
+                audio_bitrate=1,
+                audio_languages="eng",
+                subtitle_languages="",
+                is_hdr=False,
+            )
+        ),
+    )
+
+    result = pipeline.run_scan(
+        db=_FakeDb(),
+        roots=["root-0"],
+        extensions=["mp4"],
+        profile="balanced",
+        max_workers=1,
+        probe_backend="pyav",
+        probe_worker_mode="balanced",
+        db_batch_size=32,
+        db_flush_interval_ms=50,
+        enum_queue_max=256,
+        progress_emit_interval_ms=50,
+        progress_emit_every_files=10,
+    )
+
+    assert result.scanned_files == 1
+    assert ("ensure", "pyav") in calls
+    assert ("probe", "pyav", "lane0-a.mp4") in calls
+
+
 def test_run_scan_probe_parallel_lanes_and_telemetry(monkeypatch) -> None:
     files = [
         _video("lane0-a.mp4", lane=0),
@@ -226,6 +345,7 @@ def test_run_scan_probe_parallel_lanes_and_telemetry(monkeypatch) -> None:
         roots=["R:/A", "S:/B", "T:/C"],
         extensions=["mp4"],
         max_workers=2,
+        probe_backend="ffprobe",
         probe_worker_mode="balanced",
         db_batch_size=64,
         db_flush_interval_ms=200,
@@ -340,6 +460,7 @@ def test_run_scan_burst_mode_allows_multiple_workers_per_lane_up_to_caps(
         roots=["R:/A", "S:/B"],
         extensions=["mp4"],
         max_workers=1,
+        probe_backend="ffprobe",
         probe_worker_mode="burst",
         db_batch_size=64,
         db_flush_interval_ms=200,
@@ -399,6 +520,7 @@ def test_run_scan_reports_worker_capacity_reduction_when_hard_caps_apply(
         roots=["R:/A", "S:/B"],
         extensions=["mp4"],
         max_workers=2,
+        probe_backend="ffprobe",
         probe_worker_mode="burst",
         db_batch_size=64,
         db_flush_interval_ms=200,
@@ -465,6 +587,7 @@ def test_run_scan_streams_enumeration_into_analysis(monkeypatch) -> None:
         roots=["R:/A", "S:/B"],
         extensions=["mp4"],
         max_workers=2,
+        probe_backend="ffprobe",
         db_batch_size=64,
         db_flush_interval_ms=200,
         enum_queue_max=512,
@@ -521,6 +644,7 @@ def test_run_scan_cancellation_during_streaming_overlap(monkeypatch) -> None:
         roots=["R:/A", "S:/B"],
         extensions=["mp4"],
         max_workers=2,
+        probe_backend="ffprobe",
         db_batch_size=64,
         db_flush_interval_ms=200,
         enum_queue_max=512,

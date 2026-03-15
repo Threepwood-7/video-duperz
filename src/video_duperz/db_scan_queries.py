@@ -43,8 +43,11 @@ class DatabaseScanQueryMixin:
                    vm.is_hdr,
                    fp.hash_blob
             FROM files f
-            JOIN video_meta vm ON vm.file_id = f.id
-            JOIN fingerprints fp ON fp.file_id = f.id
+            JOIN scans s ON s.id = f.scan_id
+            JOIN video_meta vm
+              ON vm.file_id = f.id AND vm.probe_backend = s.probe_backend
+            JOIN fingerprints fp
+              ON fp.file_id = f.id AND fp.probe_backend = s.probe_backend
             WHERE f.scan_id = ? AND f.exists_flag = 1 AND fp.algo_version = ?
               AND vm.duration_s > 0
             ORDER BY f.path
@@ -187,6 +190,7 @@ class DatabaseScanQueryMixin:
             "profile": str(row["profile"]),
             "roots": normalize_roots_for_display(roots),
             "extensions": normalize_extensions(extensions),
+            "probe_backend": str(row["probe_backend"] or "pyav"),
             "scan_set_key": str(row["scan_set_key"] or ""),
             "status": str(row["status"]),
         }

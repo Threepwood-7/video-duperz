@@ -10,6 +10,7 @@ ActionKind = Literal["keep", "rename", "delete"]
 SimilarityProfile = Literal["balanced", "conservative", "aggressive"]
 KeepRule = Literal["best_quality"]
 ProbeWorkerMode = Literal["balanced", "burst"]
+ProbeBackendId = Literal["ffprobe", "pyav"]
 THUMBNAIL_SIZE_CHOICES = ("80x45", "96x54", "128x72", "160x90")
 DEFAULT_THUMBNAIL_SIZE = "96x54"
 
@@ -56,6 +57,7 @@ class Settings:
     )
     keep_rule: KeepRule = "best_quality"
     drive_worker_overrides: dict[str, int] = field(default_factory=dict)
+    probe_backend: ProbeBackendId = "pyav"
     probe_worker_mode: ProbeWorkerMode = "balanced"
     scan_db_batch_size: int = 512
     scan_db_flush_interval_ms: int = 200

@@ -16,6 +16,7 @@ from .fingerprint import ALGO_VERSION, FingerprintError
 from .matcher import build_duplicate_groups, find_duplicate_edges
 from .models import (
     MatchStats,
+    ProbeBackendId,
     ScanIssue,
     ScanProgress,
     ScanResult,
@@ -138,15 +139,33 @@ def _flush_pending_analysis_batches(
     while ctx.pending_meta_rows:
         chunk = ctx.pending_meta_rows[: ctx.db_batch_size]
         del ctx.pending_meta_rows[: len(chunk)]
-        _timed_db_write(ctx, ctx.db.save_video_meta_batch, len(chunk), chunk)
+        _timed_db_write(
+            ctx,
+            ctx.db.save_video_meta_batch,
+            len(chunk),
+            chunk,
+            probe_backend=ctx.probe_backend,
+        )
     while ctx.pending_fp_rows:
         chunk = ctx.pending_fp_rows[: ctx.db_batch_size]
         del ctx.pending_fp_rows[: len(chunk)]
-        _timed_db_write(ctx, ctx.db.save_fingerprints_batch, len(chunk), chunk)
+        _timed_db_write(
+            ctx,
+            ctx.db.save_fingerprints_batch,
+            len(chunk),
+            chunk,
+            probe_backend=ctx.probe_backend,
+        )
     while ctx.pending_probe_error_rows:
         chunk = ctx.pending_probe_error_rows[: ctx.db_batch_size]
         del ctx.pending_probe_error_rows[: len(chunk)]
-        _timed_db_write(ctx, ctx.db.save_probe_errors_batch, len(chunk), chunk)
+        _timed_db_write(
+            ctx,
+            ctx.db.save_probe_errors_batch,
+            len(chunk),
+            chunk,
+            probe_backend=ctx.probe_backend,
+        )
     ctx.last_pending_write_at = now
 
 
@@ -326,7 +345,10 @@ def _process_discovered_batch(ctx: _ScanContext, batch: list[VideoRecord]) -> No
         len(valid),
         upsert_payload,
     )
-    cache_by_path = ctx.db.load_cached_artifacts_batch(cache_payload)
+    cache_by_path = ctx.db.load_cached_artifacts_batch(
+        cache_payload,
+        probe_backend=ctx.probe_backend,
+    )
     for file, lane, source_root, file_size, path in valid:
         file_id = int(by_path.get(path, 0))
         if file_id <= 0:
@@ -525,6 +547,7 @@ def run_scan_runtime(
     profile: str = "balanced",
     max_workers: int = 2,
     drive_worker_overrides: dict[str, int] | None = None,
+    probe_backend: ProbeBackendId = "pyav",
     probe_worker_mode: str = "balanced",
     *,
     db_batch_size: int,
@@ -548,6 +571,7 @@ def run_scan_runtime(
         roots,
         extensions,
         profile,
+        probe_backend,
         max_workers,
         drive_worker_overrides,
         probe_worker_mode,

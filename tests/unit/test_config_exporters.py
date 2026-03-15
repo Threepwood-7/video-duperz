@@ -41,6 +41,7 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     settings.identical_sample_b_pct = 91
     settings.results_table_column_widths = [80] * 19
     settings.drive_worker_overrides = {"volume:a": 3}
+    settings.probe_backend = "pyav"
     settings.probe_worker_mode = "burst"
     settings.scan_db_batch_size = 2048
     settings.scan_db_flush_interval_ms = 450
@@ -69,6 +70,7 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     assert loaded.identical_sample_b_pct == 91
     assert loaded.results_table_column_widths == [80] * 19
     assert loaded.drive_worker_overrides == {"volume:a": 3}
+    assert loaded.probe_backend == "pyav"
     assert loaded.probe_worker_mode == "burst"
     assert loaded.scan_db_batch_size == 2048
     assert loaded.scan_db_flush_interval_ms == 450
@@ -313,6 +315,7 @@ def test_settings_drive_worker_overrides_and_probe_mode_normalization(
             "volume:c": MAX_DRIVE_WORKERS + 999,
         },
     )
+    _set_qsettings_value(path, "probe_backend", "INVALID")
     _set_qsettings_value(path, "probe_worker_mode", "INVALID")
 
     loaded = load_settings()
@@ -320,10 +323,13 @@ def test_settings_drive_worker_overrides_and_probe_mode_normalization(
         "volume:a": 1,
         "volume:c": MAX_DRIVE_WORKERS,
     }
+    assert loaded.probe_backend == "pyav"
     assert loaded.probe_worker_mode == "balanced"
 
+    _set_qsettings_value(path, "probe_backend", "pyav")
     _set_qsettings_value(path, "probe_worker_mode", "burst")
     loaded_burst = load_settings()
+    assert loaded_burst.probe_backend == "pyav"
     assert loaded_burst.probe_worker_mode == "burst"
 
 

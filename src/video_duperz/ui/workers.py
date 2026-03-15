@@ -5,6 +5,7 @@ from __future__ import annotations
 import traceback
 from pathlib import Path
 from threading import Event
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QRunnable, Signal
 
@@ -16,6 +17,9 @@ from ..exact_match import (
 )
 from ..pipeline import run_scan
 from .thumbnails import extract_thumbnail_pair, normalize_frame_pair
+
+if TYPE_CHECKING:
+    from ..models import ProbeBackendId
 
 
 class ScanWorkerSignals(QObject):
@@ -37,6 +41,7 @@ class ScanWorker(QRunnable):
         profile: str,
         max_workers: int,
         drive_worker_overrides: dict[str, int] | None = None,
+        probe_backend: ProbeBackendId = "pyav",
         probe_worker_mode: str = "balanced",
         db_batch_size: int = 512,
         db_flush_interval_ms: int = 200,
@@ -52,6 +57,9 @@ class ScanWorker(QRunnable):
         self._profile = profile
         self._max_workers = max_workers
         self._drive_worker_overrides = dict(drive_worker_overrides or {})
+        self._probe_backend: ProbeBackendId = (
+            "ffprobe" if probe_backend == "ffprobe" else "pyav"
+        )
         self._probe_worker_mode = str(probe_worker_mode or "balanced")
         self._db_batch_size = max(32, int(db_batch_size))
         self._db_flush_interval_ms = max(50, int(db_flush_interval_ms))
@@ -73,6 +81,7 @@ class ScanWorker(QRunnable):
                     profile=self._profile,
                     max_workers=self._max_workers,
                     drive_worker_overrides=self._drive_worker_overrides,
+                    probe_backend=self._probe_backend,
                     probe_worker_mode=self._probe_worker_mode,
                     db_batch_size=self._db_batch_size,
                     db_flush_interval_ms=self._db_flush_interval_ms,

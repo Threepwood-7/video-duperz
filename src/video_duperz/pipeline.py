@@ -5,13 +5,14 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING
 
 from .fingerprint import build_fingerprint_record
 from .matcher import build_duplicate_groups, find_duplicate_edges
-from .models import ScanProgress, ScanResult, VideoMeta
+from .models import ProbeBackendId, ScanProgress, ScanResult, VideoMeta
 from .pipeline_runtime import run_scan_runtime
-from .probe import ensure_ffprobe_available, probe_video
+from .probe import ensure_ffprobe_available, ensure_probe_backend_available, probe_video
 from .scanner import build_physical_drive_scan_plan, enumerate_video_files
 
 if TYPE_CHECKING:
@@ -31,9 +32,22 @@ class _AnalyzeOutput:
 
 
 def _analyze_file(path: str, cached_meta: VideoMeta | None) -> _AnalyzeOutput:
+    return _analyze_file_with_probe(
+        path,
+        cached_meta,
+        probe_video_fn=partial(probe_video, backend="ffprobe"),
+    )
+
+
+def _analyze_file_with_probe(
+    path: str,
+    cached_meta: VideoMeta | None,
+    *,
+    probe_video_fn: Callable[[str], VideoMeta],
+) -> _AnalyzeOutput:
     if cached_meta is None:
         probe_started = time.perf_counter()
-        meta = probe_video(path)
+        meta = probe_video_fn(path)
         probe_s = max(0.0, time.perf_counter() - probe_started)
     else:
         meta = cached_meta
@@ -60,6 +74,7 @@ def run_scan(
     profile: str = "balanced",
     max_workers: int = 2,
     drive_worker_overrides: dict[str, int] | None = None,
+    probe_backend: ProbeBackendId = "pyav",
     probe_worker_mode: str = "balanced",
     *,
     db_batch_size: int,
@@ -71,6 +86,17 @@ def run_scan(
     progress_cb: ProgressCallback | None = None,
 ) -> ScanResult:
     """Run a full scan using the default probe, fingerprint, and matcher pipeline."""
+    if probe_backend == "ffprobe":
+        analyze_file: Callable[[str, VideoMeta | None], _AnalyzeOutput] = _analyze_file
+        ensure_available_fn: Callable[[], object] = ensure_ffprobe_available
+    else:
+        analyze_file = partial(
+            _analyze_file_with_probe,
+            probe_video_fn=partial(probe_video, backend=probe_backend),
+        )
+        ensure_available_fn = partial(
+            ensure_probe_backend_available, backend=probe_backend
+        )
     # Preserve module-level monkeypatch seams while the runtime engine lives
     # in its own module.
     return run_scan_runtime(
@@ -88,8 +114,8 @@ def run_scan(
         progress_emit_every_files=progress_emit_every_files,
         cancel_event=cancel_event,
         progress_cb=progress_cb,
-        analyze_file=_analyze_file,
-        ensure_ffprobe_available_fn=ensure_ffprobe_available,
+        analyze_file=analyze_file,
+        ensure_ffprobe_available_fn=ensure_available_fn,
         enumerate_video_files_fn=enumerate_video_files,
         build_scan_plan_fn=build_physical_drive_scan_plan,
         find_duplicate_edges_fn=find_duplicate_edges,

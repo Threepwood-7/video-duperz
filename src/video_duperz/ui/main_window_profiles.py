@@ -12,6 +12,7 @@ from ..config_video_presets import (
     detect_video_extension_preset,
 )
 from ..models import (
+    ProbeBackendId,
     ProbeWorkerMode,
     SavedScanProfilePayload,
     SimilarityProfile,
@@ -213,6 +214,12 @@ class MainWindowProfilesMixin(MainWindowDriveViewMixin):
         if cleaned == "burst":
             return "burst"
         return "balanced"
+
+    def _current_probe_backend(self) -> ProbeBackendId:
+        cleaned = self.probe_backend_combo.currentText().strip().lower()
+        if cleaned == "pyav":
+            return "pyav"
+        return "ffprobe"
 
     def _build_profile_payload_from_sources(self) -> SavedScanProfilePayload | None:
         roots = normalize_roots_for_display(self._current_sources_roots())
