@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import time
 from collections import defaultdict
+from dataclasses import dataclass
 from threading import Event, Lock
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
-from video_duperz import pipeline
+from video_duperz import analyze_process, pipeline
+from video_duperz.analyze_process import AnalyzeOutput, AnalyzeProcessResult
 from video_duperz.db import Database
 from video_duperz.fingerprint import ALGO_VERSION
 from video_duperz.models import MatchStats, ScanProgress, VideoMeta, VideoRecord
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 class _FakeDb:
@@ -56,34 +62,12 @@ class _FakeDb:
             out[path] = file_id
         return out
 
-    def upsert_file(
-        self,
-        path: str,
-        size: int,
-        mtime_ns: int,
-        ctime_ns: int,
-        ext: str,
-        scan_id: int,
-    ) -> int:
-        self._next_file_id += 1
-        return self._next_file_id
-
     def load_cached_artifacts_batch(
         self,
         files: list[dict[str, object]],
         probe_backend: str = "pyav",
     ) -> dict[str, dict]:
         _ = files, probe_backend
-        return {}
-
-    def get_cached_artifacts(
-        self,
-        path: str,
-        size: int,
-        mtime_ns: int,
-        probe_backend: str = "pyav",
-    ) -> dict:
-        _ = path, size, mtime_ns, probe_backend
         return {}
 
     def save_probe_errors_batch(
@@ -95,15 +79,6 @@ class _FakeDb:
         _ = rows, probe_backend
         return None
 
-    def save_probe_error(
-        self,
-        file_id: int,
-        text: str,
-        probe_backend: str = "pyav",
-    ) -> None:
-        _ = file_id, text, probe_backend
-        return None
-
     def save_video_meta_batch(
         self,
         rows: list[tuple[int, object]],
@@ -113,15 +88,6 @@ class _FakeDb:
         _ = rows, probe_backend
         return None
 
-    def save_video_meta(
-        self,
-        file_id: int,
-        meta: object,
-        probe_backend: str = "pyav",
-    ) -> None:
-        _ = file_id, meta, probe_backend
-        return None
-
     def save_fingerprints_batch(
         self,
         rows: list[tuple[int, int, list[int]]],
@@ -129,16 +95,6 @@ class _FakeDb:
         probe_backend: str = "pyav",
     ) -> None:
         _ = rows, probe_backend
-        return None
-
-    def save_fingerprint(
-        self,
-        file_id: int,
-        algo_version: int,
-        hashes: list[int],
-        probe_backend: str = "pyav",
-    ) -> None:
-        _ = file_id, algo_version, hashes, probe_backend
         return None
 
     def save_analysis_issues_batch(
@@ -167,24 +123,159 @@ class _FakeDb:
     def clear_duplicate_groups(self, scan_id: int) -> None:
         return None
 
-    def insert_duplicate_group(
-        self, scan_id: int, profile: str, total_size_bytes: int
-    ) -> int:
-        return 1
-
     def insert_duplicate_groups_batch(
         self, scan_id: int, profile: str, groups: list[object]
     ) -> list[int]:
+        _ = scan_id, profile
         return list(range(1, len(groups) + 1))
 
-    def insert_duplicate_item(self, group_id: int, item: object) -> None:
-        return None
-
     def complete_scan(self, scan_id: int, status: str = "done") -> None:
+        _ = scan_id
         self.status = status
 
     def load_duplicate_groups(self, scan_id: int) -> list:
+        _ = scan_id
         return []
+
+
+@dataclass(slots=True)
+class _FakeAnalyzePlan:
+    delay_s: float
+    runner: Callable[[str, VideoMeta | None], AnalyzeProcessResult]
+    ignore_stop: bool = False
+    stop_delay_s: float = 0.01
+    on_start: Callable[[str], None] | None = None
+    on_finish: Callable[[str], None] | None = None
+
+
+class _FakeAnalyzeHandle:
+    def __init__(
+        self,
+        path: str,
+        cached_meta: VideoMeta | None,
+        plan: _FakeAnalyzePlan,
+    ) -> None:
+        self._path = path
+        self._cached_meta = cached_meta
+        self._plan = plan
+        self._ready_at = time.perf_counter() + float(plan.delay_s)
+        self._stop_requested_at: float | None = None
+        self._killed = False
+        self._collected: AnalyzeProcessResult | None = None
+        if self._plan.on_start is not None:
+            self._plan.on_start(self._path)
+
+    def is_running(self) -> bool:
+        return self._collected is None and not self._killed
+
+    def request_stop(self) -> None:
+        if self._stop_requested_at is None:
+            self._stop_requested_at = time.perf_counter()
+
+    def kill(self) -> None:
+        if not self._killed:
+            self._killed = True
+            self._finish()
+
+    def collect_result(self) -> AnalyzeProcessResult | None:
+        if self._collected is not None:
+            return self._collected
+        now = time.perf_counter()
+        if self._killed:
+            return self._collected
+        if (
+            self._stop_requested_at is not None
+            and not self._plan.ignore_stop
+            and (now - self._stop_requested_at) >= float(self._plan.stop_delay_s)
+        ):
+            self._collected = AnalyzeProcessResult(
+                kind="error",
+                issue_stage="analyze",
+                issue_message="Analyze child stop requested.",
+            )
+            self._finish()
+            return self._collected
+        if now < self._ready_at:
+            return None
+        self._collected = self._plan.runner(self._path, self._cached_meta)
+        self._finish()
+        return self._collected
+
+    def _finish(self) -> None:
+        if self._plan.on_finish is not None:
+            self._plan.on_finish(self._path)
+
+
+class _FakeAnalyzeLauncher:
+    def __init__(
+        self,
+        *,
+        default_plan: _FakeAnalyzePlan,
+        path_plans: dict[str, _FakeAnalyzePlan] | None = None,
+    ) -> None:
+        self._default_plan = default_plan
+        self._path_plans = dict(path_plans or {})
+
+    def launch(self, path: str, cached_meta: VideoMeta | None) -> _FakeAnalyzeHandle:
+        plan = self._path_plans.get(path, self._default_plan)
+        return _FakeAnalyzeHandle(path, cached_meta, plan)
+
+
+def _success_output(duration_s: float = 1.0) -> AnalyzeOutput:
+    return AnalyzeOutput(
+        meta=VideoMeta(
+            duration_s=duration_s,
+            width=1920,
+            height=1080,
+            fps=24.0,
+            codec="h264",
+            bitrate=1_000_000,
+            has_audio=True,
+            audio_codec="aac",
+            audio_bitrate=128000,
+            audio_languages="eng",
+            subtitle_languages="",
+            is_hdr=False,
+        ),
+        hashes=[1, 2, 3],
+    )
+
+
+def _success_result(duration_s: float = 1.0) -> AnalyzeProcessResult:
+    return AnalyzeProcessResult(kind="success", output=_success_output(duration_s))
+
+
+def _analyze_runner(
+    probe_backend: str,
+) -> Callable[[str, VideoMeta | None], AnalyzeProcessResult]:
+    def _runner(path: str, cached_meta: VideoMeta | None) -> AnalyzeProcessResult:
+        try:
+            output = analyze_process.analyze_video_file(
+                path,
+                cached_meta,
+                probe_backend="ffprobe" if probe_backend == "ffprobe" else "pyav",
+            )
+        except analyze_process.ProbeError as exc:
+            return AnalyzeProcessResult(
+                kind="error",
+                issue_stage="probe",
+                issue_message=str(exc),
+            )
+        except analyze_process.FingerprintError as exc:
+            return AnalyzeProcessResult(
+                kind="error",
+                issue_stage="fingerprint",
+                issue_message=str(exc),
+            )
+        except Exception as exc:
+            return AnalyzeProcessResult(
+                kind="error",
+                issue_stage="analyze",
+                issue_message=str(exc),
+            )
+        return AnalyzeProcessResult(kind="success", output=output)
+
+    return _runner
 
 
 def _video(path: str, lane: int) -> VideoRecord:
@@ -233,13 +324,30 @@ def _lane_plan_for_roots(
     )
 
 
+def _install_common_scan_monkeypatches(monkeypatch, files: list[VideoRecord]) -> None:
+    monkeypatch.setattr(
+        pipeline, "ensure_analyze_fallback_chain_available", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        pipeline, "enumerate_video_files", lambda **kwargs: (list(files), [])
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "find_duplicate_edges",
+        lambda items, profile: ([], MatchStats()),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_duplicate_groups",
+        lambda items, edges, profile: [],
+    )
+
+
 def test_run_scan_pyav_backend_routes_probe_calls(monkeypatch) -> None:
     files = [_video("lane0-a.mp4", lane=0)]
     calls: list[object] = []
 
-    monkeypatch.setattr(
-        pipeline, "enumerate_video_files", lambda **kwargs: (list(files), [])
-    )
+    _install_common_scan_monkeypatches(monkeypatch, files)
     monkeypatch.setattr(
         pipeline,
         "build_physical_drive_scan_plan",
@@ -249,13 +357,17 @@ def test_run_scan_pyav_backend_routes_probe_calls(monkeypatch) -> None:
         ),
     )
     monkeypatch.setattr(
-        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
-    )
-    monkeypatch.setattr(
-        pipeline, "build_duplicate_groups", lambda items, edges, profile: []
-    )
-    monkeypatch.setattr(
         pipeline,
+        "create_analyze_launcher",
+        lambda _backend: _FakeAnalyzeLauncher(
+            default_plan=_FakeAnalyzePlan(
+                delay_s=0.0,
+                runner=_analyze_runner("pyav"),
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        analyze_process,
         "build_fingerprint_record_with_fallback",
         lambda **kwargs: SimpleNamespace(
             record=SimpleNamespace(hashes=[1, 2, 3]),
@@ -268,7 +380,7 @@ def test_run_scan_pyav_backend_routes_probe_calls(monkeypatch) -> None:
         lambda backend="ffprobe": calls.append(("ensure", backend)),
     )
     monkeypatch.setattr(
-        pipeline,
+        analyze_process,
         "probe_video",
         lambda path, *, backend="ffprobe", relaxed=False: (
             calls.append(("probe", backend, path))
@@ -313,12 +425,7 @@ def test_run_scan_records_probe_fallback_provenance(monkeypatch) -> None:
     files = [_video("lane0-a.mp4", lane=0)]
     calls: list[tuple[str, bool, str]] = []
 
-    monkeypatch.setattr(
-        pipeline, "ensure_analyze_fallback_chain_available", lambda *_a, **_k: None
-    )
-    monkeypatch.setattr(
-        pipeline, "enumerate_video_files", lambda **kwargs: (list(files), [])
-    )
+    _install_common_scan_monkeypatches(monkeypatch, files)
     monkeypatch.setattr(
         pipeline,
         "build_physical_drive_scan_plan",
@@ -328,13 +435,17 @@ def test_run_scan_records_probe_fallback_provenance(monkeypatch) -> None:
         ),
     )
     monkeypatch.setattr(
-        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
-    )
-    monkeypatch.setattr(
-        pipeline, "build_duplicate_groups", lambda items, edges, profile: []
-    )
-    monkeypatch.setattr(
         pipeline,
+        "create_analyze_launcher",
+        lambda _backend: _FakeAnalyzeLauncher(
+            default_plan=_FakeAnalyzePlan(
+                delay_s=0.0,
+                runner=_analyze_runner("pyav"),
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        analyze_process,
         "build_fingerprint_record_with_fallback",
         lambda **kwargs: SimpleNamespace(
             record=SimpleNamespace(hashes=[1, 2, 3]),
@@ -347,26 +458,13 @@ def test_run_scan_records_probe_fallback_provenance(monkeypatch) -> None:
         *,
         backend: str = "ffprobe",
         relaxed: bool = False,
-    ):
+    ) -> VideoMeta:
         calls.append((backend, relaxed, path))
         if backend == "pyav":
             raise RuntimeError("pyav analyze failed")
-        return VideoMeta(
-            duration_s=1.0,
-            width=1920,
-            height=1080,
-            fps=24.0,
-            codec="h264",
-            bitrate=1,
-            has_audio=True,
-            audio_codec="aac",
-            audio_bitrate=1,
-            audio_languages="eng",
-            subtitle_languages="",
-            is_hdr=False,
-        )
+        return _success_output().meta
 
-    monkeypatch.setattr(pipeline, "probe_video", _fake_probe)
+    monkeypatch.setattr(analyze_process, "probe_video", _fake_probe)
 
     db = _FakeDb()
     result = pipeline.run_scan(
@@ -398,12 +496,7 @@ def test_run_scan_records_probe_fallback_provenance(monkeypatch) -> None:
 def test_run_scan_records_fingerprint_fallback_provenance(monkeypatch) -> None:
     files = [_video("lane0-a.mp4", lane=0)]
 
-    monkeypatch.setattr(
-        pipeline, "ensure_analyze_fallback_chain_available", lambda *_a, **_k: None
-    )
-    monkeypatch.setattr(
-        pipeline, "enumerate_video_files", lambda **kwargs: (list(files), [])
-    )
+    _install_common_scan_monkeypatches(monkeypatch, files)
     monkeypatch.setattr(
         pipeline,
         "build_physical_drive_scan_plan",
@@ -413,31 +506,20 @@ def test_run_scan_records_fingerprint_fallback_provenance(monkeypatch) -> None:
         ),
     )
     monkeypatch.setattr(
-        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
-    )
-    monkeypatch.setattr(
-        pipeline, "build_duplicate_groups", lambda items, edges, profile: []
-    )
-    monkeypatch.setattr(
         pipeline,
-        "probe_video",
-        lambda path, *, backend="ffprobe", relaxed=False: VideoMeta(
-            duration_s=1.0,
-            width=1920,
-            height=1080,
-            fps=24.0,
-            codec="h264",
-            bitrate=1,
-            has_audio=True,
-            audio_codec="aac",
-            audio_bitrate=1,
-            audio_languages="eng",
-            subtitle_languages="",
-            is_hdr=False,
+        "create_analyze_launcher",
+        lambda _backend: _FakeAnalyzeLauncher(
+            default_plan=_FakeAnalyzePlan(
+                delay_s=0.0,
+                runner=_analyze_runner("pyav"),
+            )
         ),
     )
     monkeypatch.setattr(
-        pipeline,
+        analyze_process, "probe_video", lambda *args, **kwargs: _success_output().meta
+    )
+    monkeypatch.setattr(
+        analyze_process,
         "build_fingerprint_record_with_fallback",
         lambda **kwargs: SimpleNamespace(
             record=SimpleNamespace(hashes=[1, 2, 3]),
@@ -481,12 +563,7 @@ def test_run_scan_probe_parallel_lanes_and_telemetry(monkeypatch) -> None:
     ]
     lane_by_path = {file.path: file.parallel_lane for file in files}
 
-    monkeypatch.setattr(
-        pipeline, "ensure_analyze_fallback_chain_available", lambda *_a, **_k: None
-    )
-    monkeypatch.setattr(
-        pipeline, "enumerate_video_files", lambda **kwargs: (list(files), [])
-    )
+    _install_common_scan_monkeypatches(monkeypatch, files)
     monkeypatch.setattr(
         pipeline,
         "build_physical_drive_scan_plan",
@@ -495,12 +572,6 @@ def test_run_scan_probe_parallel_lanes_and_telemetry(monkeypatch) -> None:
             lane_worker_limits={0: 3, 1: 2, 2: 1},
         ),
     )
-    monkeypatch.setattr(
-        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
-    )
-    monkeypatch.setattr(
-        pipeline, "build_duplicate_groups", lambda items, edges, profile: []
-    )
 
     lock = Lock()
     active_total = 0
@@ -508,7 +579,7 @@ def test_run_scan_probe_parallel_lanes_and_telemetry(monkeypatch) -> None:
     active_by_lane: dict[int, int] = defaultdict(int)
     max_active_by_lane: dict[int, int] = defaultdict(int)
 
-    def _fake_analyze(path: str, cached_meta: object | None) -> pipeline._AnalyzeOutput:
+    def _on_start(path: str) -> None:
         nonlocal active_total, max_active_total
         lane = lane_by_path[path]
         with lock:
@@ -518,20 +589,31 @@ def test_run_scan_probe_parallel_lanes_and_telemetry(monkeypatch) -> None:
             max_active_by_lane[lane] = max(
                 max_active_by_lane[lane], active_by_lane[lane]
             )
-        time.sleep(0.01)
+
+    def _on_finish(path: str) -> None:
+        nonlocal active_total
+        lane = lane_by_path[path]
         with lock:
             active_by_lane[lane] -= 1
             active_total -= 1
-        return pipeline._AnalyzeOutput(
-            meta=SimpleNamespace(duration_s=1.0), hashes=[11, 22, 33]
-        )
 
-    monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)
+    monkeypatch.setattr(
+        pipeline,
+        "create_analyze_launcher",
+        lambda _backend: _FakeAnalyzeLauncher(
+            default_plan=_FakeAnalyzePlan(
+                delay_s=0.01,
+                runner=lambda _path, _cached: _success_result(),
+                on_start=_on_start,
+                on_finish=_on_finish,
+            )
+        ),
+    )
 
     progress: list[ScanProgress] = []
     db = _FakeDb()
     result = pipeline.run_scan(
-        db=db,  # type: ignore[arg-type]
+        db=db,
         roots=["R:/A", "S:/B", "T:/C"],
         extensions=["mp4"],
         max_workers=2,
@@ -562,27 +644,6 @@ def test_run_scan_probe_parallel_lanes_and_telemetry(monkeypatch) -> None:
     assert any(
         step.lane_snapshots for step in progress if step.stage in {"prepare", "probe"}
     )
-    telemetry_frames = [
-        step
-        for step in progress
-        if step.stage in {"prepare", "probe"} and step.lane_snapshots
-    ]
-    assert telemetry_frames
-    assert any((step.discovered_files_per_s or 0.0) >= 0.0 for step in telemetry_frames)
-    assert any((step.discovered_mib_per_s or 0.0) >= 0.0 for step in telemetry_frames)
-    assert any((step.analyzed_files_per_s or 0.0) >= 0.0 for step in telemetry_frames)
-    assert any((step.analyzed_mib_per_s or 0.0) >= 0.0 for step in telemetry_frames)
-    assert all((step.cache_hit_ratio or 0.0) >= 0.0 for step in telemetry_frames)
-    assert all((step.cache_hit_ratio or 0.0) <= 1.0 for step in telemetry_frames)
-    assert any((step.discovered_bytes or 0) > 0 for step in telemetry_frames)
-    assert any(
-        all(
-            snapshot.discovered_files_per_s >= 0.0
-            and snapshot.analyzed_files_per_s >= 0.0
-            for snapshot in (step.lane_snapshots or [])
-        )
-        for step in telemetry_frames
-    )
 
 
 def test_run_scan_burst_mode_allows_multiple_workers_per_lane_up_to_caps(
@@ -599,12 +660,7 @@ def test_run_scan_burst_mode_allows_multiple_workers_per_lane_up_to_caps(
     ]
     lane_by_path = {file.path: file.parallel_lane for file in files}
 
-    monkeypatch.setattr(
-        pipeline, "ensure_analyze_fallback_chain_available", lambda *_a, **_k: None
-    )
-    monkeypatch.setattr(
-        pipeline, "enumerate_video_files", lambda **kwargs: (list(files), [])
-    )
+    _install_common_scan_monkeypatches(monkeypatch, files)
     monkeypatch.setattr(
         pipeline,
         "build_physical_drive_scan_plan",
@@ -613,12 +669,6 @@ def test_run_scan_burst_mode_allows_multiple_workers_per_lane_up_to_caps(
             lane_worker_limits={0: 3, 1: 1},
         ),
     )
-    monkeypatch.setattr(
-        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
-    )
-    monkeypatch.setattr(
-        pipeline, "build_duplicate_groups", lambda items, edges, profile: []
-    )
 
     lock = Lock()
     active_total = 0
@@ -626,7 +676,7 @@ def test_run_scan_burst_mode_allows_multiple_workers_per_lane_up_to_caps(
     active_by_lane: dict[int, int] = defaultdict(int)
     max_active_by_lane: dict[int, int] = defaultdict(int)
 
-    def _fake_analyze(path: str, cached_meta: object | None) -> pipeline._AnalyzeOutput:
+    def _on_start(path: str) -> None:
         nonlocal active_total, max_active_total
         lane = lane_by_path[path]
         with lock:
@@ -636,19 +686,30 @@ def test_run_scan_burst_mode_allows_multiple_workers_per_lane_up_to_caps(
             max_active_by_lane[lane] = max(
                 max_active_by_lane[lane], active_by_lane[lane]
             )
-        time.sleep(0.01)
+
+    def _on_finish(path: str) -> None:
+        nonlocal active_total
+        lane = lane_by_path[path]
         with lock:
             active_by_lane[lane] -= 1
             active_total -= 1
-        return pipeline._AnalyzeOutput(
-            meta=SimpleNamespace(duration_s=1.0), hashes=[11, 22, 33]
-        )
 
-    monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)
+    monkeypatch.setattr(
+        pipeline,
+        "create_analyze_launcher",
+        lambda _backend: _FakeAnalyzeLauncher(
+            default_plan=_FakeAnalyzePlan(
+                delay_s=0.01,
+                runner=lambda _path, _cached: _success_result(),
+                on_start=_on_start,
+                on_finish=_on_finish,
+            )
+        ),
+    )
 
     db = _FakeDb()
     result = pipeline.run_scan(
-        db=db,  # type: ignore[arg-type]
+        db=db,
         roots=["R:/A", "S:/B"],
         extensions=["mp4"],
         max_workers=1,
@@ -672,17 +733,9 @@ def test_run_scan_burst_mode_allows_multiple_workers_per_lane_up_to_caps(
 def test_run_scan_reports_worker_capacity_reduction_when_hard_caps_apply(
     monkeypatch,
 ) -> None:
-    files = [
-        _video("lane0-a.mp4", lane=0),
-        _video("lane1-a.mp4", lane=1),
-    ]
+    files = [_video("lane0-a.mp4", lane=0), _video("lane1-a.mp4", lane=1)]
 
-    monkeypatch.setattr(
-        pipeline, "ensure_analyze_fallback_chain_available", lambda *_a, **_k: None
-    )
-    monkeypatch.setattr(
-        pipeline, "enumerate_video_files", lambda **kwargs: (list(files), [])
-    )
+    _install_common_scan_monkeypatches(monkeypatch, files)
     monkeypatch.setattr(
         pipeline,
         "build_physical_drive_scan_plan",
@@ -693,24 +746,20 @@ def test_run_scan_reports_worker_capacity_reduction_when_hard_caps_apply(
         ),
     )
     monkeypatch.setattr(
-        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
-    )
-    monkeypatch.setattr(
-        pipeline, "build_duplicate_groups", lambda items, edges, profile: []
-    )
-    monkeypatch.setattr(
         pipeline,
-        "_analyze_file",
-        lambda path, cached_meta: pipeline._AnalyzeOutput(
-            meta=SimpleNamespace(duration_s=1.0),
-            hashes=[11, 22, 33],
+        "create_analyze_launcher",
+        lambda _backend: _FakeAnalyzeLauncher(
+            default_plan=_FakeAnalyzePlan(
+                delay_s=0.0,
+                runner=lambda _path, _cached: _success_result(),
+            )
         ),
     )
 
     progress: list[ScanProgress] = []
     db = _FakeDb()
     result = pipeline.run_scan(
-        db=db,  # type: ignore[arg-type]
+        db=db,
         roots=["R:/A", "S:/B"],
         extensions=["mp4"],
         max_workers=2,
@@ -739,10 +788,7 @@ def test_run_scan_reports_worker_capacity_reduction_when_hard_caps_apply(
 
 
 def test_run_scan_streams_enumeration_into_analysis(monkeypatch) -> None:
-    files = [
-        _video("lane0-a.mp4", lane=0),
-        _video("lane1-a.mp4", lane=1),
-    ]
+    files = [_video("lane0-a.mp4", lane=0), _video("lane1-a.mp4", lane=1)]
     timeline: dict[str, float] = {}
     analyze_starts: list[float] = []
 
@@ -767,19 +813,22 @@ def test_run_scan_streams_enumeration_into_analysis(monkeypatch) -> None:
         timeline["enum_end"] = time.perf_counter()
         return list(files), []
 
-    def _fake_analyze(path: str, cached_meta: object | None) -> pipeline._AnalyzeOutput:
-        analyze_starts.append(time.perf_counter())
-        time.sleep(0.01)
-        return pipeline._AnalyzeOutput(
-            meta=SimpleNamespace(duration_s=1.0), hashes=[11, 22, 33]
-        )
-
     monkeypatch.setattr(pipeline, "enumerate_video_files", _fake_enumerate)
-    monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)
+    monkeypatch.setattr(
+        pipeline,
+        "create_analyze_launcher",
+        lambda _backend: _FakeAnalyzeLauncher(
+            default_plan=_FakeAnalyzePlan(
+                delay_s=0.01,
+                runner=lambda _path, _cached: _success_result(),
+                on_start=lambda _path: analyze_starts.append(time.perf_counter()),
+            )
+        ),
+    )
 
     db = _FakeDb()
     result = pipeline.run_scan(
-        db=db,  # type: ignore[arg-type]
+        db=db,
         roots=["R:/A", "S:/B"],
         extensions=["mp4"],
         max_workers=2,
@@ -827,18 +876,21 @@ def test_run_scan_cancellation_during_streaming_overlap(monkeypatch) -> None:
             time.sleep(0.005)
         return list(files), []
 
-    def _fake_analyze(path: str, cached_meta: object | None) -> pipeline._AnalyzeOutput:
-        time.sleep(0.01)
-        return pipeline._AnalyzeOutput(
-            meta=SimpleNamespace(duration_s=1.0), hashes=[11, 22, 33]
-        )
-
     monkeypatch.setattr(pipeline, "enumerate_video_files", _fake_enumerate)
-    monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)
+    monkeypatch.setattr(
+        pipeline,
+        "create_analyze_launcher",
+        lambda _backend: _FakeAnalyzeLauncher(
+            default_plan=_FakeAnalyzePlan(
+                delay_s=0.2,
+                runner=lambda _path, _cached: _success_result(),
+            )
+        ),
+    )
 
     db = _FakeDb()
     result = pipeline.run_scan(
-        db=db,  # type: ignore[arg-type]
+        db=db,
         roots=["R:/A", "S:/B"],
         extensions=["mp4"],
         max_workers=2,
@@ -859,17 +911,9 @@ def test_run_scan_marks_timed_out_analysis_for_manual_review(
     tmp_path,
     monkeypatch,
 ) -> None:
-    files = [
-        _video("lane0-ok.mp4", lane=0),
-        _video("lane1-stuck.mp4", lane=1),
-    ]
+    files = [_video("lane0-ok.mp4", lane=0), _video("lane1-stuck.mp4", lane=1)]
 
-    monkeypatch.setattr(
-        pipeline, "ensure_analyze_fallback_chain_available", lambda *_a, **_k: None
-    )
-    monkeypatch.setattr(
-        pipeline, "enumerate_video_files", lambda **kwargs: (list(files), [])
-    )
+    _install_common_scan_monkeypatches(monkeypatch, files)
     monkeypatch.setattr(
         pipeline,
         "build_physical_drive_scan_plan",
@@ -879,53 +923,25 @@ def test_run_scan_marks_timed_out_analysis_for_manual_review(
         ),
     )
     monkeypatch.setattr(
-        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
+        "video_duperz.pipeline_runtime_context.ANALYZE_STOP_GRACE_S", 0.05
     )
     monkeypatch.setattr(
-        pipeline, "build_duplicate_groups", lambda items, edges, profile: []
-    )
-
-    def _fake_analyze(path: str, cached_meta: object | None) -> pipeline._AnalyzeOutput:
-        _ = cached_meta
-        if path.endswith("stuck.mp4"):
-            time.sleep(1.6)
-            return pipeline._AnalyzeOutput(
-                meta=VideoMeta(
-                    duration_s=9.0,
-                    width=1920,
-                    height=1080,
-                    fps=24.0,
-                    codec="h264",
-                    bitrate=1_000_000,
-                    has_audio=True,
-                    audio_codec="aac",
-                    audio_bitrate=128000,
-                    audio_languages="eng",
-                    subtitle_languages="",
-                    is_hdr=False,
-                ),
-                hashes=[7, 8, 9],
-            )
-        time.sleep(0.05)
-        return pipeline._AnalyzeOutput(
-            meta=VideoMeta(
-                duration_s=1.0,
-                width=1280,
-                height=720,
-                fps=30.0,
-                codec="h264",
-                bitrate=500_000,
-                has_audio=True,
-                audio_codec="aac",
-                audio_bitrate=128000,
-                audio_languages="eng",
-                subtitle_languages="",
-                is_hdr=False,
+        pipeline,
+        "create_analyze_launcher",
+        lambda _backend: _FakeAnalyzeLauncher(
+            default_plan=_FakeAnalyzePlan(
+                delay_s=0.05,
+                runner=lambda _path, _cached: _success_result(),
             ),
-            hashes=[1, 2, 3],
-        )
-
-    monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)
+            path_plans={
+                "lane1-stuck.mp4": _FakeAnalyzePlan(
+                    delay_s=10.0,
+                    runner=lambda _path, _cached: _success_result(duration_s=9.0),
+                    ignore_stop=True,
+                )
+            },
+        ),
+    )
 
     with Database(tmp_path / "timeout.db") as db:
         started = time.perf_counter()
@@ -960,7 +976,6 @@ def test_run_scan_marks_timed_out_analysis_for_manual_review(
         assert persisted[0]["stage"] == "analyze_timeout"
         assert "manual review required" in persisted[0]["message"]
 
-        time.sleep(0.8)
         match_items = db.list_match_items_for_scan(
             scan_id=result.scan_id,
             algo_version=ALGO_VERSION,

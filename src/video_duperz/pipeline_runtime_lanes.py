@@ -7,16 +7,13 @@ from collections import deque
 from typing import TYPE_CHECKING
 
 from .models import ScanLaneSnapshot
+from .pipeline_runtime_context import ActiveAnalyzeProcess as _ActiveAnalyzeProcess
 from .pipeline_runtime_progress import (
     effective_worker_limit_locked,
     lane_runtime_cap_locked,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-    from concurrent.futures import Future, ThreadPoolExecutor
-
-    from .pipeline_runtime_context import AnalyzeOutputLike as _AnalyzeOutputLike
     from .pipeline_runtime_context import AnalyzeTask as _AnalyzeTask
     from .pipeline_runtime_context import ScanContext as _ScanContext
 
@@ -86,33 +83,18 @@ def queue_lane_if_ready_locked(ctx: _ScanContext, lane: int) -> None:
     ctx.ready_set.add(lane)
 
 
-def _run_task_with_start_marker(
-    ctx: _ScanContext,
-    task: _AnalyzeTask,
-) -> _AnalyzeOutputLike:
-    """Run one analyze task and record when the worker actually starts."""
-    started_at = time.perf_counter()
-    with ctx.state_lock:
-        ctx.started_task_at[task.task_id] = started_at
-    return ctx.analyze_file(task.path, task.cached_meta)
-
-
 def submit_next_for_lane(
     ctx: _ScanContext,
-    executor: ThreadPoolExecutor,
     lane: int,
-    on_future_done: Callable[[Future[_AnalyzeOutputLike]], None],
 ) -> bool:
-    """Submit the next queued analysis task for one lane.
+    """Launch the next queued analysis task for one lane.
 
     Args:
         ctx: Shared scan runtime context.
-        executor: Thread pool used for file analysis tasks.
         lane: Lane identifier to submit from.
-        on_future_done: Callback attached to the submitted future.
 
     Returns:
-        ``True`` when a task was submitted, otherwise ``False``.
+        ``True`` when a task was launched, otherwise ``False``.
     """
     with ctx.state_lock:
         lane_queue = ctx.lane_queues.get(lane)
@@ -124,60 +106,68 @@ def submit_next_for_lane(
         task = lane_queue.popleft()
         lane_state = ensure_lane_state_locked(ctx, lane, task.source_root)
         lane_state.queued = max(0, lane_state.queued - 1)
+    handle = ctx.analyze_launcher.launch(task.path, task.cached_meta)
+    started_at = time.perf_counter()
+    with ctx.state_lock:
+        active_process = _ActiveAnalyzeProcess(
+            task=task,
+            handle=handle,
+            started_at=started_at,
+        )
         lane_state.active_file = task.path
         ctx.active_by_lane[lane] = lane_active_count + 1
         ctx.active_workers += 1
+        ctx.active_processes[task.task_id] = active_process
         queue_lane_if_ready_locked(ctx, lane)
         refresh_lane_state_locked(ctx, lane)
-    future = executor.submit(_run_task_with_start_marker, ctx, task)
-    with ctx.state_lock:
-        ctx.futures[future] = task
-    future.add_done_callback(on_future_done)
     return True
 
 
 def submit_ready_lanes(
     ctx: _ScanContext,
-    executor: ThreadPoolExecutor,
-    on_future_done: Callable[[Future[_AnalyzeOutputLike]], None],
 ) -> int:
-    """Submit ready lanes until the scheduler reaches its worker limit.
+    """Launch ready lanes until the scheduler reaches its worker limit.
 
     Args:
         ctx: Shared scan runtime context.
-        executor: Thread pool used for file analysis tasks.
-        on_future_done: Callback attached to submitted futures.
 
     Returns:
-        Number of tasks submitted during this scheduling pass.
+        Number of tasks launched during this scheduling pass.
     """
     submitted = 0
     while True:
         with ctx.state_lock:
             if (
-                len(ctx.futures) >= effective_worker_limit_locked(ctx)
+                len(ctx.active_processes) >= effective_worker_limit_locked(ctx)
                 or not ctx.ready_lanes
             ):
                 return submitted
             lane = ctx.ready_lanes.popleft()
             ctx.ready_set.discard(lane)
-        if submit_next_for_lane(ctx, executor, lane, on_future_done):
+        if submit_next_for_lane(ctx, lane):
             submitted += 1
 
 
-def finalize_task(ctx: _ScanContext, task: _AnalyzeTask) -> tuple[int, int]:
-    """Finalize counters and lane telemetry for one completed task.
+def release_task_slot(
+    ctx: _ScanContext,
+    task: _AnalyzeTask,
+    *,
+    count_as_analyzed: bool,
+) -> tuple[int, int]:
+    """Release one active lane slot and optionally count it as analyzed.
 
     Args:
         ctx: Shared scan runtime context.
-        task: Completed analysis task to retire.
+        task: Completed or retired analysis task to release.
+        count_as_analyzed: Whether the task should advance analyzed counters.
 
     Returns:
         Tuple of analyzed-file count and total analysis target.
     """
     with ctx.state_lock:
-        ctx.analyzed_files += 1
-        ctx.analyzed_bytes += task.size
+        if count_as_analyzed:
+            ctx.analyzed_files += 1
+            ctx.analyzed_bytes += task.size
         ctx.active_workers = max(0, ctx.active_workers - 1)
         lane_workers = max(0, int(ctx.active_by_lane.get(task.lane, 0)) - 1)
         ctx.active_by_lane[task.lane] = lane_workers
@@ -189,6 +179,11 @@ def finalize_task(ctx: _ScanContext, task: _AnalyzeTask) -> tuple[int, int]:
         queue_lane_if_ready_locked(ctx, task.lane)
         refresh_lane_state_locked(ctx, task.lane)
         return ctx.analyzed_files, max(1, ctx.total_analyze_files)
+
+
+def finalize_task(ctx: _ScanContext, task: _AnalyzeTask) -> tuple[int, int]:
+    """Finalize counters and lane telemetry for one completed task."""
+    return release_task_slot(ctx, task, count_as_analyzed=True)
 
 
 def apply_cancel_state(ctx: _ScanContext) -> None:

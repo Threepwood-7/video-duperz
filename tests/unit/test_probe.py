@@ -206,6 +206,99 @@ def test_probe_video_pyav_maps_metadata(monkeypatch: pytest.MonkeyPatch) -> None
     )
 
 
+def test_probe_video_pyav_maps_metadata_when_av_time_base_is_integer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeCodecContext:
+        def __init__(
+            self,
+            *,
+            name: str,
+            width: int = 0,
+            height: int = 0,
+            bit_rate: int = 0,
+            color_trc: str = "",
+            color_primaries: str = "",
+        ) -> None:
+            self.name = name
+            self.width = width
+            self.height = height
+            self.bit_rate = bit_rate
+            self.color_trc = color_trc
+            self.color_primaries = color_primaries
+            self.codec = SimpleNamespace(name=name)
+
+    class _FakeStream:
+        def __init__(
+            self,
+            *,
+            stream_type: str,
+            codec_context: _FakeCodecContext,
+            average_rate: object = None,
+            duration: int | None = None,
+            time_base: object = None,
+            metadata: dict[str, str] | None = None,
+            bit_rate: int = 0,
+        ) -> None:
+            self.type = stream_type
+            self.codec_context = codec_context
+            self.average_rate = average_rate
+            self.duration = duration
+            self.time_base = time_base
+            self.metadata = metadata or {}
+            self.bit_rate = bit_rate
+            self.width = codec_context.width
+            self.height = codec_context.height
+
+    class _FakeContainer:
+        def __init__(self) -> None:
+            self.duration = 10_000_000
+            self.bit_rate = 8_000_000
+            self.streams = [
+                _FakeStream(
+                    stream_type="video",
+                    codec_context=_FakeCodecContext(
+                        name="hevc",
+                        width=3840,
+                        height=2160,
+                        bit_rate=7_000_000,
+                        color_trc="smpte2084",
+                        color_primaries="bt2020",
+                    ),
+                    average_rate=Fraction(24000, 1001),
+                    duration=240,
+                    time_base=Fraction(1, 24),
+                ),
+                _FakeStream(
+                    stream_type="audio",
+                    codec_context=_FakeCodecContext(name="eac3", bit_rate=640000),
+                    metadata={"language": "eng"},
+                    bit_rate=640000,
+                ),
+            ]
+
+        def __enter__(self) -> _FakeContainer:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "video_duperz.probe._import_av",
+        lambda: SimpleNamespace(
+            time_base=1_000_000,
+            open=lambda _path: _FakeContainer(),
+        ),
+    )
+
+    meta = probe_video(r"C:\videos\hdr.mkv", backend="pyav")
+
+    assert meta.duration_s == 10.0
+    assert meta.codec == "hevc"
+    assert meta.width == 3840
+    assert meta.height == 2160
+
+
 def test_probe_video_ffprobe_relaxed_mode_adds_lenient_args(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

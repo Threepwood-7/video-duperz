@@ -225,6 +225,7 @@ video-duperz/
 |       |-- db.py                    # SQLite database layer
 |       |-- scanner.py               # File enumeration and physical drive detection
 |       |-- pipeline.py              # Scan orchestration (enumerate/probe/fingerprint/match)
+|       |-- analyze_process.py       # Per-file analyze child process protocol and launcher
 |       |-- probe.py                 # PyAV/ffprobe metadata probing with fallback
 |       |-- fingerprint.py           # dhash computation with OpenCV/PyAV/ffmpeg fallbacks
 |       |-- matcher.py               # Duplicate edge detection and grouping
@@ -267,13 +268,15 @@ video-duperz/
 - CLI entry point (`__main__.py`) dispatches to `gui`, `scan`, `export`, or `clean` commands.
 - **Scan pipeline** (`pipeline.py`) orchestrates five stages:
   1. **Enumerate** - discover video files with physical drive-aware lane distribution
-  2. **Probe** - extract metadata through the selected backend with automatic alternate-backend fallback
-  3. **Fingerprint** - compute 12 dhash values using OpenCV first, then PyAV and ffmpeg fallbacks for difficult files
-  4. **Match** - bucket files by characteristics, find duplicate pairs, compute similarity scores
-  5. **Results** - group duplicates and determine default keep file by quality score
+  2. **Analyze** - launch one hidden child process per file for metadata probing and fingerprint extraction
+  3. **Probe** - extract metadata through the selected backend with automatic alternate-backend fallback inside the analyze child
+  4. **Fingerprint** - compute 12 dhash values using OpenCV first, then PyAV and ffmpeg fallbacks for difficult files
+  5. **Match** - bucket files by characteristics, find duplicate pairs, compute similarity scores
+  6. **Results** - group duplicates and determine default keep file by quality score
 - **Physical drive mapping** (`scanner.py`) uses Windows kernel32 APIs to map volumes to physical drives and allocate I/O workers per drive.
 - **Database** (`db.py`) uses SQLite with WAL mode, aggressive PRAGMAs (mmap, cache_size, synchronous=NORMAL), and batch transaction flushing.
 - **GUI threading** uses `QThreadPool` with `QRunnable`-based workers (`ScanWorker`, `ThumbnailPairWorker`, `ExactMatchGroupWorker`) communicating via Qt signals.
+- **Analyze isolation** uses one hidden Python child process per file so timed-out or wedged probe/fingerprint work can be terminated robustly without leaving stuck worker threads behind.
 - **Quality scoring** (`quality.py`) combines resolution (65%), bitrate (25%), and codec quality (10%) weights.
 
 ## Development
@@ -345,6 +348,10 @@ The scan pipeline now retries difficult files through multiple fallback paths:
 - fingerprint frames: OpenCV, then PyAV, then ffmpeg
 
 This lenient fallback chain is enabled by default so damaged files get a better chance to finish scanning before being marked as failed.
+
+### Analyze timeouts
+
+Per-file analyze work now runs in a separate hidden child process. When `Scan analysis timeout` is exceeded, the parent runtime requests a cooperative stop first, then forcefully kills the child process tree if it still does not exit. Timed-out files are skipped from duplicate matching and recorded for manual review.
 
 ### Database errors
 

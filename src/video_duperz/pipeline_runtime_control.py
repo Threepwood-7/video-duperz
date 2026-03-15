@@ -94,7 +94,7 @@ def pipeline_should_stop(
     """
     with ctx.state_lock:
         waiting_items = any(bool(queue) for queue in ctx.lane_queues.values())
-        active_count = len(ctx.futures)
+        active_count = len(ctx.active_processes)
     pending_writes = bool(
         ctx.pending_meta_rows
         or ctx.pending_fp_rows
@@ -135,20 +135,31 @@ def wait_for_pipeline_event(ctx: _ScanContext) -> None:
         or ctx.pending_analysis_issue_clear_ids
     )
     next_timeout_s: float | None = None
+    active_process_count = 0
     with ctx.state_lock:
-        if ctx.futures and ctx.started_task_at:
+        active_process_count = len(ctx.active_processes)
+        if ctx.active_processes:
             now = time.perf_counter()
             remaining_deadlines = [
+                max(0.0, (active.started_at + float(ctx.analysis_timeout_s)) - now)
+                for active in ctx.active_processes.values()
+            ]
+            remaining_deadlines.extend(
                 max(
                     0.0,
-                    (started_at + float(ctx.analysis_timeout_s)) - now,
+                    (
+                        float(active.terminate_requested_at)
+                        + float(ctx.analyze_stop_grace_s)
+                    )
+                    - now,
                 )
-                for started_at in ctx.started_task_at.values()
-            ]
+                for active in ctx.active_processes.values()
+                if active.terminate_requested_at is not None
+            )
             if remaining_deadlines:
                 next_timeout_s = min(remaining_deadlines)
     with ctx.event_cond:
-        if not ctx.done_futures and ctx.enum_queue.empty():
+        if ctx.enum_queue.empty():
             timeout = ctx.db_flush_interval_s if pending_writes else None
             if next_timeout_s is not None:
                 timeout = (
@@ -156,6 +167,8 @@ def wait_for_pipeline_event(ctx: _ScanContext) -> None:
                     if timeout is None
                     else min(float(timeout), next_timeout_s)
                 )
+            if active_process_count > 0:
+                timeout = 0.1 if timeout is None else min(float(timeout), 0.1)
             ctx.event_cond.wait(timeout=timeout)
 
 

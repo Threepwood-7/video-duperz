@@ -12,6 +12,7 @@ from typing import cast
 
 from threep_commons.paths import configure_qsettings
 
+from .analyze_process import run_analyze_child_from_stdio
 from .cleaner import FULL_RESET_DEFAULT_DELAY_MS, run_full_reset
 from .config import load_settings
 from .constants import APP_IDENTITY
@@ -120,6 +121,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--relaunch", action="store_true", help="Relaunch GUI after cleanup"
     )
     clean.set_defaults(func=_cmd_clean)
+
+    analyze_child = sub.add_parser("analyze-child", help=argparse.SUPPRESS)
+    analyze_child.set_defaults(func=_cmd_analyze_child)
     return parser
 
 
@@ -245,6 +249,11 @@ def _cmd_clean(args: argparse.Namespace) -> int:
         print("ERROR: --full-reset is required for clean", file=sys.stderr)
         return 2
     return int(run_full_reset(delay_ms=args.delay_ms, relaunch=bool(args.relaunch)))
+
+
+def _cmd_analyze_child(_args: argparse.Namespace) -> int:
+    """Run the hidden per-file analyze child process entrypoint."""
+    return int(run_analyze_child_from_stdio())
 
 
 def main(argv: list[str] | None = None) -> int:

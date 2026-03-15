@@ -9,12 +9,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from queue import Queue
 from threading import Condition, Event, Lock, Thread
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 from threep_commons.fs_paths import path_key
 
+from .analyze_process import ANALYZE_STOP_GRACE_S
 from .models import (
-    FrameDecodeBackendId,
     ProbeBackendId,
     ProbeWorkerMode,
     ScanIssue,
@@ -25,23 +25,14 @@ from .models import (
 )
 
 if TYPE_CHECKING:
+    from .analyze_process import AnalyzeLauncher
+    from .analyze_process import AnalyzeTaskHandle as _AnalyzeTaskHandle
     from .db import Database
 
 _ScanPlanFn = Callable[..., Any]
 _EnumerateFn = Callable[..., tuple[list[VideoRecord], list[ScanIssue]]]
 _FindEdgesFn = Callable[..., tuple[Any, Any]]
 _BuildGroupsFn = Callable[..., list[Any]]
-
-
-class AnalyzeOutputLike(Protocol):
-    """Protocol describing the probe and fingerprint payload of one analysis."""
-
-    meta: VideoMeta
-    hashes: list[int]
-    probe_s: float
-    fingerprint_s: float
-    probe_fallback_backend: ProbeBackendId | None
-    fingerprint_fallback_decoder: FrameDecodeBackendId | None
 
 
 @dataclass(slots=True)
@@ -59,6 +50,17 @@ class AnalyzeTask:
 
 
 @dataclass(slots=True)
+class ActiveAnalyzeProcess:
+    """In-flight child-process state tracked by the parent runtime."""
+
+    task: AnalyzeTask
+    handle: _AnalyzeTaskHandle
+    started_at: float
+    terminate_requested_at: float | None = None
+    termination_reason: str | None = None
+
+
+@dataclass(slots=True)
 class ScanContext:
     """Mutable shared state used by the streaming runtime threads."""
 
@@ -70,12 +72,13 @@ class ScanContext:
     drive_worker_overrides: dict[str, int] | None
     cancel_event: Event | None
     progress_cb: Callable[[ScanProgress], None] | None
-    analyze_file: Callable[[str, VideoMeta | None], AnalyzeOutputLike]
+    analyze_launcher: AnalyzeLauncher
     enumerate_video_files_fn: _EnumerateFn
     build_scan_plan_fn: _ScanPlanFn
     find_duplicate_edges_fn: _FindEdgesFn
     build_duplicate_groups_fn: _BuildGroupsFn
     analysis_timeout_s: int
+    analyze_stop_grace_s: float
     db_batch_size: int
     db_flush_interval_s: float
     progress_emit_interval_s: float
@@ -93,8 +96,7 @@ class ScanContext:
     ready_lanes: deque[int]
     ready_set: set[int]
     active_by_lane: dict[int, int]
-    futures: dict[Any, AnalyzeTask]
-    done_futures: deque[Any]
+    active_processes: dict[int, ActiveAnalyzeProcess]
     event_cond: Condition
     state_lock: Lock
     present_paths: set[str]
@@ -126,8 +128,6 @@ class ScanContext:
     enumerated_roots: int
     total_roots: int
     next_task_id: int
-    started_task_at: dict[int, float]
-    timed_out_task_ids: set[int]
     enum_finished: bool
     cancel_requested: bool
     cancel_applied: bool
@@ -286,7 +286,7 @@ def create_context(
     progress_emit_every_files: int,
     cancel_event: Event | None,
     progress_cb: Callable[[ScanProgress], None] | None,
-    analyze_file: Callable[[str, VideoMeta | None], AnalyzeOutputLike],
+    analyze_launcher: AnalyzeLauncher,
     enumerate_video_files_fn: _EnumerateFn,
     build_scan_plan_fn: _ScanPlanFn,
     find_duplicate_edges_fn: _FindEdgesFn,
@@ -332,12 +332,13 @@ def create_context(
         drive_worker_overrides=drive_worker_overrides,
         cancel_event=cancel_event,
         progress_cb=progress_cb,
-        analyze_file=analyze_file,
+        analyze_launcher=analyze_launcher,
         enumerate_video_files_fn=enumerate_video_files_fn,
         build_scan_plan_fn=build_scan_plan_fn,
         find_duplicate_edges_fn=find_duplicate_edges_fn,
         build_duplicate_groups_fn=build_duplicate_groups_fn,
         analysis_timeout_s=runtime_settings.analysis_timeout_s,
+        analyze_stop_grace_s=ANALYZE_STOP_GRACE_S,
         db_batch_size=runtime_settings.db_batch_size,
         db_flush_interval_s=runtime_settings.db_flush_interval_s,
         progress_emit_interval_s=runtime_settings.progress_emit_interval_s,
@@ -355,8 +356,7 @@ def create_context(
         ready_lanes=deque(),
         ready_set=set(),
         active_by_lane=dict.fromkeys(lane_states, 0),
-        futures={},
-        done_futures=deque(),
+        active_processes={},
         event_cond=Condition(),
         state_lock=Lock(),
         present_paths=set(),
@@ -388,8 +388,6 @@ def create_context(
         enumerated_roots=0,
         total_roots=max(1, len(roots)),
         next_task_id=1,
-        started_task_at={},
-        timed_out_task_ids=set(),
         enum_finished=False,
         cancel_requested=False,
         cancel_applied=False,

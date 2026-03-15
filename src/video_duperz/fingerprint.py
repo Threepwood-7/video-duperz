@@ -55,10 +55,7 @@ class _AvVideoFrameLike(Protocol):
     best_effort_timestamp: object
     time_base: object
 
-    def to_ndarray(self, *, _format: str) -> np.ndarray:
-        """Convert the frame to a NumPy array."""
-
-        ...
+    def to_ndarray(self, **kwargs: object) -> np.ndarray: ...
 
 
 class _AvStreamLike(Protocol):

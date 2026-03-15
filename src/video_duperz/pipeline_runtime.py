@@ -6,14 +6,13 @@ import contextlib
 import time
 from collections import deque
 from collections.abc import Callable
-from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial
 from queue import Empty, Full
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
 from threep_commons.fs_paths import path_key
 
-from .fingerprint import ALGO_VERSION, FingerprintError
+from .fingerprint import ALGO_VERSION
 from .matcher import build_duplicate_groups, find_duplicate_edges
 from .models import (
     MatchStats,
@@ -21,11 +20,10 @@ from .models import (
     ScanIssue,
     ScanProgress,
     ScanResult,
-    VideoMeta,
     VideoRecord,
 )
 from .pipeline_runtime_context import (
-    AnalyzeOutputLike as _AnalyzeOutputLike,
+    ActiveAnalyzeProcess as _ActiveAnalyzeProcess,
 )
 from .pipeline_runtime_context import (
     AnalyzeTask as _AnalyzeTask,
@@ -55,15 +53,16 @@ from .pipeline_runtime_lanes import (
     finalize_task,
     queue_lane_if_ready_locked,
     refresh_lane_state_locked,
+    release_task_slot,
     submit_ready_lanes,
 )
 from .pipeline_runtime_progress import emit_progress, notify_event
-from .probe import ProbeError
 from .scanner import build_physical_drive_scan_plan, enumerate_video_files
 
 if TYPE_CHECKING:
     from threading import Event
 
+    from .analyze_process import AnalyzeLauncher, AnalyzeProcessResult
     from .db import Database
 
 ReturnT = TypeVar("ReturnT")
@@ -414,35 +413,53 @@ def _process_discovered_batch(ctx: _ScanContext, batch: list[VideoRecord]) -> No
     ctx.last_discovered_batch_at = time.perf_counter()
 
 
-def _on_future_done(ctx: _ScanContext, future: Future[_AnalyzeOutputLike]) -> None:
-    with ctx.event_cond:
-        ctx.done_futures.append(future)
-        ctx.event_cond.notify_all()
-
-
-def _record_future_error(
+def _record_process_error(
     ctx: _ScanContext,
     task: _AnalyzeTask,
-    exc: Exception,
+    result: AnalyzeProcessResult,
 ) -> None:
     ctx.pending_analysis_issue_clear_ids.add(task.file_id)
-    if isinstance(exc, ProbeError):
-        ctx.pending_probe_error_rows.append((task.file_id, str(exc)))
-        ctx.issues.append(ScanIssue(stage="probe", path=task.path, message=str(exc)))
+    message = str(result.issue_message or "Analyze child failed.")
+    if result.issue_stage == "probe":
+        ctx.pending_probe_error_rows.append((task.file_id, message))
+        ctx.issues.append(ScanIssue(stage="probe", path=task.path, message=message))
         return
-    if isinstance(exc, FingerprintError):
+    if result.issue_stage == "fingerprint":
         ctx.issues.append(
-            ScanIssue(stage="fingerprint", path=task.path, message=str(exc))
+            ScanIssue(stage="fingerprint", path=task.path, message=message)
         )
         return
-    ctx.issues.append(ScanIssue(stage="analyze", path=task.path, message=str(exc)))
+    if result.issue_stage == "analyze_crash":
+        ctx.pending_analysis_issue_rows.append((task.file_id, "analyze_crash", message))
+        ctx.issues.append(
+            ScanIssue(stage="analyze_crash", path=task.path, message=message)
+        )
+        return
+    ctx.issues.append(ScanIssue(stage="analyze", path=task.path, message=message))
 
 
-def _record_future_success(
+def _record_process_success(
     ctx: _ScanContext,
     task: _AnalyzeTask,
-    output: _AnalyzeOutputLike,
+    result: AnalyzeProcessResult,
 ) -> None:
+    output = result.output
+    if output is None:
+        ctx.pending_analysis_issue_rows.append(
+            (
+                task.file_id,
+                "analyze_crash",
+                "Analyze child exited without a success payload.",
+            )
+        )
+        ctx.issues.append(
+            ScanIssue(
+                stage="analyze_crash",
+                path=task.path,
+                message="Analyze child exited without a success payload.",
+            )
+        )
+        return
     ctx.pending_analysis_issue_clear_ids.add(task.file_id)
     if output.probe_fallback_backend is not None:
         ctx.pending_analysis_issue_rows.append(
@@ -480,6 +497,11 @@ def _analysis_timeout_message(timeout_s: int) -> str:
     return f"analysis timeout after {int(timeout_s)}s; manual review required"
 
 
+def _retire_cancelled_task(ctx: _ScanContext, task: _AnalyzeTask) -> None:
+    """Release one cancelled child task without counting it as analyzed."""
+    release_task_slot(ctx, task, count_as_analyzed=False)
+
+
 def _retire_timed_out_task(
     ctx: _ScanContext,
     task: _AnalyzeTask,
@@ -505,46 +527,32 @@ def _retire_timed_out_task(
     )
 
 
-def _check_analysis_timeouts(ctx: _ScanContext) -> int:
-    """Retire analyze tasks whose runtime exceeded the configured timeout."""
-    now = time.perf_counter()
-    expired: list[_AnalyzeTask] = []
+def _process_finished_processes(ctx: _ScanContext) -> int:
+    """Collect finished analyze child processes and retire their tasks."""
     with ctx.state_lock:
-        for future, task in list(ctx.futures.items()):
-            started_at = ctx.started_task_at.get(task.task_id)
-            if started_at is None:
-                continue
-            if (now - started_at) < float(ctx.analysis_timeout_s):
-                continue
-            ctx.futures.pop(future, None)
-            ctx.started_task_at.pop(task.task_id, None)
-            ctx.timed_out_task_ids.add(task.task_id)
-            expired.append(task)
-    for task in expired:
-        _retire_timed_out_task(ctx, task)
-    return len(expired)
-
-
-def _process_done_futures(ctx: _ScanContext) -> int:
-    processed = 0
-    while True:
-        with ctx.event_cond:
-            if not ctx.done_futures:
-                return processed
-            future = ctx.done_futures.popleft()
-        with ctx.state_lock:
-            task = ctx.futures.pop(future, None)
-            if task is not None:
-                ctx.started_task_at.pop(task.task_id, None)
-        if task is None:
+        active_items = list(ctx.active_processes.items())
+    completed: list[tuple[_ActiveAnalyzeProcess, AnalyzeProcessResult]] = []
+    for task_id, active_process in active_items:
+        result = active_process.handle.collect_result()
+        if result is None:
             continue
-        processed += 1
-        try:
-            output = future.result()
-        except Exception as exc:
-            _record_future_error(ctx, task, exc)
+        with ctx.state_lock:
+            current = ctx.active_processes.pop(task_id, None)
+        if current is not None:
+            completed.append((current, result))
+
+    for active_process, result in completed:
+        task = active_process.task
+        if active_process.termination_reason == "timeout":
+            _retire_timed_out_task(ctx, task)
+            continue
+        if active_process.termination_reason == "cancel":
+            _retire_cancelled_task(ctx, task)
+            continue
+        if result.kind == "success":
+            _record_process_success(ctx, task, result)
         else:
-            _record_future_success(ctx, task, output)
+            _record_process_error(ctx, task, result)
         probe_done, probe_total = finalize_task(ctx, task)
         emit_progress(
             ctx,
@@ -554,6 +562,93 @@ def _process_done_futures(ctx: _ScanContext) -> int:
             f"Analyzed {task.path}",
             file_counter=probe_done,
         )
+    return len(completed)
+
+
+def _request_stop_for_processes(
+    ctx: _ScanContext,
+    *,
+    reason: str,
+    deadline_s: float,
+) -> int:
+    """Request cooperative shutdown for eligible child processes."""
+    now = time.perf_counter()
+    requested = 0
+    with ctx.state_lock:
+        active_items = list(ctx.active_processes.values())
+    for active_process in active_items:
+        if active_process.termination_reason is not None:
+            continue
+        if (now - active_process.started_at) < deadline_s:
+            continue
+        active_process.handle.request_stop()
+        active_process.terminate_requested_at = now
+        active_process.termination_reason = reason
+        requested += 1
+    return requested
+
+
+def _kill_expired_processes(ctx: _ScanContext) -> int:
+    """Forcefully terminate child processes whose grace window expired."""
+    now = time.perf_counter()
+    retired: list[_ActiveAnalyzeProcess] = []
+    with ctx.state_lock:
+        active_items = list(ctx.active_processes.items())
+    for task_id, active_process in active_items:
+        terminate_requested_at = active_process.terminate_requested_at
+        if terminate_requested_at is None:
+            continue
+        if (now - terminate_requested_at) < float(ctx.analyze_stop_grace_s):
+            continue
+        active_process.handle.kill()
+        with ctx.state_lock:
+            current = ctx.active_processes.pop(task_id, None)
+        if current is not None:
+            retired.append(current)
+    for active_process in retired:
+        if active_process.termination_reason == "timeout":
+            _retire_timed_out_task(ctx, active_process.task)
+        else:
+            _retire_cancelled_task(ctx, active_process.task)
+    return len(retired)
+
+
+def _check_analysis_timeouts(ctx: _ScanContext) -> int:
+    """Request or enforce termination for timed-out analyze child processes."""
+    requested = _request_stop_for_processes(
+        ctx,
+        reason="timeout",
+        deadline_s=float(ctx.analysis_timeout_s),
+    )
+    killed = _kill_expired_processes(ctx)
+    return requested + killed
+
+
+def _check_cancelled_processes(ctx: _ScanContext) -> int:
+    """Request or enforce termination for active child processes after cancel."""
+    if not ctx.cancel_requested:
+        return 0
+    requested = _request_stop_for_processes(ctx, reason="cancel", deadline_s=0.0)
+    killed = _kill_expired_processes(ctx)
+    return requested + killed
+
+
+def _active_process_count(ctx: _ScanContext) -> int:
+    """Return the number of active child processes."""
+    with ctx.state_lock:
+        return len(ctx.active_processes)
+
+
+def _shutdown_active_processes(ctx: _ScanContext) -> None:
+    """Best-effort cleanup for active analyze child processes."""
+    with ctx.state_lock:
+        active_items = list(ctx.active_processes.values())
+        ctx.active_processes.clear()
+    for active_process in active_items:
+        with contextlib.suppress(Exception):
+            active_process.handle.request_stop()
+        with contextlib.suppress(Exception):
+            active_process.handle.kill()
 
 
 def _ingest_discovered_queue(ctx: _ScanContext) -> bool:
@@ -582,7 +677,7 @@ def _process_pending_discovered(ctx: _ScanContext) -> bool:
         len(ctx.pending_discovered) >= ctx.db_batch_size
         or (now - ctx.last_discovered_batch_at) >= ctx.db_flush_interval_s
         or ctx.enum_finished
-        or not ctx.futures
+        or _active_process_count(ctx) == 0
     )
     if not should_process:
         return False
@@ -597,7 +692,7 @@ def _process_pending_discovered(ctx: _ScanContext) -> bool:
         _process_discovered_batch(ctx, chunk)
         processed_any = True
     if ctx.pending_discovered and (
-        not ctx.futures
+        _active_process_count(ctx) == 0
         or (time.perf_counter() - ctx.last_discovered_batch_at)
         >= ctx.db_flush_interval_s
     ):
@@ -608,7 +703,7 @@ def _process_pending_discovered(ctx: _ScanContext) -> bool:
     return processed_any
 
 
-def _run_pipeline_loop(ctx: _ScanContext, executor: ThreadPoolExecutor) -> None:
+def _run_pipeline_loop(ctx: _ScanContext) -> None:
     while True:
         if ctx.cancel_event and ctx.cancel_event.is_set():
             ctx.cancel_requested = True
@@ -619,19 +714,13 @@ def _run_pipeline_loop(ctx: _ScanContext, executor: ThreadPoolExecutor) -> None:
         made_progress = _ingest_discovered_queue(ctx)
         if _process_pending_discovered(ctx):
             made_progress = True
-        if _process_done_futures(ctx) > 0:
+        if _process_finished_processes(ctx) > 0:
+            made_progress = True
+        if _check_cancelled_processes(ctx) > 0:
             made_progress = True
         if _check_analysis_timeouts(ctx) > 0:
             made_progress = True
-        if (
-            not ctx.cancel_requested
-            and submit_ready_lanes(
-                ctx,
-                executor,
-                lambda done: _on_future_done(ctx, done),
-            )
-            > 0
-        ):
+        if not ctx.cancel_requested and submit_ready_lanes(ctx) > 0:
             made_progress = True
 
         _flush_pending_analysis_batches(ctx, force=ctx.cancel_requested)
@@ -665,7 +754,7 @@ def run_scan_runtime(
     progress_emit_every_files: int,
     cancel_event: Event | None = None,
     progress_cb: Callable[[ScanProgress], None] | None = None,
-    analyze_file: Callable[[str, VideoMeta | None], _AnalyzeOutputLike],
+    analyze_launcher: AnalyzeLauncher,
     enumerate_video_files_fn: _EnumerateFn = enumerate_video_files,
     build_scan_plan_fn: _ScanPlanFn = build_physical_drive_scan_plan,
     find_duplicate_edges_fn: _FindEdgesFn = find_duplicate_edges,
@@ -689,7 +778,7 @@ def run_scan_runtime(
         progress_emit_every_files=progress_emit_every_files,
         cancel_event=cancel_event,
         progress_cb=progress_cb,
-        analyze_file=analyze_file,
+        analyze_launcher=analyze_launcher,
         enumerate_video_files_fn=enumerate_video_files_fn,
         build_scan_plan_fn=build_scan_plan_fn,
         find_duplicate_edges_fn=find_duplicate_edges_fn,
@@ -697,13 +786,9 @@ def run_scan_runtime(
     )
     start_runtime_threads(ctx, lambda: _run_enumeration(ctx))
     emit_worker_cap_warning(ctx, _worker_cap_message(ctx.scan_plan))
-    executor: ThreadPoolExecutor | None = None
 
     try:
-        executor = ThreadPoolExecutor(max_workers=ctx.executor_worker_limit)
-        _run_pipeline_loop(ctx, executor)
-        executor.shutdown(wait=not bool(ctx.timed_out_task_ids))
-        executor = None
+        _run_pipeline_loop(ctx)
         join_enumeration_thread(ctx)
         if ctx.enum_error and not ctx.cancel_requested:
             raise ctx.enum_error
@@ -725,9 +810,7 @@ def run_scan_runtime(
             lambda: _flush_scan_transaction(ctx, force=True),
         )
     except Exception:
-        if executor is not None:
-            with contextlib.suppress(Exception):
-                executor.shutdown(wait=not bool(ctx.timed_out_task_ids))
+        _shutdown_active_processes(ctx)
         best_effort_end_scan_tx(
             lambda: _flush_pending_analysis_batches(ctx, force=True),
             lambda: _flush_scan_transaction(ctx, force=True),

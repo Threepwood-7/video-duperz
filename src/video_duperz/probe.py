@@ -260,7 +260,9 @@ def _duration_seconds_from_container(
     time_base = getattr(av_module, "time_base", None)
     scale = _ratio_to_float(time_base)
     if scale > 0.0:
-        return max(0.0, float(duration) * scale)
+        if scale <= 1.0:
+            return max(0.0, float(duration) * scale)
+        return max(0.0, float(duration) / scale)
     return max(0.0, float(duration) / 1_000_000.0)
 
 

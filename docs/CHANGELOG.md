@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Process-isolated analyze runtime
+
+- Replaced the per-file thread-executed analyze path with a parent-supervised child-process model.
+- Each file now runs metadata probe fallback, fingerprint fallback, and result packaging inside its own hidden Python child process.
+- Scan timeouts now apply to the child process lifetime instead of only marking a stuck thread logically complete.
+- When a file exceeds the analyze timeout, the parent runtime now:
+  - requests a cooperative stop first
+  - waits a short grace period
+  - kills the full child process tree if the file still does not exit
+- Timed-out files remain excluded from current-run artifact persistence and duplicate matching, but are still recorded for manual review.
+
 ### Analyze fallback chain
 
 - Added an always-on analyze fallback system for difficult files instead of failing after a single metadata or frame-decoding path.
