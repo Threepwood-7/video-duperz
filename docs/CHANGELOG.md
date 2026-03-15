@@ -9,3 +9,4 @@
 - Added a hidden `fingerprint-child` CLI entrypoint used by the guarded decoder subprocess path.
 - Added unit coverage for risky-format routing, decoder fallback sequencing, structured child-process responses, GUI backend-availability handling, and fingerprint provenance persistence.
 - Validated the new behavior read-only on real media sets, including a previously wedged WMV sample and larger deterministic mixed-library sample sets.
+- Added internal benchmark planning and evaluation helpers for deterministic sample sets, lane-safe scheduling, and per-lane fallback/timeout telemetry without changing production `burst` behavior.

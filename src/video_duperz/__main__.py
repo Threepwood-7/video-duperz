@@ -12,6 +12,7 @@ from typing import cast
 
 from threep_commons.paths import configure_qsettings
 
+from .benchmark_eval import run_benchmark_evaluation
 from .cleaner import FULL_RESET_DEFAULT_DELAY_MS, run_full_reset
 from .config import load_settings
 from .constants import APP_IDENTITY
@@ -133,6 +134,36 @@ def _build_parser() -> argparse.ArgumentParser:
         help=argparse.SUPPRESS,
     )
     fingerprint_child.set_defaults(func=_cmd_fingerprint_child)
+
+    benchmark_eval = sub.add_parser(
+        "benchmark-eval",
+        help=argparse.SUPPRESS,
+    )
+    benchmark_eval.add_argument(
+        "--roots",
+        nargs="+",
+        required=True,
+        help="Root folders that define the benchmark corpus.",
+    )
+    benchmark_eval.add_argument(
+        "--sample-set",
+        required=True,
+        choices=["ghetto", "mixed_240", "incomplete"],
+        help="Deterministic benchmark sample-set identifier.",
+    )
+    benchmark_eval.add_argument(
+        "--dispatch-strategy",
+        default="ordered",
+        choices=["ordered", "micro_batch"],
+        help="Benchmark-only lane dispatch strategy.",
+    )
+    benchmark_eval.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help="Requested worker count for the benchmark harness.",
+    )
+    benchmark_eval.set_defaults(func=_cmd_benchmark_eval)
     return parser
 
 
@@ -239,6 +270,27 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         print(f"flush_count={_metric_int(metrics, 'flush_count')}")
         print(f"avg_rows_per_flush={_metric_float(metrics, 'avg_rows_per_flush'):.2f}")
         print(f"max_queue_depth={_metric_int(metrics, 'max_queue_depth')}")
+    return 0
+
+
+def _cmd_benchmark_eval(args: argparse.Namespace) -> int:
+    """Run one deterministic internal benchmark evaluation and print JSON."""
+
+    settings = load_settings()
+    requested_workers = (
+        int(args.workers)
+        if args.workers is not None
+        else max(1, int(settings.max_workers))
+    )
+    summary = run_benchmark_evaluation(
+        [str(Path(root)) for root in args.roots],
+        set_id=args.sample_set,
+        probe_backend=settings.probe_backend,
+        requested_workers=requested_workers,
+        dispatch_strategy=args.dispatch_strategy,
+        drive_worker_overrides=settings.drive_worker_overrides,
+    )
+    print(summary.to_json())
     return 0
 
 

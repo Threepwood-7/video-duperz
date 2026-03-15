@@ -84,6 +84,20 @@ def _analyze_file_with_probe(
     )
 
 
+def build_analyze_file(
+    probe_backend: ProbeBackendId,
+) -> Callable[[str], _AnalyzeOutput]:
+    """Build a single-path analyze callable for the selected probe backend."""
+
+    if probe_backend == "ffprobe":
+        return partial(_analyze_file, cached_meta=None)
+    return partial(
+        _analyze_file_with_probe,
+        cached_meta=None,
+        probe_video_fn=partial(probe_video, backend=probe_backend),
+    )
+
+
 def run_scan(
     db: Database,
     roots: list[str],

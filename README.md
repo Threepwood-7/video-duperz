@@ -292,6 +292,12 @@ video-duperz/
 hatch run test
 ```
 
+### Benchmarking
+
+- Internal benchmark runs should use deterministic sample planners and lane-aware scheduling.
+- During tests and benchmarks, never process more than one active file at a time from the same physical drive.
+- This benchmark-only contention rule does not change production `burst` behavior.
+
 ### Quality Checks
 
 ```bat

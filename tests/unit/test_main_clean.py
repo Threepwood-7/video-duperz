@@ -35,6 +35,29 @@ def test_parser_accepts_runtime_override_flags() -> None:
     assert args.full_reset is True
 
 
+def test_benchmark_eval_parser_accepts_internal_flags() -> None:
+    parser = app_main._build_parser()
+    args = parser.parse_args(
+        [
+            "benchmark-eval",
+            "--roots",
+            "R:/",
+            "S:/",
+            "--sample-set",
+            "mixed_240",
+            "--dispatch-strategy",
+            "micro_batch",
+            "--workers",
+            "3",
+        ]
+    )
+    assert args.command == "benchmark-eval"
+    assert args.roots == ["R:/", "S:/"]
+    assert args.sample_set == "mixed_240"
+    assert args.dispatch_strategy == "micro_batch"
+    assert args.workers == 3
+
+
 def test_cmd_clean_requires_guard(capsys) -> None:
     rc = app_main._cmd_clean(
         argparse.Namespace(full_reset=False, delay_ms=0, relaunch=False)
@@ -42,6 +65,39 @@ def test_cmd_clean_requires_guard(capsys) -> None:
     assert rc == 2
     captured = capsys.readouterr()
     assert "--full-reset is required" in captured.err
+
+
+def test_cmd_benchmark_eval_prints_json_summary(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        app_main,
+        "load_settings",
+        lambda: types.SimpleNamespace(
+            max_workers=2,
+            probe_backend="pyav",
+            drive_worker_overrides={},
+        ),
+    )
+    monkeypatch.setattr(
+        app_main,
+        "run_benchmark_evaluation",
+        lambda roots, **kwargs: types.SimpleNamespace(
+            to_json=lambda: '{"ok": true}',
+            roots=roots,
+            kwargs=kwargs,
+        ),
+    )
+
+    rc = app_main._cmd_benchmark_eval(
+        argparse.Namespace(
+            roots=["R:/", "S:/"],
+            sample_set="mixed_240",
+            dispatch_strategy="ordered",
+            workers=None,
+        )
+    )
+
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == '{"ok": true}'
 
 
 def test_run_full_reset_removes_entire_app_data_dir(
