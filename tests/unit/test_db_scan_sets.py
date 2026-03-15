@@ -457,3 +457,43 @@ def test_cached_artifacts_are_probe_backend_specific() -> None:
         assert pyav_cache["meta"].codec == "hevc"
         assert ffprobe_cache["fingerprint"]["hashes"] == [1, 2, 3, 4]
         assert pyav_cache["fingerprint"]["hashes"] == [9, 8, 7, 6]
+
+
+def test_analysis_issues_are_probe_backend_scoped_and_clearable() -> None:
+    with Database(":memory:") as db:
+        scan_id = db.create_scan(
+            profile="balanced",
+            roots=["D:/Videos"],
+            extensions=["mp4"],
+            probe_backend="pyav",
+        )
+        file_id = db.upsert_file(
+            path="D:/Videos/a.mp4",
+            size=10,
+            mtime_ns=11,
+            ctime_ns=11,
+            ext="mp4",
+            scan_id=scan_id,
+        )
+
+        db.save_analysis_issue(
+            file_id,
+            "analyze_timeout",
+            "analysis timeout after 60s; manual review required",
+            probe_backend="pyav",
+        )
+        db.save_analysis_issue(
+            file_id,
+            "analyze_timeout",
+            "ffprobe timeout placeholder",
+            probe_backend="ffprobe",
+        )
+
+        persisted = db.list_analysis_issues_for_scan(scan_id)
+        assert len(persisted) == 2
+        assert {str(item["probe_backend"]) for item in persisted} == {"ffprobe", "pyav"}
+
+        db.delete_analysis_issue(file_id, probe_backend="pyav")
+        remaining = db.list_analysis_issues_for_scan(scan_id)
+        assert len(remaining) == 1
+        assert str(remaining[0]["probe_backend"]) == "ffprobe"

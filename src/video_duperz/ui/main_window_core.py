@@ -496,6 +496,9 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         self.probe_backend_combo.addItems(["pyav", "ffprobe"])
         self.probe_mode_combo = QComboBox(self.sources_tab)
         self.probe_mode_combo.addItems(["balanced", "burst"])
+        self.analysis_timeout_spin = QSpinBox(self.sources_tab)
+        self.analysis_timeout_spin.setRange(5, 3600)
+        self.analysis_timeout_spin.setSuffix(" s")
         self.probe_backend_combo.currentTextChanged.connect(
             self._refresh_sources_physical_drive_view
         )
@@ -567,6 +570,8 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         layout.addWidget(self.probe_backend_combo)
         layout.addWidget(QLabel("Probe mode"))
         layout.addWidget(self.probe_mode_combo)
+        layout.addWidget(QLabel("Per-file analysis timeout"))
+        layout.addWidget(self.analysis_timeout_spin)
         layout.addWidget(QLabel("Physical drives"))
         layout.addWidget(self.sources_drive_summary_label)
         layout.addWidget(self.sources_drive_table, stretch=1)

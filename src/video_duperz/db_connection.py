@@ -18,7 +18,7 @@ from .scan_sets import (
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 class DatabaseConnectionMixin:
@@ -178,6 +178,18 @@ class DatabaseConnectionMixin:
             CREATE INDEX IF NOT EXISTS idx_fingerprints_file_backend
               ON fingerprints(file_id, probe_backend);
 
+            CREATE TABLE IF NOT EXISTS analysis_issues(
+              file_id INTEGER NOT NULL,
+              probe_backend TEXT NOT NULL DEFAULT 'pyav',
+              stage TEXT NOT NULL,
+              message TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              PRIMARY KEY(file_id, probe_backend),
+              FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_analysis_issues_scan_backend
+              ON analysis_issues(file_id, probe_backend);
+
             CREATE TABLE IF NOT EXISTS duplicate_groups(
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               scan_id INTEGER NOT NULL,
@@ -226,6 +238,7 @@ class DatabaseConnectionMixin:
         )
         self._ensure_video_meta_columns()
         self._ensure_backend_scoped_cache_tables()
+        self._ensure_analysis_issue_table()
         self._ensure_scan_columns()
         self._backfill_scan_set_keys()
         self.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
@@ -335,6 +348,64 @@ class DatabaseConnectionMixin:
                   ON fingerprints(file_id, probe_backend);
                 """
             )
+
+    def _ensure_analysis_issue_table(self) -> None:
+        """Create or repair the persisted analysis-issue table."""
+        columns = {
+            str(row["name"]): int(row["pk"])
+            for row in self.conn.execute(
+                "PRAGMA table_info(analysis_issues)"
+            ).fetchall()
+        }
+        if not columns:
+            self.conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS analysis_issues(
+                  file_id INTEGER NOT NULL,
+                  probe_backend TEXT NOT NULL DEFAULT 'pyav',
+                  stage TEXT NOT NULL,
+                  message TEXT NOT NULL,
+                  created_at TEXT NOT NULL,
+                  PRIMARY KEY(file_id, probe_backend),
+                  FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_analysis_issues_scan_backend
+                  ON analysis_issues(file_id, probe_backend);
+                """
+            )
+            return
+        if columns.get("file_id") == 1 and columns.get("probe_backend") == 2:
+            return
+        self.conn.executescript(
+            """
+            CREATE TABLE analysis_issues_new(
+              file_id INTEGER NOT NULL,
+              probe_backend TEXT NOT NULL DEFAULT 'pyav',
+              stage TEXT NOT NULL,
+              message TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              PRIMARY KEY(file_id, probe_backend),
+              FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+            );
+            INSERT INTO analysis_issues_new(
+              file_id, probe_backend, stage, message, created_at
+            )
+            SELECT
+              file_id,
+              CASE
+                WHEN TRIM(COALESCE(probe_backend, '')) = '' THEN 'pyav'
+                ELSE probe_backend
+              END,
+              stage,
+              message,
+              created_at
+            FROM analysis_issues;
+            DROP TABLE analysis_issues;
+            ALTER TABLE analysis_issues_new RENAME TO analysis_issues;
+            CREATE INDEX idx_analysis_issues_scan_backend
+              ON analysis_issues(file_id, probe_backend);
+            """
+        )
 
     def _ensure_video_meta_columns(self) -> None:
         """Add newly introduced video metadata columns to legacy databases."""

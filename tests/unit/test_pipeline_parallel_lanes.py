@@ -6,7 +6,9 @@ from threading import Event, Lock
 from types import SimpleNamespace
 
 from video_duperz import pipeline
-from video_duperz.models import MatchStats, ScanProgress, VideoRecord
+from video_duperz.db import Database
+from video_duperz.fingerprint import ALGO_VERSION
+from video_duperz.models import MatchStats, ScanProgress, VideoMeta, VideoRecord
 
 
 class _FakeDb:
@@ -15,6 +17,8 @@ class _FakeDb:
         self._next_file_id = 100
         self.status = "running"
         self._path_to_id: dict[str, int] = {}
+        self.analysis_issue_rows: list[tuple[int, str, str, str]] = []
+        self.deleted_analysis_issue_ids: list[tuple[int, str]] = []
 
     def create_scan(
         self,
@@ -136,6 +140,26 @@ class _FakeDb:
     ) -> None:
         _ = file_id, algo_version, hashes, probe_backend
         return None
+
+    def save_analysis_issues_batch(
+        self,
+        rows: list[tuple[int, str, str]],
+        *,
+        probe_backend: str = "pyav",
+    ) -> None:
+        for file_id, stage, message in rows:
+            self.analysis_issue_rows.append(
+                (int(file_id), str(probe_backend), str(stage), str(message))
+            )
+
+    def delete_analysis_issues_batch(
+        self,
+        file_ids: list[int],
+        *,
+        probe_backend: str = "pyav",
+    ) -> None:
+        for file_id in file_ids:
+            self.deleted_analysis_issue_ids.append((int(file_id), str(probe_backend)))
 
     def list_match_items_for_scan(self, scan_id: int, algo_version: int) -> list:
         return []
@@ -655,3 +679,114 @@ def test_run_scan_cancellation_during_streaming_overlap(monkeypatch) -> None:
 
     assert result.scan_id == 17
     assert db.status == "cancelled"
+
+
+def test_run_scan_marks_timed_out_analysis_for_manual_review(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    files = [
+        _video("lane0-ok.mp4", lane=0),
+        _video("lane1-stuck.mp4", lane=1),
+    ]
+
+    monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
+    monkeypatch.setattr(
+        pipeline, "enumerate_video_files", lambda **kwargs: (list(files), [])
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_physical_drive_scan_plan",
+        lambda roots, max_workers, drive_worker_overrides=None: _lane_plan_for_roots(
+            roots,
+            lane_worker_limits={0: 1, 1: 1},
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
+    )
+    monkeypatch.setattr(
+        pipeline, "build_duplicate_groups", lambda items, edges, profile: []
+    )
+
+    def _fake_analyze(path: str, cached_meta: object | None) -> pipeline._AnalyzeOutput:
+        _ = cached_meta
+        if path.endswith("stuck.mp4"):
+            time.sleep(1.6)
+            return pipeline._AnalyzeOutput(
+                meta=VideoMeta(
+                    duration_s=9.0,
+                    width=1920,
+                    height=1080,
+                    fps=24.0,
+                    codec="h264",
+                    bitrate=1_000_000,
+                    has_audio=True,
+                    audio_codec="aac",
+                    audio_bitrate=128000,
+                    audio_languages="eng",
+                    subtitle_languages="",
+                    is_hdr=False,
+                ),
+                hashes=[7, 8, 9],
+            )
+        time.sleep(0.05)
+        return pipeline._AnalyzeOutput(
+            meta=VideoMeta(
+                duration_s=1.0,
+                width=1280,
+                height=720,
+                fps=30.0,
+                codec="h264",
+                bitrate=500_000,
+                has_audio=True,
+                audio_codec="aac",
+                audio_bitrate=128000,
+                audio_languages="eng",
+                subtitle_languages="",
+                is_hdr=False,
+            ),
+            hashes=[1, 2, 3],
+        )
+
+    monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)
+
+    with Database(tmp_path / "timeout.db") as db:
+        started = time.perf_counter()
+        result = pipeline.run_scan(
+            db=db,
+            roots=["R:/A", "S:/B"],
+            extensions=["mp4"],
+            max_workers=2,
+            probe_backend="ffprobe",
+            probe_worker_mode="balanced",
+            analysis_timeout_s=1,
+            db_batch_size=64,
+            db_flush_interval_ms=50,
+            enum_queue_max=512,
+            progress_emit_interval_ms=50,
+            progress_emit_every_files=1,
+        )
+        elapsed = time.perf_counter() - started
+
+        assert elapsed < 1.5
+        assert result.scanned_files == 2
+        assert result.fingerprinted_files == 1
+        assert any(
+            issue.stage == "analyze_timeout"
+            and "analysis timeout after 1s; manual review required" in issue.message
+            for issue in result.issues
+        )
+
+        persisted = db.list_analysis_issues_for_scan(result.scan_id)
+        assert len(persisted) == 1
+        assert persisted[0]["path"] == "lane1-stuck.mp4"
+        assert persisted[0]["stage"] == "analyze_timeout"
+        assert "manual review required" in persisted[0]["message"]
+
+        time.sleep(0.8)
+        match_items = db.list_match_items_for_scan(
+            scan_id=result.scan_id,
+            algo_version=ALGO_VERSION,
+        )
+        assert [item.path for item in match_items] == ["lane0-ok.mp4"]

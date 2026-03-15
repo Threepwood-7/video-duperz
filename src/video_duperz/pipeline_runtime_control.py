@@ -96,7 +96,11 @@ def pipeline_should_stop(
         waiting_items = any(bool(queue) for queue in ctx.lane_queues.values())
         active_count = len(ctx.futures)
     pending_writes = bool(
-        ctx.pending_meta_rows or ctx.pending_fp_rows or ctx.pending_probe_error_rows
+        ctx.pending_meta_rows
+        or ctx.pending_fp_rows
+        or ctx.pending_probe_error_rows
+        or ctx.pending_analysis_issue_rows
+        or ctx.pending_analysis_issue_clear_ids
     )
     if ctx.cancel_requested and ctx.enum_finished and active_count == 0:
         flush_pending_batches()
@@ -127,10 +131,31 @@ def wait_for_pipeline_event(ctx: _ScanContext) -> None:
         or ctx.pending_meta_rows
         or ctx.pending_fp_rows
         or ctx.pending_probe_error_rows
+        or ctx.pending_analysis_issue_rows
+        or ctx.pending_analysis_issue_clear_ids
     )
+    next_timeout_s: float | None = None
+    with ctx.state_lock:
+        if ctx.futures and ctx.started_task_at:
+            now = time.perf_counter()
+            remaining_deadlines = [
+                max(
+                    0.0,
+                    (started_at + float(ctx.analysis_timeout_s)) - now,
+                )
+                for started_at in ctx.started_task_at.values()
+            ]
+            if remaining_deadlines:
+                next_timeout_s = min(remaining_deadlines)
     with ctx.event_cond:
         if not ctx.done_futures and ctx.enum_queue.empty():
             timeout = ctx.db_flush_interval_s if pending_writes else None
+            if next_timeout_s is not None:
+                timeout = (
+                    next_timeout_s
+                    if timeout is None
+                    else min(float(timeout), next_timeout_s)
+                )
             ctx.event_cond.wait(timeout=timeout)
 
 

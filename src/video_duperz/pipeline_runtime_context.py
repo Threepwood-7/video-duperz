@@ -45,6 +45,7 @@ class AnalyzeOutputLike(Protocol):
 class AnalyzeTask:
     """Queued analysis work item for a single discovered file."""
 
+    task_id: int
     file: VideoRecord
     file_id: int
     cached_meta: VideoMeta | None
@@ -71,6 +72,7 @@ class ScanContext:
     build_scan_plan_fn: _ScanPlanFn
     find_duplicate_edges_fn: _FindEdgesFn
     build_duplicate_groups_fn: _BuildGroupsFn
+    analysis_timeout_s: int
     db_batch_size: int
     db_flush_interval_s: float
     progress_emit_interval_s: float
@@ -98,6 +100,8 @@ class ScanContext:
     pending_meta_rows: list[tuple[int, VideoMeta]]
     pending_fp_rows: list[tuple[int, int, list[int]]]
     pending_probe_error_rows: list[tuple[int, str]]
+    pending_analysis_issue_rows: list[tuple[int, str, str]]
+    pending_analysis_issue_clear_ids: set[int]
     scan_started_at: float
     stage_seconds: dict[str, float]
     flush_count: int
@@ -118,6 +122,9 @@ class ScanContext:
     active_workers: int
     enumerated_roots: int
     total_roots: int
+    next_task_id: int
+    started_task_at: dict[int, float]
+    timed_out_task_ids: set[int]
     enum_finished: bool
     cancel_requested: bool
     cancel_applied: bool
@@ -135,6 +142,7 @@ class ScanContext:
 
 @dataclass(slots=True)
 class _RuntimeSettings:
+    analysis_timeout_s: int
     db_batch_size: int
     db_flush_interval_s: float
     enum_queue_max: int
@@ -159,6 +167,7 @@ def _build_runtime_settings(
     max_workers: int,
     probe_worker_mode: str,
     *,
+    analysis_timeout_s: int,
     db_batch_size: int,
     db_flush_interval_ms: int,
     enum_queue_max: int,
@@ -167,11 +176,13 @@ def _build_runtime_settings(
 ) -> _RuntimeSettings:
     """Normalize runtime tuning knobs before creating the scan context."""
     db_batch_size = _clamp(db_batch_size, 32, 4096)
+    analysis_timeout_s = max(1, int(analysis_timeout_s))
     db_flush_interval_ms = _clamp(db_flush_interval_ms, 50, 2000)
     enum_queue_max = _clamp(enum_queue_max, 256, 32768)
     progress_emit_interval_ms = _clamp(progress_emit_interval_ms, 50, 2000)
     progress_emit_every_files = _clamp(progress_emit_every_files, 10, 5000)
     return _RuntimeSettings(
+        analysis_timeout_s=analysis_timeout_s,
         db_batch_size=db_batch_size,
         db_flush_interval_s=float(db_flush_interval_ms) / 1000.0,
         enum_queue_max=enum_queue_max,
@@ -264,6 +275,7 @@ def create_context(
     drive_worker_overrides: dict[str, int] | None,
     probe_worker_mode: str,
     *,
+    analysis_timeout_s: int,
     db_batch_size: int,
     db_flush_interval_ms: int,
     enum_queue_max: int,
@@ -281,6 +293,7 @@ def create_context(
     runtime_settings = _build_runtime_settings(
         max_workers,
         probe_worker_mode,
+        analysis_timeout_s=analysis_timeout_s,
         db_batch_size=db_batch_size,
         db_flush_interval_ms=db_flush_interval_ms,
         enum_queue_max=enum_queue_max,
@@ -321,6 +334,7 @@ def create_context(
         build_scan_plan_fn=build_scan_plan_fn,
         find_duplicate_edges_fn=find_duplicate_edges_fn,
         build_duplicate_groups_fn=build_duplicate_groups_fn,
+        analysis_timeout_s=runtime_settings.analysis_timeout_s,
         db_batch_size=runtime_settings.db_batch_size,
         db_flush_interval_s=runtime_settings.db_flush_interval_s,
         progress_emit_interval_s=runtime_settings.progress_emit_interval_s,
@@ -348,6 +362,8 @@ def create_context(
         pending_meta_rows=[],
         pending_fp_rows=[],
         pending_probe_error_rows=[],
+        pending_analysis_issue_rows=[],
+        pending_analysis_issue_clear_ids=set(),
         scan_started_at=started_at,
         stage_seconds=_initial_stage_seconds(),
         flush_count=0,
@@ -368,6 +384,9 @@ def create_context(
         active_workers=0,
         enumerated_roots=0,
         total_roots=max(1, len(roots)),
+        next_task_id=1,
+        started_task_at={},
+        timed_out_task_ids=set(),
         enum_finished=False,
         cancel_requested=False,
         cancel_applied=False,

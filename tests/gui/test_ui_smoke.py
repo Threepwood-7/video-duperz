@@ -1221,6 +1221,7 @@ def test_sources_tab_drive_workers_and_probe_mode_persist_across_reload(
         spin_b.setValue(2)
         window.probe_backend_combo.setCurrentText("pyav")
         window.probe_mode_combo.setCurrentText("burst")
+        window.analysis_timeout_spin.setValue(123)
         app.processEvents()
 
         assert "Requested workers: 6" in window.sources_drive_summary_label.text()
@@ -1231,6 +1232,7 @@ def test_sources_tab_drive_workers_and_probe_mode_persist_across_reload(
     assert loaded.drive_worker_overrides == {"volume:a": 4, "volume:b": 2}
     assert loaded.probe_backend == "pyav"
     assert loaded.probe_worker_mode == "burst"
+    assert loaded.scan_analysis_timeout_s == 123
 
     with Database(tmp_path / "app.db") as db:
         reloaded_window = MainWindow(db=db, settings=loaded)
@@ -1239,6 +1241,7 @@ def test_sources_tab_drive_workers_and_probe_mode_persist_across_reload(
 
         assert reloaded_window.probe_backend_combo.currentText() == "pyav"
         assert reloaded_window.probe_mode_combo.currentText() == "burst"
+        assert reloaded_window.analysis_timeout_spin.value() == 123
         reloaded_spin_a = reloaded_window.sources_drive_table.cellWidget(0, 6)
         reloaded_spin_b = reloaded_window.sources_drive_table.cellWidget(1, 6)
         assert isinstance(reloaded_spin_a, QSpinBox)
@@ -1553,10 +1556,6 @@ def test_scan_view_renders_lane_snapshots_and_worker_utilization(
         app.processEvents()
 
         assert not window.scan_view.worker_progress.isVisible()
-        assert (
-            "Worker status is shown per lane"
-            in window.scan_view.worker_hint_label.text()
-        )
         assert window.scan_view.lane_table.rowCount() == 2
         assert window.scan_view.lane_table.columnCount() == 12
         assert window.scan_view.lane_table.item(0, 2).text() == "running"

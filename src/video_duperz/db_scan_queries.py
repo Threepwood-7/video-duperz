@@ -82,6 +82,31 @@ class DatabaseScanQueryMixin:
         self.conn.execute("DELETE FROM duplicate_groups WHERE scan_id = ?", (scan_id,))
         self._commit_if_needed()
 
+    def list_analysis_issues_for_scan(self, scan_id: int) -> list[dict[str, Any]]:
+        """Return persisted backend-scoped analysis issues for one scan."""
+        rows = self.conn.execute(
+            """
+            SELECT ai.file_id, ai.probe_backend, ai.stage, ai.message, ai.created_at,
+                   f.path
+            FROM analysis_issues ai
+            JOIN files f ON f.id = ai.file_id
+            WHERE f.scan_id = ?
+            ORDER BY f.path, ai.created_at
+            """,
+            (scan_id,),
+        ).fetchall()
+        return [
+            {
+                "file_id": int(row["file_id"]),
+                "probe_backend": str(row["probe_backend"]),
+                "stage": str(row["stage"]),
+                "message": str(row["message"]),
+                "created_at": str(row["created_at"]),
+                "path": str(row["path"]),
+            }
+            for row in rows
+        ]
+
     def clear_all_scans(self) -> None:
         """Delete all scans and their cascaded child rows."""
         self.conn.execute("DELETE FROM scans")

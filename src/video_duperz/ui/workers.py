@@ -43,6 +43,7 @@ class ScanWorker(QRunnable):
         drive_worker_overrides: dict[str, int] | None = None,
         probe_backend: ProbeBackendId = "pyav",
         probe_worker_mode: str = "balanced",
+        analysis_timeout_s: int = 60,
         db_batch_size: int = 512,
         db_flush_interval_ms: int = 200,
         enum_queue_max: int = 4096,
@@ -61,6 +62,7 @@ class ScanWorker(QRunnable):
             "ffprobe" if probe_backend == "ffprobe" else "pyav"
         )
         self._probe_worker_mode = str(probe_worker_mode or "balanced")
+        self._analysis_timeout_s = max(5, int(analysis_timeout_s))
         self._db_batch_size = max(32, int(db_batch_size))
         self._db_flush_interval_ms = max(50, int(db_flush_interval_ms))
         self._enum_queue_max = max(256, int(enum_queue_max))
@@ -83,6 +85,7 @@ class ScanWorker(QRunnable):
                     drive_worker_overrides=self._drive_worker_overrides,
                     probe_backend=self._probe_backend,
                     probe_worker_mode=self._probe_worker_mode,
+                    analysis_timeout_s=self._analysis_timeout_s,
                     db_batch_size=self._db_batch_size,
                     db_flush_interval_ms=self._db_flush_interval_ms,
                     enum_queue_max=self._enum_queue_max,

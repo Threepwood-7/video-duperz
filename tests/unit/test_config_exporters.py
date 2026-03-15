@@ -43,6 +43,7 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     settings.drive_worker_overrides = {"volume:a": 3}
     settings.probe_backend = "pyav"
     settings.probe_worker_mode = "burst"
+    settings.scan_analysis_timeout_s = 123
     settings.scan_db_batch_size = 2048
     settings.scan_db_flush_interval_ms = 450
     settings.scan_enum_queue_max = 8192
@@ -72,6 +73,7 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     assert loaded.drive_worker_overrides == {"volume:a": 3}
     assert loaded.probe_backend == "pyav"
     assert loaded.probe_worker_mode == "burst"
+    assert loaded.scan_analysis_timeout_s == 123
     assert loaded.scan_db_batch_size == 2048
     assert loaded.scan_db_flush_interval_ms == 450
     assert loaded.scan_enum_queue_max == 8192
@@ -345,8 +347,10 @@ def test_settings_scan_tuning_normalization(tmp_path: Path, monkeypatch) -> None
     _set_qsettings_value(path, "scan_enum_queue_max", 10)
     _set_qsettings_value(path, "scan_progress_emit_interval_ms", 0)
     _set_qsettings_value(path, "scan_progress_emit_every_files", "oops")
+    _set_qsettings_value(path, "scan_analysis_timeout_s", 1)
 
     loaded = load_settings()
+    assert loaded.scan_analysis_timeout_s == 5
     assert loaded.scan_db_batch_size == 32
     assert loaded.scan_db_flush_interval_ms == 2000
     assert loaded.scan_enum_queue_max == 256
@@ -354,6 +358,10 @@ def test_settings_scan_tuning_normalization(tmp_path: Path, monkeypatch) -> None
     assert (
         loaded.scan_progress_emit_every_files == settings.scan_progress_emit_every_files
     )
+
+    _set_qsettings_value(path, "scan_analysis_timeout_s", 99999)
+    loaded_high = load_settings()
+    assert loaded_high.scan_analysis_timeout_s == 3600
 
 
 def test_export_scan_outputs_csv_and_json(tmp_path: Path) -> None:

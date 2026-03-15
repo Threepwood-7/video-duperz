@@ -43,6 +43,7 @@ DEFAULT_SCAN_DB_FLUSH_INTERVAL_MS = 200
 DEFAULT_SCAN_ENUM_QUEUE_MAX = 4096
 DEFAULT_SCAN_PROGRESS_EMIT_INTERVAL_MS = 200
 DEFAULT_SCAN_PROGRESS_EMIT_EVERY_FILES = 100
+DEFAULT_SCAN_ANALYSIS_TIMEOUT_S = 60
 
 
 def _object_list(value: object) -> list[object]:
@@ -384,6 +385,9 @@ def _read_qsettings_payload(
         ),
         "probe_backend": qs.value("probe_backend", defaults.probe_backend),
         "probe_worker_mode": qs.value("probe_worker_mode", defaults.probe_worker_mode),
+        "scan_analysis_timeout_s": qs.value(
+            "scan_analysis_timeout_s", defaults.scan_analysis_timeout_s
+        ),
         "scan_db_batch_size": qs.value(
             "scan_db_batch_size", defaults.scan_db_batch_size
         ),
@@ -470,6 +474,12 @@ def _settings_from_raw(raw: dict[str, object], defaults: Settings) -> Settings:
             raw.get("probe_worker_mode", defaults.probe_worker_mode),
             default=defaults.probe_worker_mode,
         ),
+        scan_analysis_timeout_s=_normalize_int_range(
+            raw.get("scan_analysis_timeout_s", defaults.scan_analysis_timeout_s),
+            defaults.scan_analysis_timeout_s,
+            5,
+            3600,
+        ),
         scan_db_batch_size=_normalize_int_range(
             raw.get("scan_db_batch_size", defaults.scan_db_batch_size),
             defaults.scan_db_batch_size,
@@ -546,6 +556,7 @@ def default_settings() -> Settings:
         drive_worker_overrides={},
         probe_backend="pyav",
         probe_worker_mode="balanced",
+        scan_analysis_timeout_s=DEFAULT_SCAN_ANALYSIS_TIMEOUT_S,
         scan_db_batch_size=DEFAULT_SCAN_DB_BATCH_SIZE,
         scan_db_flush_interval_ms=DEFAULT_SCAN_DB_FLUSH_INTERVAL_MS,
         scan_enum_queue_max=DEFAULT_SCAN_ENUM_QUEUE_MAX,

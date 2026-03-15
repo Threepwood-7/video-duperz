@@ -193,6 +193,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             drive_worker_overrides=settings.drive_worker_overrides,
             probe_backend=settings.probe_backend,
             probe_worker_mode=settings.probe_worker_mode,
+            analysis_timeout_s=settings.scan_analysis_timeout_s,
             db_batch_size=settings.scan_db_batch_size,
             db_flush_interval_ms=settings.scan_db_flush_interval_ms,
             enum_queue_max=settings.scan_enum_queue_max,

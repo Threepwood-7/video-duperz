@@ -97,6 +97,9 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
         self.max_workers_spin.setValue(max(1, int(self.settings.max_workers)))
         probe_index = self.probe_mode_combo.findText(self.settings.probe_worker_mode)
         self.probe_mode_combo.setCurrentIndex(max(0, probe_index))
+        self.analysis_timeout_spin.setValue(
+            max(5, int(self.settings.scan_analysis_timeout_s))
+        )
         size_key = normalize_thumbnail_size(self.settings.thumbnail_size)
         self.thumbnail_size_combo.blockSignals(True)
         for i in range(self.thumbnail_size_combo.count()):
@@ -164,6 +167,7 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
             drive_worker_overrides=drive_worker_overrides,
             probe_backend=self._current_probe_backend(),
             probe_worker_mode=self._current_probe_worker_mode(),
+            scan_analysis_timeout_s=self.analysis_timeout_spin.value(),
             scan_db_batch_size=self.settings.scan_db_batch_size,
             scan_db_flush_interval_ms=self.settings.scan_db_flush_interval_ms,
             scan_enum_queue_max=self.settings.scan_enum_queue_max,

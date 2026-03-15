@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections import deque
 from typing import TYPE_CHECKING
 
@@ -85,6 +86,17 @@ def queue_lane_if_ready_locked(ctx: _ScanContext, lane: int) -> None:
     ctx.ready_set.add(lane)
 
 
+def _run_task_with_start_marker(
+    ctx: _ScanContext,
+    task: _AnalyzeTask,
+) -> _AnalyzeOutputLike:
+    """Run one analyze task and record when the worker actually starts."""
+    started_at = time.perf_counter()
+    with ctx.state_lock:
+        ctx.started_task_at[task.task_id] = started_at
+    return ctx.analyze_file(task.path, task.cached_meta)
+
+
 def submit_next_for_lane(
     ctx: _ScanContext,
     executor: ThreadPoolExecutor,
@@ -117,10 +129,10 @@ def submit_next_for_lane(
         ctx.active_workers += 1
         queue_lane_if_ready_locked(ctx, lane)
         refresh_lane_state_locked(ctx, lane)
-    future = executor.submit(ctx.analyze_file, task.path, task.cached_meta)
-    future.add_done_callback(on_future_done)
+    future = executor.submit(_run_task_with_start_marker, ctx, task)
     with ctx.state_lock:
         ctx.futures[future] = task
+    future.add_done_callback(on_future_done)
     return True
 
 

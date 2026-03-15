@@ -43,9 +43,6 @@ class ScanView(QWidget):
         self.worker_progress.setValue(0)
         self.worker_progress.setFormat("Workers 0/0")
         self.worker_progress.setVisible(False)
-        self.worker_hint_label = QLabel(
-            "Worker status is shown per lane in the Parallel Lanes table.", self
-        )
         self.io_stats_label = QLabel(
             "I/O Stats: discovered 0 @ 0.00/s, 0.00 MiB/s | analyzed 0 @ "
             "0.00/s, 0.00 MiB/s | cache hit 0.0%",
@@ -117,7 +114,6 @@ class ScanView(QWidget):
         layout.addWidget(self.status_label)
         layout.addWidget(QLabel("Stage Progress", self))
         layout.addWidget(self.stage_progress)
-        layout.addWidget(self.worker_hint_label)
         layout.addWidget(self.io_stats_label)
         layout.addLayout(actions)
         layout.addWidget(QLabel("Parallel Lanes", self))

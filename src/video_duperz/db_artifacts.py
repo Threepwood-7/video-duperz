@@ -303,6 +303,27 @@ class DatabaseArtifactMixin:
             probe_backend=probe_backend,
         )
 
+    def save_analysis_issue(
+        self,
+        file_id: int,
+        stage: str,
+        message: str,
+        probe_backend: ProbeBackendId = "pyav",
+    ) -> None:
+        """Persist one backend-scoped analysis issue row for a file."""
+        self.save_analysis_issues_batch(
+            [(int(file_id), str(stage), str(message))],
+            probe_backend=probe_backend,
+        )
+
+    def delete_analysis_issue(
+        self,
+        file_id: int,
+        probe_backend: ProbeBackendId = "pyav",
+    ) -> None:
+        """Delete one backend-scoped analysis issue row for a file."""
+        self.delete_analysis_issues_batch([int(file_id)], probe_backend=probe_backend)
+
     def save_video_meta_batch(
         self,
         rows: list[tuple[int, VideoMeta]],
@@ -441,4 +462,65 @@ class DatabaseArtifactMixin:
             """,
             payload,
         )
+        self._commit_if_needed()
+
+    def save_analysis_issues_batch(
+        self,
+        rows: list[tuple[int, str, str]],
+        *,
+        probe_backend: ProbeBackendId = "pyav",
+    ) -> None:
+        """Persist multiple backend-scoped analysis issue rows."""
+        if not rows:
+            return
+        created_at = utc_now_iso()
+        payload = [
+            (
+                int(file_id),
+                str(probe_backend),
+                str(stage).strip() or "analyze",
+                str(message).strip()[:500] or "analysis issue",
+                created_at,
+            )
+            for file_id, stage, message in rows
+        ]
+        self.conn.executemany(
+            """
+            INSERT INTO analysis_issues(
+              file_id, probe_backend, stage, message, created_at
+            )
+            VALUES(?, ?, ?, ?, ?)
+            ON CONFLICT(file_id, probe_backend) DO UPDATE SET
+              stage = excluded.stage,
+              message = excluded.message,
+              created_at = excluded.created_at
+            """,
+            payload,
+        )
+        self._commit_if_needed()
+
+    def delete_analysis_issues_batch(
+        self,
+        file_ids: list[int],
+        *,
+        probe_backend: ProbeBackendId = "pyav",
+    ) -> None:
+        """Delete multiple backend-scoped analysis issue rows."""
+        if not file_ids:
+            return
+        unique_file_ids = sorted(
+            {int(file_id) for file_id in file_ids if int(file_id) > 0}
+        )
+        if not unique_file_ids:
+            return
+        for chunk in self._iter_chunks([str(file_id) for file_id in unique_file_ids]):
+            placeholders = ",".join("?" for _ in chunk)
+            params = (str(probe_backend), *chunk)
+            self.conn.execute(
+                f"""
+                DELETE FROM analysis_issues
+                WHERE probe_backend = ? AND file_id IN ({placeholders})
+                """,
+                params,
+            )
         self._commit_if_needed()

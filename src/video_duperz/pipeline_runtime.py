@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import time
 from collections import deque
 from collections.abc import Callable
@@ -126,6 +127,8 @@ def _flush_pending_analysis_batches(
         len(ctx.pending_meta_rows)
         + len(ctx.pending_fp_rows)
         + len(ctx.pending_probe_error_rows)
+        + len(ctx.pending_analysis_issue_rows)
+        + len(ctx.pending_analysis_issue_clear_ids)
     )
     if pending_total <= 0:
         return
@@ -162,6 +165,28 @@ def _flush_pending_analysis_batches(
         _timed_db_write(
             ctx,
             ctx.db.save_probe_errors_batch,
+            len(chunk),
+            chunk,
+            probe_backend=ctx.probe_backend,
+        )
+    while ctx.pending_analysis_issue_clear_ids:
+        clear_ids = sorted(ctx.pending_analysis_issue_clear_ids)
+        chunk = clear_ids[: ctx.db_batch_size]
+        for file_id in chunk:
+            ctx.pending_analysis_issue_clear_ids.discard(file_id)
+        _timed_db_write(
+            ctx,
+            ctx.db.delete_analysis_issues_batch,
+            len(chunk),
+            chunk,
+            probe_backend=ctx.probe_backend,
+        )
+    while ctx.pending_analysis_issue_rows:
+        chunk = ctx.pending_analysis_issue_rows[: ctx.db_batch_size]
+        del ctx.pending_analysis_issue_rows[: len(chunk)]
+        _timed_db_write(
+            ctx,
+            ctx.db.save_analysis_issues_batch,
             len(chunk),
             chunk,
             probe_backend=ctx.probe_backend,
@@ -356,6 +381,7 @@ def _process_discovered_batch(ctx: _ScanContext, batch: list[VideoRecord]) -> No
         file.file_id = file_id
         cache = cache_by_path.get(path)
         if cache and "meta" in cache and "fingerprint" in cache:
+            ctx.pending_analysis_issue_clear_ids.add(file_id)
             fp = cache["fingerprint"]
             if int(fp.get("algo_version", -1)) == ALGO_VERSION:
                 with ctx.state_lock:
@@ -366,16 +392,19 @@ def _process_discovered_batch(ctx: _ScanContext, batch: list[VideoRecord]) -> No
                 continue
 
         cached_meta = cache.get("meta") if cache else None
-        task = _AnalyzeTask(
-            file=file,
-            file_id=file_id,
-            cached_meta=cached_meta,
-            lane=lane,
-            source_root=source_root,
-            path=path,
-            size=file_size,
-        )
         with ctx.state_lock:
+            task_id = ctx.next_task_id
+            ctx.next_task_id += 1
+            task = _AnalyzeTask(
+                task_id=task_id,
+                file=file,
+                file_id=file_id,
+                cached_meta=cached_meta,
+                lane=lane,
+                source_root=source_root,
+                path=path,
+                size=file_size,
+            )
             ctx.lane_queues.setdefault(lane, deque()).append(task)
             lane_state = ensure_lane_state_locked(ctx, lane, source_root)
             lane_state.queued += 1
@@ -396,6 +425,7 @@ def _record_future_error(
     task: _AnalyzeTask,
     exc: Exception,
 ) -> None:
+    ctx.pending_analysis_issue_clear_ids.add(task.file_id)
     if isinstance(exc, ProbeError):
         ctx.pending_probe_error_rows.append((task.file_id, str(exc)))
         ctx.issues.append(ScanIssue(stage="probe", path=task.path, message=str(exc)))
@@ -413,6 +443,7 @@ def _record_future_success(
     task: _AnalyzeTask,
     output: _AnalyzeOutputLike,
 ) -> None:
+    ctx.pending_analysis_issue_clear_ids.add(task.file_id)
     if task.cached_meta is None:
         ctx.pending_meta_rows.append((task.file_id, output.meta))
     ctx.pending_fp_rows.append((task.file_id, ALGO_VERSION, output.hashes))
@@ -420,6 +451,56 @@ def _record_future_success(
     with ctx.state_lock:
         ctx.stage_seconds["probe"] += max(0.0, float(output.probe_s))
         ctx.stage_seconds["fingerprint"] += max(0.0, float(output.fingerprint_s))
+
+
+def _analysis_timeout_message(timeout_s: int) -> str:
+    """Return the persisted timeout message for one stalled analyze task."""
+    return f"analysis timeout after {int(timeout_s)}s; manual review required"
+
+
+def _retire_timed_out_task(
+    ctx: _ScanContext,
+    task: _AnalyzeTask,
+) -> None:
+    """Logically complete one timed-out task and persist its manual-review issue."""
+    message = _analysis_timeout_message(ctx.analysis_timeout_s)
+    ctx.issues.append(
+        ScanIssue(
+            stage="analyze_timeout",
+            path=task.path,
+            message=message,
+        )
+    )
+    ctx.pending_analysis_issue_rows.append((task.file_id, "analyze_timeout", message))
+    probe_done, probe_total = finalize_task(ctx, task)
+    emit_progress(
+        ctx,
+        "probe",
+        probe_done,
+        probe_total,
+        f"Timed out {task.path}",
+        file_counter=probe_done,
+    )
+
+
+def _check_analysis_timeouts(ctx: _ScanContext) -> int:
+    """Retire analyze tasks whose runtime exceeded the configured timeout."""
+    now = time.perf_counter()
+    expired: list[_AnalyzeTask] = []
+    with ctx.state_lock:
+        for future, task in list(ctx.futures.items()):
+            started_at = ctx.started_task_at.get(task.task_id)
+            if started_at is None:
+                continue
+            if (now - started_at) < float(ctx.analysis_timeout_s):
+                continue
+            ctx.futures.pop(future, None)
+            ctx.started_task_at.pop(task.task_id, None)
+            ctx.timed_out_task_ids.add(task.task_id)
+            expired.append(task)
+    for task in expired:
+        _retire_timed_out_task(ctx, task)
+    return len(expired)
 
 
 def _process_done_futures(ctx: _ScanContext) -> int:
@@ -431,6 +512,8 @@ def _process_done_futures(ctx: _ScanContext) -> int:
             future = ctx.done_futures.popleft()
         with ctx.state_lock:
             task = ctx.futures.pop(future, None)
+            if task is not None:
+                ctx.started_task_at.pop(task.task_id, None)
         if task is None:
             continue
         processed += 1
@@ -516,6 +599,8 @@ def _run_pipeline_loop(ctx: _ScanContext, executor: ThreadPoolExecutor) -> None:
             made_progress = True
         if _process_done_futures(ctx) > 0:
             made_progress = True
+        if _check_analysis_timeouts(ctx) > 0:
+            made_progress = True
         if (
             not ctx.cancel_requested
             and submit_ready_lanes(
@@ -550,6 +635,7 @@ def run_scan_runtime(
     probe_backend: ProbeBackendId = "pyav",
     probe_worker_mode: str = "balanced",
     *,
+    analysis_timeout_s: int = 60,
     db_batch_size: int,
     db_flush_interval_ms: int,
     enum_queue_max: int,
@@ -575,6 +661,7 @@ def run_scan_runtime(
         max_workers,
         drive_worker_overrides,
         probe_worker_mode,
+        analysis_timeout_s=analysis_timeout_s,
         db_batch_size=db_batch_size,
         db_flush_interval_ms=db_flush_interval_ms,
         enum_queue_max=enum_queue_max,
@@ -590,10 +677,13 @@ def run_scan_runtime(
     )
     start_runtime_threads(ctx, lambda: _run_enumeration(ctx))
     emit_worker_cap_warning(ctx, _worker_cap_message(ctx.scan_plan))
+    executor: ThreadPoolExecutor | None = None
 
     try:
-        with ThreadPoolExecutor(max_workers=ctx.executor_worker_limit) as executor:
-            _run_pipeline_loop(ctx, executor)
+        executor = ThreadPoolExecutor(max_workers=ctx.executor_worker_limit)
+        _run_pipeline_loop(ctx, executor)
+        executor.shutdown(wait=not bool(ctx.timed_out_task_ids))
+        executor = None
         join_enumeration_thread(ctx)
         if ctx.enum_error and not ctx.cancel_requested:
             raise ctx.enum_error
@@ -615,6 +705,9 @@ def run_scan_runtime(
             lambda: _flush_scan_transaction(ctx, force=True),
         )
     except Exception:
+        if executor is not None:
+            with contextlib.suppress(Exception):
+                executor.shutdown(wait=not bool(ctx.timed_out_task_ids))
         best_effort_end_scan_tx(
             lambda: _flush_pending_analysis_batches(ctx, force=True),
             lambda: _flush_scan_transaction(ctx, force=True),
