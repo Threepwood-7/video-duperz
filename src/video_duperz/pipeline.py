@@ -25,7 +25,7 @@ from .probe import ensure_ffprobe_available, ensure_probe_backend_available, pro
 from .scanner import build_physical_drive_scan_plan, enumerate_video_files
 
 if TYPE_CHECKING:
-    import threading
+    from threading import Event
 
     from .db import Database
 
@@ -99,7 +99,7 @@ def run_scan(
     enum_queue_max: int,
     progress_emit_interval_ms: int,
     progress_emit_every_files: int,
-    cancel_event: threading.Event | None = None,
+    cancel_event: Event | None = None,
     progress_cb: ProgressCallback | None = None,
 ) -> ScanResult:
     """Run a full scan using the default probe, fingerprint, and matcher pipeline."""
