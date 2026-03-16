@@ -176,6 +176,7 @@ class MainWindowBase(QMainWindow):
             sample_a_pct=settings.identical_sample_a_pct,
             sample_b_pct=settings.identical_sample_b_pct,
         )
+        self.results_view.set_mediainfo_exe_path(settings.mediainfo_exe_path)
 
         self._build_sources_tab()
         self._build_menus()
@@ -434,6 +435,12 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
 
     def _thumbnail_size_changed(self) -> None: ...
 
+    def _browse_executable_path(
+        self,
+        target_edit: QLineEdit,
+        tool_name: str,
+    ) -> None: ...
+
     def _build_sources_tab(self) -> None:
         """Build the entire Sources tab and its child controls."""
         roots_actions = self._build_sources_root_controls()
@@ -502,12 +509,51 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         self.probe_mode_combo.currentTextChanged.connect(
             self._refresh_sources_physical_drive_view
         )
+        self.ffmpeg_exe_path_edit = QLineEdit(self.sources_tab)
+        self.ffmpeg_exe_path_browse_btn = QPushButton("Browse...", self.sources_tab)
+        self.ffmpeg_exe_path_browse_btn.clicked.connect(
+            lambda: self._browse_executable_path(
+                self.ffmpeg_exe_path_edit,
+                "ffmpeg",
+            )
+        )
+        self.ffprobe_exe_path_edit = QLineEdit(self.sources_tab)
+        self.ffprobe_exe_path_browse_btn = QPushButton("Browse...", self.sources_tab)
+        self.ffprobe_exe_path_browse_btn.clicked.connect(
+            lambda: self._browse_executable_path(
+                self.ffprobe_exe_path_edit,
+                "ffprobe",
+            )
+        )
+        self.mediainfo_exe_path_edit = QLineEdit(self.sources_tab)
+        self.mediainfo_exe_path_browse_btn = QPushButton("Browse...", self.sources_tab)
+        self.mediainfo_exe_path_browse_btn.clicked.connect(
+            lambda: self._browse_executable_path(
+                self.mediainfo_exe_path_edit,
+                "mediainfo",
+            )
+        )
         self.thumbnail_size_combo = QComboBox(self.sources_tab)
         for label, size_key in THUMBNAIL_SIZE_OPTIONS:
             self.thumbnail_size_combo.addItem(label, size_key)
         self.thumbnail_size_combo.currentIndexChanged.connect(
             self._thumbnail_size_changed
         )
+
+    def _build_executable_override_row(
+        self,
+        label_text: str,
+        path_edit: QLineEdit,
+        browse_button: QPushButton,
+    ) -> QWidget:
+        """Build one labeled row for an executable override field."""
+        row_widget = QWidget(self.sources_tab)
+        row_layout = QHBoxLayout(row_widget)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.addWidget(QLabel(label_text, row_widget))
+        row_layout.addWidget(path_edit, stretch=1)
+        row_layout.addWidget(browse_button)
+        return row_widget
 
     def _build_sources_drive_widgets(self) -> None:
         self.sources_drive_summary_label = QLabel(
@@ -567,6 +613,28 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         layout.addWidget(self.probe_backend_combo)
         layout.addWidget(QLabel("Probe mode"))
         layout.addWidget(self.probe_mode_combo)
+        layout.addWidget(QLabel("Executable overrides (blank = use PATH)"))
+        layout.addWidget(
+            self._build_executable_override_row(
+                "ffmpeg",
+                self.ffmpeg_exe_path_edit,
+                self.ffmpeg_exe_path_browse_btn,
+            )
+        )
+        layout.addWidget(
+            self._build_executable_override_row(
+                "ffprobe",
+                self.ffprobe_exe_path_edit,
+                self.ffprobe_exe_path_browse_btn,
+            )
+        )
+        layout.addWidget(
+            self._build_executable_override_row(
+                "mediainfo",
+                self.mediainfo_exe_path_edit,
+                self.mediainfo_exe_path_browse_btn,
+            )
+        )
         layout.addWidget(QLabel("Physical drives"))
         layout.addWidget(self.sources_drive_summary_label)
         layout.addWidget(self.sources_drive_table, stretch=1)

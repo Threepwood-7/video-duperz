@@ -14,6 +14,7 @@ from threep_commons.settings import QSettingsValueStore
 
 from .config_video_presets import COMMON_VIDEO_EXTENSIONS
 from .constants import APP_IDENTITY, SETTINGS_APP_NAME
+from .executable_paths import normalize_executable_override_path
 from .models import (
     DEFAULT_THUMBNAIL_SIZE,
     THUMBNAIL_SIZE_CHOICES,
@@ -384,6 +385,12 @@ def _read_qsettings_payload(
         ),
         "probe_backend": qs.value("probe_backend", defaults.probe_backend),
         "probe_worker_mode": qs.value("probe_worker_mode", defaults.probe_worker_mode),
+        "ffmpeg_exe_path": qs.value("ffmpeg_exe_path", defaults.ffmpeg_exe_path),
+        "ffprobe_exe_path": qs.value("ffprobe_exe_path", defaults.ffprobe_exe_path),
+        "mediainfo_exe_path": qs.value(
+            "mediainfo_exe_path",
+            defaults.mediainfo_exe_path,
+        ),
         "scan_db_batch_size": qs.value(
             "scan_db_batch_size", defaults.scan_db_batch_size
         ),
@@ -470,6 +477,15 @@ def _settings_from_raw(raw: dict[str, object], defaults: Settings) -> Settings:
             raw.get("probe_worker_mode", defaults.probe_worker_mode),
             default=defaults.probe_worker_mode,
         ),
+        ffmpeg_exe_path=normalize_executable_override_path(
+            raw.get("ffmpeg_exe_path", defaults.ffmpeg_exe_path)
+        ),
+        ffprobe_exe_path=normalize_executable_override_path(
+            raw.get("ffprobe_exe_path", defaults.ffprobe_exe_path)
+        ),
+        mediainfo_exe_path=normalize_executable_override_path(
+            raw.get("mediainfo_exe_path", defaults.mediainfo_exe_path)
+        ),
         scan_db_batch_size=_normalize_int_range(
             raw.get("scan_db_batch_size", defaults.scan_db_batch_size),
             defaults.scan_db_batch_size,
@@ -546,6 +562,9 @@ def default_settings() -> Settings:
         drive_worker_overrides={},
         probe_backend="pyav",
         probe_worker_mode="balanced",
+        ffmpeg_exe_path="",
+        ffprobe_exe_path="",
+        mediainfo_exe_path="",
         scan_db_batch_size=DEFAULT_SCAN_DB_BATCH_SIZE,
         scan_db_flush_interval_ms=DEFAULT_SCAN_DB_FLUSH_INTERVAL_MS,
         scan_enum_queue_max=DEFAULT_SCAN_ENUM_QUEUE_MAX,

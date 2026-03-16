@@ -5,7 +5,6 @@ from __future__ import annotations
 import contextlib
 import io
 import json
-import shutil
 import subprocess
 import sys
 import traceback
@@ -23,6 +22,7 @@ from threep_commons.subprocess_helpers import (
     windows_no_window_run_kwargs,
 )
 
+from .executable_paths import resolve_executable_path
 from .models import FingerprintRecord, FrameDecodeBackendId, utc_now_iso
 
 try:
@@ -225,20 +225,24 @@ def normalized_median_distance(hashes_a: list[int], hashes_b: list[int]) -> floa
     return float(median(distances)) / 64.0
 
 
-def ensure_ffmpeg_available() -> str:
+def ensure_ffmpeg_available(ffmpeg_exe_path: str = "") -> str:
     """Return the ffmpeg executable path or raise when it is unavailable."""
-    path = shutil.which("ffmpeg")
-    if not path:
-        raise FingerprintError(
-            "ffmpeg not found on PATH. Install ffmpeg and add it to PATH."
+    try:
+        return resolve_executable_path(
+            "ffmpeg",
+            ffmpeg_exe_path,
+            not_found_message=(
+                "ffmpeg not found on PATH. Install ffmpeg and add it to PATH."
+            ),
         )
-    return path
+    except FileNotFoundError as exc:
+        raise FingerprintError(str(exc)) from exc
 
 
-def ensure_fingerprint_fallback_chain_available() -> None:
+def ensure_fingerprint_fallback_chain_available(ffmpeg_exe_path: str = "") -> None:
     """Raise when the guarded decoder fallback chain is not fully available."""
     _import_av()
-    ensure_ffmpeg_available()
+    ensure_ffmpeg_available(ffmpeg_exe_path)
 
 
 def _relaxed_media_options() -> dict[str, str]:
@@ -444,9 +448,14 @@ def _ffmpeg_gray_frame(
     )
 
 
-def _ffmpeg_gray_samples(path: str, duration_s: float) -> list[np.ndarray | None]:
+def _ffmpeg_gray_samples(
+    path: str,
+    duration_s: float,
+    *,
+    ffmpeg_exe_path: str = "",
+) -> list[np.ndarray | None]:
     """Decode sampled grayscale frames through ffmpeg."""
-    ffmpeg_path = ensure_ffmpeg_available()
+    ffmpeg_path = ensure_ffmpeg_available(ffmpeg_exe_path)
     return [
         _ffmpeg_gray_frame(ffmpeg_path, path, timestamp_s)
         for timestamp_s in sample_timestamps(duration_s)
@@ -457,13 +466,18 @@ def _compute_hashes_for_decoder(
     path: str,
     duration_s: float,
     decoder_backend: FrameDecodeBackendId,
+    *,
+    ffmpeg_exe_path: str = "",
 ) -> list[int]:
     """Compute hashes through one concrete decoder backend."""
     if decoder_backend == "opencv":
         return _hash_gray_frames(path, _opencv_gray_samples(path, duration_s))
     if decoder_backend == "pyav":
         return _hash_gray_frames(path, _pyav_gray_samples(path, duration_s))
-    return _hash_gray_frames(path, _ffmpeg_gray_samples(path, duration_s))
+    return _hash_gray_frames(
+        path,
+        _ffmpeg_gray_samples(path, duration_s, ffmpeg_exe_path=ffmpeg_exe_path),
+    )
 
 
 def compute_video_hashes(path: str, duration_s: float) -> list[int]:
@@ -636,6 +650,8 @@ def _run_decoder_attempt_subprocess(
     duration_s: float,
     decoder_backend: FrameDecodeBackendId,
     timeout_s: float,
+    *,
+    ffmpeg_exe_path: str = "",
 ) -> _DecoderAttemptResult:
     """Run one decoder attempt in a killable child process."""
     payload = json.dumps(
@@ -643,6 +659,7 @@ def _run_decoder_attempt_subprocess(
             "path": path,
             "duration_s": duration_s,
             "decoder_backend": decoder_backend,
+            "ffmpeg_exe_path": ffmpeg_exe_path,
         }
     )
     command = [sys.executable, "-m", "video_duperz", "fingerprint-child"]
@@ -689,15 +706,33 @@ def build_fingerprint_record_with_fallback(
     duration_s: float,
     path: str,
     *,
-    attempt_runner: _DecoderAttemptRunner = _run_decoder_attempt_subprocess,
+    attempt_runner: _DecoderAttemptRunner | None = None,
     timeout_s: float = FINGERPRINT_DECODER_TIMEOUT_S,
+    ffmpeg_exe_path: str = "",
 ) -> FingerprintBuildResult:
     """Build a fingerprint record using guarded decoder fallbacks."""
+
+    def _default_attempt_runner(
+        attempt_path: str,
+        attempt_duration_s: float,
+        decoder_backend: FrameDecodeBackendId,
+        attempt_timeout_s: float,
+    ) -> _DecoderAttemptResult:
+        """Execute one default decoder child attempt with the active override."""
+        return _run_decoder_attempt_subprocess(
+            attempt_path,
+            attempt_duration_s,
+            decoder_backend,
+            attempt_timeout_s,
+            ffmpeg_exe_path=ffmpeg_exe_path,
+        )
+
     attempts: list[FingerprintDecoderAttempt] = []
     decoder_sequence = _decoder_sequence_for_path(path)
     risky_format_bypass = decoder_sequence[0] != "opencv"
+    active_attempt_runner = attempt_runner or _default_attempt_runner
     for index, decoder_backend in enumerate(decoder_sequence):
-        attempt = attempt_runner(path, duration_s, decoder_backend, timeout_s)
+        attempt = active_attempt_runner(path, duration_s, decoder_backend, timeout_s)
         attempts.append(
             FingerprintDecoderAttempt(
                 decoder_backend=decoder_backend,
@@ -738,12 +773,15 @@ def build_fingerprint_record(
     file_id: int,
     duration_s: float,
     path: str,
+    *,
+    ffmpeg_exe_path: str = "",
 ) -> FingerprintRecord:
     """Build the persisted fingerprint payload for a scanned video file."""
     return build_fingerprint_record_with_fallback(
         file_id=file_id,
         duration_s=duration_s,
         path=path,
+        ffmpeg_exe_path=ffmpeg_exe_path,
     ).record
 
 
@@ -760,10 +798,16 @@ def run_fingerprint_child_from_stdio() -> int:
     decoder_backend = _decode_backend(payload_map.get("decoder_backend"))
     if decoder_backend is None:
         raise ValueError("Fingerprint child request is missing 'decoder_backend'.")
+    ffmpeg_exe_path = str(payload_map.get("ffmpeg_exe_path", "") or "")
     duration_raw = payload_map.get("duration_s", 0.0)
     duration_s = float(duration_raw) if isinstance(duration_raw, int | float) else 0.0
     try:
-        hashes = _compute_hashes_for_decoder(path, duration_s, decoder_backend)
+        hashes = _compute_hashes_for_decoder(
+            path,
+            duration_s,
+            decoder_backend,
+            ffmpeg_exe_path=ffmpeg_exe_path,
+        )
     except FingerprintError as exc:
         sys.stdout.write(json.dumps(_error_payload(decoder_backend, exc)))
         return 0

@@ -64,6 +64,7 @@ class ResultsViewBase(QWidget):
         self._column_widths: list[int] = []
         self._applying_column_widths = False
         self._mediainfo_missing_notified = False
+        self._mediainfo_exe_path = ""
         self._checked_file_ids: set[int] = set()
         self._rebuilding_table = False
         self._scan_context_note = ""
@@ -326,6 +327,10 @@ class ResultsViewBase(QWidget):
         self._group_compare_payloads = self._build_group_compare_payloads(self._groups)
         if self._groups:
             self._rebuild_results_table()
+
+    def set_mediainfo_exe_path(self, path: str) -> None:
+        """Store the configured MediaInfo executable override path."""
+        self._mediainfo_exe_path = str(path or "").strip()
 
     @staticmethod
     def _normalize_identical_block_mib(value: object) -> int:

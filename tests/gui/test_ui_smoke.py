@@ -1221,6 +1221,9 @@ def test_sources_tab_drive_workers_and_probe_mode_persist_across_reload(
         spin_b.setValue(2)
         window.probe_backend_combo.setCurrentText("pyav")
         window.probe_mode_combo.setCurrentText("burst")
+        window.ffmpeg_exe_path_edit.setText(r"C:\tools\ffmpeg.exe")
+        window.ffprobe_exe_path_edit.setText(r"C:\tools\ffprobe.exe")
+        window.mediainfo_exe_path_edit.setText(r"C:\tools\mediainfo.exe")
         app.processEvents()
 
         assert "Requested workers: 6" in window.sources_drive_summary_label.text()
@@ -1231,6 +1234,9 @@ def test_sources_tab_drive_workers_and_probe_mode_persist_across_reload(
     assert loaded.drive_worker_overrides == {"volume:a": 4, "volume:b": 2}
     assert loaded.probe_backend == "pyav"
     assert loaded.probe_worker_mode == "burst"
+    assert loaded.ffmpeg_exe_path == r"C:\tools\ffmpeg.exe"
+    assert loaded.ffprobe_exe_path == r"C:\tools\ffprobe.exe"
+    assert loaded.mediainfo_exe_path == r"C:\tools\mediainfo.exe"
 
     with Database(tmp_path / "app.db") as db:
         reloaded_window = MainWindow(db=db, settings=loaded)
@@ -1239,6 +1245,11 @@ def test_sources_tab_drive_workers_and_probe_mode_persist_across_reload(
 
         assert reloaded_window.probe_backend_combo.currentText() == "pyav"
         assert reloaded_window.probe_mode_combo.currentText() == "burst"
+        assert reloaded_window.ffmpeg_exe_path_edit.text() == r"C:\tools\ffmpeg.exe"
+        assert reloaded_window.ffprobe_exe_path_edit.text() == r"C:\tools\ffprobe.exe"
+        assert (
+            reloaded_window.mediainfo_exe_path_edit.text() == r"C:\tools\mediainfo.exe"
+        )
         reloaded_spin_a = reloaded_window.sources_drive_table.cellWidget(0, 6)
         reloaded_spin_b = reloaded_window.sources_drive_table.cellWidget(1, 6)
         assert isinstance(reloaded_spin_a, QSpinBox)
@@ -1246,6 +1257,178 @@ def test_sources_tab_drive_workers_and_probe_mode_persist_across_reload(
         assert reloaded_spin_a.value() == 4
         assert reloaded_spin_b.value() == 2
         reloaded_window.close()
+
+
+def test_sources_tab_executable_browse_populates_target_edit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        monkeypatch.setattr(
+            "video_duperz.ui.main_window_settings.QFileDialog.getOpenFileName",
+            lambda *args, **kwargs: (r"C:\tools\ffmpeg.exe", "Executable (*.exe)"),
+        )
+
+        window.ffmpeg_exe_path_browse_btn.click()
+        app.processEvents()
+
+        assert window.ffmpeg_exe_path_edit.text() == r"C:\tools\ffmpeg.exe"
+        window.close()
+
+
+def test_results_view_launch_mediainfo_uses_configured_override(tmp_path: Path) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        launched: list[list[str]] = []
+        group = DuplicateGroup(
+            scan_id=1,
+            profile="balanced",
+            created_at="now",
+            items=[_dup_item(11, str(tmp_path / "a.mp4"), 320, 240, 1000, 1.0)],
+            total_size_bytes=100,
+            group_id=42,
+        )
+        window.results_view.load_groups([group])
+        window.results_view.results_table.setCurrentCell(0, 0)
+        window.results_view.set_mediainfo_exe_path(r"C:\tools\mediainfo.exe")
+
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(
+            "video_duperz.ui.results_view_actions.resolve_executable_path",
+            lambda tool_name, override_path="", *, not_found_message: str(
+                override_path or tool_name
+            ),
+        )
+        monkeypatch.setattr(
+            "video_duperz.ui.results_view_actions.subprocess.Popen",
+            lambda command: launched.append(list(command)),
+        )
+
+        window.results_view.launch_mediainfo()
+
+        assert launched == [[r"C:\tools\mediainfo.exe", str(tmp_path / "a.mp4")]]
+        monkeypatch.undo()
+        window.close()
+
+
+def test_results_view_launch_mediainfo_blank_override_falls_back_to_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        launched: list[list[str]] = []
+        group = DuplicateGroup(
+            scan_id=1,
+            profile="balanced",
+            created_at="now",
+            items=[_dup_item(12, str(tmp_path / "b.mp4"), 320, 240, 900, 0.98)],
+            total_size_bytes=100,
+            group_id=43,
+        )
+        window.results_view.load_groups([group])
+        window.results_view.results_table.setCurrentCell(0, 0)
+        window.results_view.set_mediainfo_exe_path("")
+
+        monkeypatch.setattr(
+            "video_duperz.ui.results_view_actions.resolve_executable_path",
+            lambda tool_name, override_path="", *, not_found_message: str(
+                override_path or tool_name
+            ),
+        )
+        monkeypatch.setattr(
+            "video_duperz.ui.results_view_actions.subprocess.Popen",
+            lambda command: launched.append(list(command)),
+        )
+
+        window.results_view.launch_mediainfo()
+
+        assert launched == [["mediainfo", str(tmp_path / "b.mp4")]]
+        window.close()
+
+
+def test_results_view_launch_mediainfo_invalid_override_warns(
+    tmp_path: Path, monkeypatch
+) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        warnings: list[tuple[str, str]] = []
+        statuses: list[str] = []
+        group = DuplicateGroup(
+            scan_id=1,
+            profile="balanced",
+            created_at="now",
+            items=[_dup_item(13, str(tmp_path / "c.mp4"), 320, 240, 800, 0.97)],
+            total_size_bytes=100,
+            group_id=44,
+        )
+        window.results_view.load_groups([group])
+        window.results_view.results_table.setCurrentCell(0, 0)
+        window.results_view.set_mediainfo_exe_path(r"C:\missing\mediainfo.exe")
+        window.results_view.status_message.connect(statuses.append)
+
+        def _raise_missing(
+            tool_name: str,
+            override_path: str = "",
+            *,
+            not_found_message: str,
+        ) -> str:
+            _ = not_found_message
+            raise FileNotFoundError(
+                f"{tool_name} executable override path is invalid: {override_path}"
+            )
+
+        monkeypatch.setattr(
+            "video_duperz.ui.results_view_actions.resolve_executable_path",
+            _raise_missing,
+        )
+        monkeypatch.setattr(
+            "video_duperz.ui.results_view_actions.QMessageBox.warning",
+            lambda _parent, title, text: warnings.append((str(title), str(text))),
+        )
+
+        window.results_view.launch_mediainfo()
+
+        assert warnings == [
+            (
+                "MediaInfo Missing",
+                (
+                    r"mediainfo executable override path is invalid: "
+                    r"C:\missing\mediainfo.exe"
+                ),
+            )
+        ]
+        assert statuses == [
+            "mediainfo is not installed, not on PATH, or has an invalid override path."
+        ]
+        window.close()
 
 
 def test_scan_running_locks_ui_to_scan_tab_until_finished(

@@ -60,6 +60,9 @@ class Settings:
     drive_worker_overrides: dict[str, int] = field(default_factory=dict)
     probe_backend: ProbeBackendId = "pyav"
     probe_worker_mode: ProbeWorkerMode = "balanced"
+    ffmpeg_exe_path: str = ""
+    ffprobe_exe_path: str = ""
+    mediainfo_exe_path: str = ""
     scan_db_batch_size: int = 512
     scan_db_flush_interval_ms: int = 200
     scan_enum_queue_max: int = 4096

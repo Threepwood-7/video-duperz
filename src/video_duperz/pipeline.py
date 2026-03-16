@@ -58,6 +58,7 @@ def _analyze_file_with_probe(
     cached_meta: VideoMeta | None,
     *,
     probe_video_fn: Callable[[str], VideoMeta],
+    ffmpeg_exe_path: str = "",
 ) -> _AnalyzeOutput:
     """Probe and fingerprint one file through the configured backend."""
     if cached_meta is None:
@@ -68,11 +69,19 @@ def _analyze_file_with_probe(
         meta = cached_meta
         probe_s = 0.0
     fp_started = time.perf_counter()
-    fp_result = build_fingerprint_record_with_fallback(
-        file_id=0,
-        duration_s=meta.duration_s,
-        path=path,
-    )
+    if ffmpeg_exe_path:
+        fp_result = build_fingerprint_record_with_fallback(
+            file_id=0,
+            duration_s=meta.duration_s,
+            path=path,
+            ffmpeg_exe_path=ffmpeg_exe_path,
+        )
+    else:
+        fp_result = build_fingerprint_record_with_fallback(
+            file_id=0,
+            duration_s=meta.duration_s,
+            path=path,
+        )
     fingerprint_s = max(0.0, time.perf_counter() - fp_started)
     return _AnalyzeOutput(
         meta=meta,
@@ -86,15 +95,36 @@ def _analyze_file_with_probe(
 
 def build_analyze_file(
     probe_backend: ProbeBackendId,
+    *,
+    ffmpeg_exe_path: str = "",
+    ffprobe_exe_path: str = "",
 ) -> Callable[[str], _AnalyzeOutput]:
     """Build a single-path analyze callable for the selected probe backend."""
-
-    if probe_backend == "ffprobe":
+    probe_video_kwargs: dict[str, str] = {}
+    if ffprobe_exe_path:
+        probe_video_kwargs["ffprobe_exe_path"] = ffprobe_exe_path
+    if probe_backend == "ffprobe" and not ffmpeg_exe_path and not ffprobe_exe_path:
         return partial(_analyze_file, cached_meta=None)
+    if probe_backend == "ffprobe":
+        return partial(
+            _analyze_file_with_probe,
+            cached_meta=None,
+            probe_video_fn=partial(
+                probe_video,
+                backend="ffprobe",
+                **probe_video_kwargs,
+            ),
+            ffmpeg_exe_path=ffmpeg_exe_path,
+        )
     return partial(
         _analyze_file_with_probe,
         cached_meta=None,
-        probe_video_fn=partial(probe_video, backend=probe_backend),
+        probe_video_fn=partial(
+            probe_video,
+            backend=probe_backend,
+            **probe_video_kwargs,
+        ),
+        ffmpeg_exe_path=ffmpeg_exe_path,
     )
 
 
@@ -107,6 +137,8 @@ def run_scan(
     drive_worker_overrides: dict[str, int] | None = None,
     probe_backend: ProbeBackendId = "pyav",
     probe_worker_mode: str = "balanced",
+    ffmpeg_exe_path: str = "",
+    ffprobe_exe_path: str = "",
     *,
     db_batch_size: int,
     db_flush_interval_ms: int,
@@ -117,18 +149,54 @@ def run_scan(
     progress_cb: ProgressCallback | None = None,
 ) -> ScanResult:
     """Run a full scan using the default probe, fingerprint, and matcher pipeline."""
+    probe_video_kwargs: dict[str, str] = {}
+    if ffprobe_exe_path:
+        probe_video_kwargs["ffprobe_exe_path"] = ffprobe_exe_path
     if probe_backend == "ffprobe":
-        analyze_file: Callable[[str, VideoMeta | None], _AnalyzeOutput] = _analyze_file
-        ensure_available_fn: Callable[[], object] = ensure_ffprobe_available
+        analyze_file = (
+            partial(_analyze_file, cached_meta=None)
+            if not ffmpeg_exe_path and not ffprobe_exe_path
+            else partial(
+                _analyze_file_with_probe,
+                probe_video_fn=partial(
+                    probe_video,
+                    backend="ffprobe",
+                    **probe_video_kwargs,
+                ),
+                ffmpeg_exe_path=ffmpeg_exe_path,
+            )
+        )
+        ensure_available_fn = (
+            (lambda: ensure_ffprobe_available(ffprobe_exe_path))
+            if ffprobe_exe_path
+            else ensure_ffprobe_available
+        )
     else:
         analyze_file = partial(
             _analyze_file_with_probe,
-            probe_video_fn=partial(probe_video, backend=probe_backend),
+            probe_video_fn=partial(
+                probe_video,
+                backend=probe_backend,
+                **probe_video_kwargs,
+            ),
+            ffmpeg_exe_path=ffmpeg_exe_path,
         )
-        ensure_available_fn = partial(
-            ensure_probe_backend_available, backend=probe_backend
+        ensure_available_fn = (
+            partial(
+                ensure_probe_backend_available,
+                backend=probe_backend,
+                ffprobe_exe_path=ffprobe_exe_path,
+            )
+            if ffprobe_exe_path
+            else partial(
+                ensure_probe_backend_available,
+                backend=probe_backend,
+            )
         )
-    ensure_fingerprint_fallback_chain_available()
+    if ffmpeg_exe_path:
+        ensure_fingerprint_fallback_chain_available(ffmpeg_exe_path)
+    else:
+        ensure_fingerprint_fallback_chain_available()
     # Preserve module-level monkeypatch seams while the runtime engine lives
     # in its own module.
     return run_scan_runtime(

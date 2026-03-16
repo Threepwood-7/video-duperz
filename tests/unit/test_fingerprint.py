@@ -8,11 +8,14 @@ import pytest
 from video_duperz.fingerprint import (
     FingerprintError,
     _DecoderAttemptResult,
+    _ffmpeg_gray_samples,
     build_fingerprint_record_with_fallback,
     dhash_from_gray,
+    ensure_ffmpeg_available,
     fingerprint_child_stdio,
     normalized_median_distance,
     run_fingerprint_child_from_stdio,
+    sample_timestamps,
 )
 
 
@@ -29,6 +32,85 @@ def test_normalized_distance_bounds() -> None:
     c = [0x5555555555555555] * 12
     assert normalized_median_distance(a, b) == 0.0
     assert normalized_median_distance(a, c) > 0.9
+
+
+def test_ffmpeg_gray_samples_use_explicit_override_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[tuple[str, str, float]] = []
+
+    monkeypatch.setattr(
+        "video_duperz.fingerprint.ensure_ffmpeg_available",
+        lambda ffmpeg_exe_path="": str(ffmpeg_exe_path),
+    )
+    monkeypatch.setattr(
+        "video_duperz.fingerprint._ffmpeg_gray_frame",
+        lambda ffmpeg_path, path, timestamp_s: (
+            seen.append((ffmpeg_path, path, timestamp_s)) or None
+        ),
+    )
+
+    _ffmpeg_gray_samples(
+        "D:/Videos/clip.mp4",
+        10.0,
+        ffmpeg_exe_path=r"C:\ffmpeg\bin\ffmpeg.exe",
+    )
+
+    assert seen == [
+        (r"C:\ffmpeg\bin\ffmpeg.exe", "D:/Videos/clip.mp4", timestamp_s)
+        for timestamp_s in sample_timestamps(10.0)
+    ]
+
+
+def test_ensure_ffmpeg_available_raises_for_invalid_override_path() -> None:
+    with pytest.raises(
+        FingerprintError,
+        match=r"ffmpeg executable override path is invalid: C:\\missing\\ffmpeg\.exe",
+    ):
+        ensure_ffmpeg_available(r"C:\missing\ffmpeg.exe")
+
+
+def test_decoder_subprocess_payload_includes_ffmpeg_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeProcess:
+        def __init__(self) -> None:
+            self.returncode = 0
+            self.pid = 123
+
+        def communicate(
+            self,
+            input: str | None = None,
+            timeout: float | None = None,
+        ) -> tuple[str, str]:
+            captured["input"] = input
+            captured["timeout"] = timeout
+            return (json.dumps({"status": "success", "hashes": [1, 2, 3]}), "")
+
+        def poll(self) -> int:
+            return 0
+
+    monkeypatch.setattr(
+        "video_duperz.fingerprint.windows_no_window_popen_kwargs",
+        lambda: {},
+    )
+    monkeypatch.setattr(
+        "video_duperz.fingerprint.subprocess.Popen",
+        lambda command, **kwargs: _FakeProcess(),
+    )
+
+    result = build_fingerprint_record_with_fallback(
+        file_id=1,
+        duration_s=10.0,
+        path="D:/Videos/risky.asf",
+        ffmpeg_exe_path=r"C:\ffmpeg\bin\ffmpeg.exe",
+    )
+
+    payload = json.loads(str(captured["input"]))
+    assert payload["ffmpeg_exe_path"] == r"C:\ffmpeg\bin\ffmpeg.exe"
+    assert result.decoder_backend == "ffmpeg"
 
 
 def test_risky_formats_bypass_opencv() -> None:
@@ -147,7 +229,7 @@ def test_full_decoder_chain_failure_raises_fingerprint_error() -> None:
 def test_fingerprint_child_reports_success(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "video_duperz.fingerprint._compute_hashes_for_decoder",
-        lambda path, duration_s, decoder_backend: [11, 22, 33],
+        lambda path, duration_s, decoder_backend, ffmpeg_exe_path="": [11, 22, 33],
     )
     payload = json.dumps(
         {
@@ -171,8 +253,13 @@ def test_fingerprint_child_reports_success(monkeypatch: pytest.MonkeyPatch) -> N
 def test_fingerprint_child_reports_structured_fingerprint_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def _raise(path: str, duration_s: float, decoder_backend: str) -> list[int]:
-        _ = path, duration_s, decoder_backend
+    def _raise(
+        path: str,
+        duration_s: float,
+        decoder_backend: str,
+        ffmpeg_exe_path: str = "",
+    ) -> list[int]:
+        _ = path, duration_s, decoder_backend, ffmpeg_exe_path
         raise FingerprintError("decoder failed")
 
     monkeypatch.setattr("video_duperz.fingerprint._compute_hashes_for_decoder", _raise)

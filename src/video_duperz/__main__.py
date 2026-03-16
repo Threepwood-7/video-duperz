@@ -182,9 +182,17 @@ def _cmd_gui(_args: argparse.Namespace) -> int:
     from .ui.main_window import MainWindow
 
     settings = load_settings()
+    ffprobe_exe_path = str(getattr(settings, "ffprobe_exe_path", "") or "")
+    ffmpeg_exe_path = str(getattr(settings, "ffmpeg_exe_path", "") or "")
     try:
-        ensure_probe_backend_available(settings.probe_backend)
-        ensure_fingerprint_fallback_chain_available()
+        ensure_probe_backend_available(
+            settings.probe_backend,
+            ffprobe_exe_path=ffprobe_exe_path,
+        )
+        if ffmpeg_exe_path:
+            ensure_fingerprint_fallback_chain_available(ffmpeg_exe_path)
+        else:
+            ensure_fingerprint_fallback_chain_available()
     except (ProbeError, FingerprintError) as exc:
         app = QApplication(sys.argv)
         QMessageBox.critical(None, "Scan Backend Unavailable", str(exc))
@@ -224,9 +232,17 @@ def _cmd_gui(_args: argparse.Namespace) -> int:
 def _cmd_scan(args: argparse.Namespace) -> int:
     """Run one headless scan using the persisted application settings."""
     settings = load_settings()
+    ffprobe_exe_path = str(getattr(settings, "ffprobe_exe_path", "") or "")
+    ffmpeg_exe_path = str(getattr(settings, "ffmpeg_exe_path", "") or "")
     try:
-        ensure_probe_backend_available(settings.probe_backend)
-        ensure_fingerprint_fallback_chain_available()
+        ensure_probe_backend_available(
+            settings.probe_backend,
+            ffprobe_exe_path=ffprobe_exe_path,
+        )
+        if ffmpeg_exe_path:
+            ensure_fingerprint_fallback_chain_available(ffmpeg_exe_path)
+        else:
+            ensure_fingerprint_fallback_chain_available()
     except (ProbeError, FingerprintError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
@@ -242,6 +258,8 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             drive_worker_overrides=settings.drive_worker_overrides,
             probe_backend=settings.probe_backend,
             probe_worker_mode=settings.probe_worker_mode,
+            ffmpeg_exe_path=ffmpeg_exe_path,
+            ffprobe_exe_path=ffprobe_exe_path,
             db_batch_size=settings.scan_db_batch_size,
             db_flush_interval_ms=settings.scan_db_flush_interval_ms,
             enum_queue_max=settings.scan_enum_queue_max,

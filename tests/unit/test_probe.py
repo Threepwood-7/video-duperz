@@ -6,7 +6,12 @@ from types import SimpleNamespace
 import pytest
 
 from video_duperz.models import VideoMeta
-from video_duperz.probe import ProbeError, ensure_probe_backend_available, probe_video
+from video_duperz.probe import (
+    ProbeError,
+    ensure_ffprobe_available,
+    ensure_probe_backend_available,
+    probe_video,
+)
 
 
 def test_probe_video_ffprobe_uses_hidden_window_kwargs_and_resolved_executable(
@@ -87,6 +92,27 @@ def test_probe_video_ffprobe_uses_hidden_window_kwargs_and_resolved_executable(
         "check": True,
         "creationflags": 0x08000000,
     }
+
+
+def test_ensure_ffprobe_available_uses_path_lookup_when_override_blank(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "video_duperz.executable_paths.shutil.which",
+        lambda tool_name: (
+            r"C:\ffmpeg\bin\ffprobe.exe" if tool_name == "ffprobe" else None
+        ),
+    )
+
+    assert ensure_ffprobe_available("") == r"C:\ffmpeg\bin\ffprobe.exe"
+
+
+def test_ensure_ffprobe_available_raises_for_invalid_override_path() -> None:
+    with pytest.raises(
+        ProbeError,
+        match=r"ffprobe executable override path is invalid: C:\\missing\\ffprobe\.exe",
+    ):
+        ensure_ffprobe_available(r"C:\missing\ffprobe.exe")
 
 
 def test_probe_video_pyav_maps_metadata(monkeypatch: pytest.MonkeyPatch) -> None:

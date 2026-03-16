@@ -43,6 +43,9 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     settings.drive_worker_overrides = {"volume:a": 3}
     settings.probe_backend = "pyav"
     settings.probe_worker_mode = "burst"
+    settings.ffmpeg_exe_path = "~/bin/ffmpeg.exe"
+    settings.ffprobe_exe_path = "~/bin/ffprobe.exe"
+    settings.mediainfo_exe_path = "~/bin/mediainfo.exe"
     settings.scan_db_batch_size = 2048
     settings.scan_db_flush_interval_ms = 450
     settings.scan_enum_queue_max = 8192
@@ -72,6 +75,9 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     assert loaded.drive_worker_overrides == {"volume:a": 3}
     assert loaded.probe_backend == "pyav"
     assert loaded.probe_worker_mode == "burst"
+    assert loaded.ffmpeg_exe_path == str(Path("~/bin/ffmpeg.exe").expanduser())
+    assert loaded.ffprobe_exe_path == str(Path("~/bin/ffprobe.exe").expanduser())
+    assert loaded.mediainfo_exe_path == str(Path("~/bin/mediainfo.exe").expanduser())
     assert loaded.scan_db_batch_size == 2048
     assert loaded.scan_db_flush_interval_ms == 450
     assert loaded.scan_enum_queue_max == 8192
@@ -317,6 +323,9 @@ def test_settings_drive_worker_overrides_and_probe_mode_normalization(
     )
     _set_qsettings_value(path, "probe_backend", "INVALID")
     _set_qsettings_value(path, "probe_worker_mode", "INVALID")
+    _set_qsettings_value(path, "ffmpeg_exe_path", "  ~/tools/ffmpeg.exe  ")
+    _set_qsettings_value(path, "ffprobe_exe_path", "")
+    _set_qsettings_value(path, "mediainfo_exe_path", "  ")
 
     loaded = load_settings()
     assert loaded.drive_worker_overrides == {
@@ -325,6 +334,9 @@ def test_settings_drive_worker_overrides_and_probe_mode_normalization(
     }
     assert loaded.probe_backend == "pyav"
     assert loaded.probe_worker_mode == "balanced"
+    assert loaded.ffmpeg_exe_path == str(Path("~/tools/ffmpeg.exe").expanduser())
+    assert loaded.ffprobe_exe_path == ""
+    assert loaded.mediainfo_exe_path == ""
 
     _set_qsettings_value(path, "probe_backend", "pyav")
     _set_qsettings_value(path, "probe_worker_mode", "burst")

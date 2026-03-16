@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
-import shutil
 import subprocess
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from threep_commons.subprocess_helpers import windows_no_window_run_kwargs
 
+from .executable_paths import resolve_executable_path
 from .models import ProbeBackendId, VideoMeta
 
 if TYPE_CHECKING:
@@ -76,35 +76,51 @@ class _AvModuleLike(Protocol):
         ...
 
 
-def ensure_ffprobe_available() -> str:
+def ensure_ffprobe_available(ffprobe_exe_path: str = "") -> str:
     """Return the ffprobe executable path or raise when it is unavailable."""
-
-    path = shutil.which("ffprobe")
-    if not path:
-        raise ProbeError(
-            "ffprobe not found on PATH. Install ffmpeg and add it to PATH."
+    try:
+        return resolve_executable_path(
+            "ffprobe",
+            ffprobe_exe_path,
+            not_found_message=(
+                "ffprobe not found on PATH. Install ffmpeg and add it to PATH."
+            ),
         )
-    return path
+    except FileNotFoundError as exc:
+        raise ProbeError(str(exc)) from exc
 
 
-def ensure_probe_backend_available(backend: ProbeBackendId = "pyav") -> None:
+def ensure_probe_backend_available(
+    backend: ProbeBackendId = "pyav",
+    *,
+    ffprobe_exe_path: str = "",
+) -> None:
     """Raise `ProbeError` when the selected probe backend is unavailable."""
+    get_probe_backend(backend, ffprobe_exe_path=ffprobe_exe_path).ensure_available()
 
-    get_probe_backend(backend).ensure_available()
 
-
-def get_probe_backend(backend: ProbeBackendId = "pyav") -> ProbeBackend:
+def get_probe_backend(
+    backend: ProbeBackendId = "pyav",
+    *,
+    ffprobe_exe_path: str = "",
+) -> ProbeBackend:
     """Return the selected probe backend implementation."""
-
     if backend == "pyav":
         return _PYAV_BACKEND
-    return _FFPROBE_BACKEND
+    return _FfprobeBackend(ffprobe_exe_path)
 
 
-def probe_video(path: str, *, backend: ProbeBackendId = "pyav") -> VideoMeta:
+def probe_video(
+    path: str,
+    *,
+    backend: ProbeBackendId = "pyav",
+    ffprobe_exe_path: str = "",
+) -> VideoMeta:
     """Run the selected probe backend and normalize the result into `VideoMeta`."""
-
-    return get_probe_backend(backend).probe_video(path)
+    return get_probe_backend(
+        backend,
+        ffprobe_exe_path=ffprobe_exe_path,
+    ).probe_video(path)
 
 
 def _parse_fps(rate: str) -> float:
@@ -282,7 +298,13 @@ def _import_av() -> _AvModuleLike:
 class _FfprobeBackend:
     """Metadata probe backend that shells out to ffprobe."""
 
+    def __init__(self, ffprobe_exe_path: str = "") -> None:
+        """Store one optional ffprobe override path for future launches."""
+        self._ffprobe_exe_path = ffprobe_exe_path
+
     def ensure_available(self) -> str:
+        if self._ffprobe_exe_path:
+            return ensure_ffprobe_available(self._ffprobe_exe_path)
         return ensure_ffprobe_available()
 
     def probe_video(self, path: str) -> VideoMeta:
@@ -497,5 +519,4 @@ class _PyAvBackend:
             raise ProbeError(f"PyAV failed for {path}: {exc}") from exc
 
 
-_FFPROBE_BACKEND = _FfprobeBackend()
 _PYAV_BACKEND = _PyAvBackend()

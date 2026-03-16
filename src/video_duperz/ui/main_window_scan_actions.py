@@ -62,6 +62,8 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
             drive_worker_overrides=self.settings.drive_worker_overrides,
             probe_backend=self.settings.probe_backend,
             probe_worker_mode=self.settings.probe_worker_mode,
+            ffmpeg_exe_path=self.settings.ffmpeg_exe_path,
+            ffprobe_exe_path=self.settings.ffprobe_exe_path,
             db_batch_size=self.settings.scan_db_batch_size,
             db_flush_interval_ms=self.settings.scan_db_flush_interval_ms,
             enum_queue_max=self.settings.scan_enum_queue_max,

@@ -12,6 +12,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox, QTableWidgetItem
 from threep_commons.desktop import open_path_in_default_app, reveal_path_in_file_manager
 
+from ..executable_paths import resolve_executable_path
 from ..quality import codec_rank
 from .results_view_shared import COL_CHECK, COL_FULL_PATH, DeleteTarget, RowMeta
 from .results_view_thumbnail import ResultsViewThumbnailMixin
@@ -250,17 +251,32 @@ class ResultsViewActionMixin(ResultsViewThumbnailMixin):
         if not path:
             return
         try:
-            subprocess.Popen(["mediainfo", path])
+            mediainfo_path = resolve_executable_path(
+                "mediainfo",
+                self._mediainfo_exe_path,
+                not_found_message="mediainfo executable not found on PATH.",
+            )
+            subprocess.Popen([mediainfo_path, path])
             self.status_message.emit("Launched MediaInfo.")
         except FileNotFoundError:
             if not self._mediainfo_missing_notified:
                 QMessageBox.warning(
                     self,
                     "MediaInfo Missing",
-                    "mediainfo executable not found on PATH.",
+                    (
+                        "mediainfo executable not found on PATH."
+                        if not self._mediainfo_exe_path
+                        else (
+                            "mediainfo executable override path is invalid: "
+                            f"{self._mediainfo_exe_path}"
+                        )
+                    ),
                 )
                 self._mediainfo_missing_notified = True
-            self.status_message.emit("mediainfo is not installed or not on PATH.")
+            self.status_message.emit(
+                "mediainfo is not installed, not on PATH, or has an invalid "
+                "override path."
+            )
         except Exception as exc:
             QMessageBox.warning(self, "MediaInfo Failed", str(exc))
             self.status_message.emit("Failed to launch mediainfo.")

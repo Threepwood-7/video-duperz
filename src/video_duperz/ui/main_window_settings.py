@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QFileDialog, QInputDialog, QMessageBox
+from PySide6.QtWidgets import QFileDialog, QInputDialog, QLineEdit, QMessageBox
 from threep_commons.desktop import open_path_in_default_app
 
 from ..config import (
@@ -21,6 +21,7 @@ from ..config_video_presets import (
     detect_video_extension_preset,
     video_extensions_csv_for_preset,
 )
+from ..executable_paths import normalize_executable_override_path
 from ..models import (
     ProbeBackendId,
     ProbeWorkerMode,
@@ -70,6 +71,21 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
 
     def _current_sources_extensions(self) -> list[str]: ...
 
+    def _browse_executable_path(
+        self,
+        target_edit: QLineEdit,
+        tool_name: str,
+    ) -> None:
+        """Prompt for one executable path and copy it into the target edit."""
+        selected_path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            f"Select {tool_name} executable",
+            str(Path(target_edit.text()).expanduser()) if target_edit.text() else "",
+            "Executable (*.exe);;All files (*)",
+        )
+        if selected_path:
+            target_edit.setText(selected_path)
+
     def _load_settings_to_widgets(self) -> None:
         """Load persisted settings into all source and results controls."""
         self.roots_list.clear()
@@ -97,6 +113,9 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
         self.max_workers_spin.setValue(max(1, int(self.settings.max_workers)))
         probe_index = self.probe_mode_combo.findText(self.settings.probe_worker_mode)
         self.probe_mode_combo.setCurrentIndex(max(0, probe_index))
+        self.ffmpeg_exe_path_edit.setText(self.settings.ffmpeg_exe_path)
+        self.ffprobe_exe_path_edit.setText(self.settings.ffprobe_exe_path)
+        self.mediainfo_exe_path_edit.setText(self.settings.mediainfo_exe_path)
         size_key = normalize_thumbnail_size(self.settings.thumbnail_size)
         self.thumbnail_size_combo.blockSignals(True)
         for i in range(self.thumbnail_size_combo.count()):
@@ -126,6 +145,7 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
             str(key): max(1, int(value))
             for key, value in self.settings.drive_worker_overrides.items()
         }
+        self.results_view.set_mediainfo_exe_path(self.settings.mediainfo_exe_path)
         self._update_root_buttons_state()
         self._sync_column_toggle_actions()
         self._refresh_sources_physical_drive_view()
@@ -164,6 +184,15 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
             drive_worker_overrides=drive_worker_overrides,
             probe_backend=self._current_probe_backend(),
             probe_worker_mode=self._current_probe_worker_mode(),
+            ffmpeg_exe_path=normalize_executable_override_path(
+                self.ffmpeg_exe_path_edit.text()
+            ),
+            ffprobe_exe_path=normalize_executable_override_path(
+                self.ffprobe_exe_path_edit.text()
+            ),
+            mediainfo_exe_path=normalize_executable_override_path(
+                self.mediainfo_exe_path_edit.text()
+            ),
             scan_db_batch_size=self.settings.scan_db_batch_size,
             scan_db_flush_interval_ms=self.settings.scan_db_flush_interval_ms,
             scan_enum_queue_max=self.settings.scan_enum_queue_max,
@@ -185,6 +214,7 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
             sample_a_pct=self.settings.identical_sample_a_pct,
             sample_b_pct=self.settings.identical_sample_b_pct,
         )
+        self.results_view.set_mediainfo_exe_path(self.settings.mediainfo_exe_path)
 
     def _on_tab_changed(self, index: int) -> None:
         """Keep the Scan tab selected while a scan is running."""
