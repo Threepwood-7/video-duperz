@@ -101,6 +101,7 @@ def emit_progress(
     *,
     force: bool = False,
     file_counter: int | None = None,
+    subject_path: str = "",
 ) -> None:
     """Emit a progress frame when stage or throughput thresholds require it."""
     elapsed_s = max(0.0, time.perf_counter() - ctx.scan_started_at)
@@ -138,6 +139,7 @@ def emit_progress(
                 current=current,
                 total=total,
                 message=message,
+                subject_path=subject_path,
                 active_workers=ctx.active_workers,
                 worker_limit=effective_worker_limit_locked(ctx),
                 enumerated_roots=ctx.enumerated_roots,

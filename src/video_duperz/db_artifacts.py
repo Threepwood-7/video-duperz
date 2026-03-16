@@ -11,7 +11,13 @@ from .db_shared import (
     encode_hashes,
     require_lastrowid,
 )
-from .models import FrameDecodeBackendId, ProbeBackendId, VideoMeta, utc_now_iso
+from .models import (
+    FrameDecodeBackendId,
+    ProbeBackendId,
+    ScanIssue,
+    VideoMeta,
+    utc_now_iso,
+)
 from .scan_sets import (
     build_scan_set_key,
     normalize_extensions,
@@ -78,6 +84,115 @@ class DatabaseArtifactMixin:
     def complete_scan(self, scan_id: int, status: str = "done") -> None:
         """Mark a scan row as completed with the given status."""
         self.conn.execute("UPDATE scans SET status = ? WHERE id = ?", (status, scan_id))
+        self._commit_if_needed()
+
+    def update_scan_definition(
+        self,
+        scan_id: int,
+        *,
+        profile: str,
+        roots: list[str],
+        extensions: list[str] | None = None,
+        probe_backend: ProbeBackendId = "pyav",
+        status: str | None = None,
+    ) -> None:
+        """Update one scan row so a paused scan can be resumed in place."""
+        normalized_roots = normalize_roots_for_display(roots)
+        normalized_profile = normalize_similarity_profile(profile)
+        normalized_extensions = normalize_extensions(extensions or [])
+        scan_set_key = build_scan_set_key(
+            roots=normalized_roots,
+            similarity_profile=normalized_profile,
+            extensions=normalized_extensions,
+        )
+        if status is None:
+            self.conn.execute(
+                """
+                UPDATE scans
+                SET profile = ?, roots_json = ?, extensions_json = ?,
+                    probe_backend = ?, scan_set_key = ?
+                WHERE id = ?
+                """,
+                (
+                    normalized_profile,
+                    json.dumps(normalized_roots),
+                    json.dumps(normalized_extensions),
+                    str(probe_backend),
+                    scan_set_key,
+                    scan_id,
+                ),
+            )
+        else:
+            self.conn.execute(
+                """
+                UPDATE scans
+                SET profile = ?, roots_json = ?, extensions_json = ?,
+                    probe_backend = ?, scan_set_key = ?, status = ?
+                WHERE id = ?
+                """,
+                (
+                    normalized_profile,
+                    json.dumps(normalized_roots),
+                    json.dumps(normalized_extensions),
+                    str(probe_backend),
+                    scan_set_key,
+                    str(status),
+                    scan_id,
+                ),
+            )
+        self._commit_if_needed()
+
+    def insert_scan_issue(self, scan_id: int, issue: ScanIssue) -> None:
+        """Persist one scan issue row for the given scan."""
+        self.insert_scan_issues_batch(scan_id, [issue])
+
+    def insert_scan_issues_batch(self, scan_id: int, issues: list[ScanIssue]) -> None:
+        """Persist multiple scan issue rows for the given scan."""
+        if not issues:
+            return
+        created_at = utc_now_iso()
+        payload = [
+            (
+                int(scan_id),
+                created_at,
+                str(issue.stage),
+                str(issue.path),
+                str(issue.message),
+            )
+            for issue in issues
+        ]
+        self.conn.executemany(
+            """
+            INSERT INTO scan_issues(scan_id, created_at, stage, path, message)
+            VALUES(?, ?, ?, ?, ?)
+            """,
+            payload,
+        )
+        self._commit_if_needed()
+
+    def list_scan_issues(self, scan_id: int) -> list[ScanIssue]:
+        """Load all persisted issue rows for one scan."""
+        rows = self.conn.execute(
+            """
+            SELECT stage, path, message
+            FROM scan_issues
+            WHERE scan_id = ?
+            ORDER BY id
+            """,
+            (scan_id,),
+        ).fetchall()
+        return [
+            ScanIssue(
+                stage=str(row["stage"] or ""),
+                path=str(row["path"] or ""),
+                message=str(row["message"] or ""),
+            )
+            for row in rows
+        ]
+
+    def delete_scan_issues_for_scan(self, scan_id: int) -> None:
+        """Delete all persisted issue rows for one scan."""
+        self.conn.execute("DELETE FROM scan_issues WHERE scan_id = ?", (scan_id,))
         self._commit_if_needed()
 
     def upsert_file(

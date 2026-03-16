@@ -142,6 +142,7 @@ class ScanProgress:
     current: int
     total: int
     message: str = ""
+    subject_path: str = ""
     active_workers: int | None = None
     worker_limit: int | None = None
     enumerated_roots: int | None = None

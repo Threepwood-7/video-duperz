@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from video_duperz.db import Database
 from video_duperz.fingerprint import ALGO_VERSION
-from video_duperz.models import DuplicateGroup, DuplicateItem, VideoMeta
+from video_duperz.models import DuplicateGroup, DuplicateItem, ScanIssue, VideoMeta
 from video_duperz.scan_sets import build_scan_set_key
 
 if TYPE_CHECKING:
@@ -169,6 +169,36 @@ def test_list_match_items_for_scan_orders_by_path() -> None:
         items = db.list_match_items_for_scan(scan_id=scan_id, algo_version=ALGO_VERSION)
 
         assert [item.path for item in items] == ["D:/Videos/a.mp4", "D:/Videos/b.mp4"]
+
+
+def test_scan_issue_rows_persist_and_list_for_paused_scans() -> None:
+    with Database(":memory:") as db:
+        scan_id = db.create_scan(
+            profile="balanced",
+            roots=["D:/Videos"],
+            extensions=["mp4"],
+        )
+        db.insert_scan_issue(
+            scan_id,
+            ScanIssue(
+                stage="probe",
+                path="D:/Videos/bad.mp4",
+                message="invalid stream metadata",
+            ),
+        )
+        db.insert_scan_issue(
+            scan_id,
+            ScanIssue(stage="enumerate", path="", message="worker cap reduced"),
+        )
+        db.complete_scan(scan_id, status="paused")
+
+        issues = db.list_scan_issues(scan_id)
+        summary = db.scan_summary(scan_id)
+
+        assert summary["status"] == "paused"
+        assert [issue.stage for issue in issues] == ["probe", "enumerate"]
+        assert issues[0].path == "D:/Videos/bad.mp4"
+        assert issues[1].message == "worker cap reduced"
 
 
 def test_purge_for_fresh_rescan_deletes_scan_set_and_selected_root_artifacts() -> None:

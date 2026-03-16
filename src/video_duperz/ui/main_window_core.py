@@ -136,6 +136,11 @@ class MainWindowBase(QMainWindow):
         self.db_file = str(db.path)
         self.settings = settings
         self.current_scan_id: int | None = None
+        self._loaded_paused_scan_id: int | None = None
+        self._loaded_paused_roots: list[str] = []
+        self._loaded_paused_profile: str = ""
+        self._loaded_paused_extensions: list[str] = []
+        self._loaded_paused_probe_backend: str = ""
         self.thread_pool = QThreadPool(self)
         self.scan_worker: ScanWorker | None = None
         self._scan_tab_locked = False
@@ -186,7 +191,12 @@ class MainWindowBase(QMainWindow):
 
         self.scan_view.start_requested.connect(self._start_scan)
         self.scan_view.rescan_requested.connect(self._rescan_scan)
+        self.scan_view.pause_requested.connect(self._pause_scan)
+        self.scan_view.resume_requested.connect(self._resume_scan)
         self.scan_view.cancel_requested.connect(self._cancel_scan)
+        self.scan_view.path_activation_requested.connect(
+            self._open_scan_subject_in_explorer
+        )
         self.results_view.delete_requested.connect(self._handle_delete_requested)
         self.results_view.status_message.connect(self.statusBar().showMessage)
 
@@ -203,7 +213,13 @@ class MainWindowBase(QMainWindow):
 
     def _rescan_scan(self) -> None: ...
 
+    def _pause_scan(self) -> None: ...
+
+    def _resume_scan(self) -> None: ...
+
     def _cancel_scan(self) -> None: ...
+
+    def _open_scan_subject_in_explorer(self, path: str) -> None: ...
 
     def _handle_delete_requested(
         self,

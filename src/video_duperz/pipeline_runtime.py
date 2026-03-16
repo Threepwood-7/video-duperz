@@ -44,7 +44,9 @@ from .pipeline_runtime_control import (
     completed_result,
     emit_worker_cap_warning,
     join_enumeration_thread,
+    paused_result,
     pipeline_should_stop,
+    record_issue,
     start_runtime_threads,
     wait_for_pipeline_event,
 )
@@ -180,24 +182,29 @@ def _flush_pending_analysis_batches(
     ctx.last_pending_write_at = now
 
 
+def _queue_runtime_issue(ctx: _ScanContext, issue: ScanIssue) -> None:
+    """Queue one issue from a non-runtime thread for serialized handling."""
+    with ctx.state_lock:
+        ctx.queued_issues.append(issue)
+    notify_event(ctx)
+
+
 def _queue_enum_item(ctx: _ScanContext, item: object) -> None:
     while True:
         try:
             ctx.enum_queue.put(item, timeout=0.1)
             break
         except Full:
-            if (
-                ctx.cancel_event
-                and ctx.cancel_event.is_set()
-                and item is not ctx.enum_sentinel
-            ):
-                continue
+            if ctx.stop_event.is_set() and item is not ctx.enum_sentinel:
+                return
     with ctx.state_lock:
         ctx.max_queue_depth = max(ctx.max_queue_depth, int(ctx.enum_queue.qsize()))
     notify_event(ctx)
 
 
 def _on_file_discovered(ctx: _ScanContext, file: object) -> None:
+    if ctx.stop_event.is_set():
+        return
     key = path_key(str(getattr(file, "path", "")))
     with ctx.state_lock:
         if key in ctx.streamed_path_keys:
@@ -233,6 +240,7 @@ def _on_enumerate_progress(
         total,
         message,
         file_counter=discovered_now,
+        subject_path=root_from_message,
     )
 
 
@@ -258,12 +266,14 @@ def _run_enumeration(ctx: _ScanContext) -> None:
             extensions=ctx.extensions,
             max_workers=max(ctx.requested_floor, len(ctx.scan_plan.root_groups)),
             drive_worker_overrides=ctx.drive_worker_overrides,
-            cancel_event=ctx.cancel_event,
+            cancel_event=ctx.stop_event,
             progress_cb=partial(_handle_enumerate_progress, ctx),
             on_file_discovered=partial(_handle_file_discovered, ctx),
+            issue_cb=partial(_queue_runtime_issue, ctx),
         )
         ctx.enum_files = list(files)
-        ctx.enum_issues = list(local_issues)
+        for issue in local_issues:
+            _queue_runtime_issue(ctx, issue)
         # Keep compatibility with tests that bypass the streaming callback.
         for file in ctx.enum_files:
             key = path_key(str(getattr(file, "path", "")))
@@ -346,6 +356,7 @@ def _process_discovered_batch(ctx: _ScanContext, batch: list[VideoRecord]) -> No
             max(1, prepare_total),
             f"Prepared {path}",
             file_counter=prepared_now,
+            subject_path=path,
         )
     if not valid:
         return
@@ -409,14 +420,15 @@ def _record_future_error(
 ) -> None:
     if isinstance(exc, ProbeError):
         ctx.pending_probe_error_rows.append((task.file_id, str(exc)))
-        ctx.issues.append(ScanIssue(stage="probe", path=task.path, message=str(exc)))
+        record_issue(ctx, ScanIssue(stage="probe", path=task.path, message=str(exc)))
         return
     if isinstance(exc, FingerprintError):
-        ctx.issues.append(
-            ScanIssue(stage="fingerprint", path=task.path, message=str(exc))
+        record_issue(
+            ctx,
+            ScanIssue(stage="fingerprint", path=task.path, message=str(exc)),
         )
         return
-    ctx.issues.append(ScanIssue(stage="analyze", path=task.path, message=str(exc)))
+    record_issue(ctx, ScanIssue(stage="analyze", path=task.path, message=str(exc)))
 
 
 def _record_future_success(
@@ -466,24 +478,38 @@ def _process_done_futures(ctx: _ScanContext) -> int:
             probe_total,
             f"Analyzed {task.path}",
             file_counter=probe_done,
+            subject_path=task.path,
         )
+
+
+def _process_queued_issues(ctx: _ScanContext) -> int:
+    """Persist queued issues from enumeration and other worker threads."""
+    processed = 0
+    while True:
+        with ctx.state_lock:
+            if not ctx.queued_issues:
+                return processed
+            issue = ctx.queued_issues.popleft()
+        record_issue(ctx, issue)
+        processed += 1
 
 
 def _ingest_discovered_queue(ctx: _ScanContext) -> bool:
     drained = _drain_enum_queue(ctx)
     if not drained:
         return False
+    stop_requested = ctx.cancel_requested or ctx.pause_requested
     for queued in drained:
         if queued is ctx.enum_sentinel or not isinstance(queued, VideoRecord):
             continue
-        if ctx.cancel_requested:
+        if stop_requested:
             continue
         ctx.pending_discovered.append(queued)
     return True
 
 
 def _process_pending_discovered(ctx: _ScanContext) -> bool:
-    if ctx.cancel_requested:
+    if ctx.cancel_requested or ctx.pause_requested:
         if ctx.pending_discovered:
             ctx.pending_discovered.clear()
             return True
@@ -504,6 +530,7 @@ def _process_pending_discovered(ctx: _ScanContext) -> bool:
         len(ctx.pending_discovered) >= ctx.db_batch_size
         or ctx.enum_finished
         or ctx.cancel_requested
+        or ctx.pause_requested
     ):
         chunk = ctx.pending_discovered[: ctx.db_batch_size]
         del ctx.pending_discovered[: len(chunk)]
@@ -525,17 +552,22 @@ def _run_pipeline_loop(ctx: _ScanContext, executor: ThreadPoolExecutor) -> None:
     while True:
         if ctx.cancel_event and ctx.cancel_event.is_set():
             ctx.cancel_requested = True
-        if ctx.cancel_requested and not ctx.cancel_applied:
+        if ctx.pause_event and ctx.pause_event.is_set():
+            ctx.pause_requested = True
+        if (ctx.cancel_requested or ctx.pause_requested) and not ctx.stop_applied:
             apply_cancel_state(ctx)
-            ctx.cancel_applied = True
+            ctx.stop_applied = True
 
         made_progress = _ingest_discovered_queue(ctx)
+        if _process_queued_issues(ctx) > 0:
+            made_progress = True
         if _process_pending_discovered(ctx):
             made_progress = True
         if _process_done_futures(ctx) > 0:
             made_progress = True
         if (
             not ctx.cancel_requested
+            and not ctx.pause_requested
             and submit_ready_lanes(
                 ctx,
                 executor,
@@ -545,8 +577,14 @@ def _run_pipeline_loop(ctx: _ScanContext, executor: ThreadPoolExecutor) -> None:
         ):
             made_progress = True
 
-        _flush_pending_analysis_batches(ctx, force=ctx.cancel_requested)
-        _flush_scan_transaction(ctx, force=ctx.cancel_requested)
+        _flush_pending_analysis_batches(
+            ctx,
+            force=ctx.cancel_requested or ctx.pause_requested,
+        )
+        _flush_scan_transaction(
+            ctx,
+            force=ctx.cancel_requested or ctx.pause_requested,
+        )
 
         if pipeline_should_stop(
             ctx,
@@ -574,13 +612,16 @@ def run_scan_runtime(
     progress_emit_interval_ms: int,
     progress_emit_every_files: int,
     cancel_event: Event | None = None,
+    pause_event: Event | None = None,
     progress_cb: Callable[[ScanProgress], None] | None = None,
+    issue_cb: Callable[[ScanIssue], None] | None = None,
     analyze_file: Callable[[str, VideoMeta | None], _AnalyzeOutputLike],
     ensure_ffprobe_available_fn: Callable[[], object] = ensure_ffprobe_available,
     enumerate_video_files_fn: _EnumerateFn = enumerate_video_files,
     build_scan_plan_fn: _ScanPlanFn = build_physical_drive_scan_plan,
     find_duplicate_edges_fn: _FindEdgesFn = find_duplicate_edges,
     build_duplicate_groups_fn: _BuildGroupsFn = build_duplicate_groups,
+    resume_scan_id: int | None = None,
 ) -> ScanResult:
     """Execute the scan runtime with injectable seams for tests and UI workflows."""
     ensure_ffprobe_available_fn()
@@ -599,28 +640,40 @@ def run_scan_runtime(
         progress_emit_interval_ms=progress_emit_interval_ms,
         progress_emit_every_files=progress_emit_every_files,
         cancel_event=cancel_event,
+        pause_event=pause_event,
         progress_cb=progress_cb,
+        issue_cb=issue_cb,
         analyze_file=analyze_file,
         enumerate_video_files_fn=enumerate_video_files_fn,
         build_scan_plan_fn=build_scan_plan_fn,
         find_duplicate_edges_fn=find_duplicate_edges_fn,
         build_duplicate_groups_fn=build_duplicate_groups_fn,
+        resume_scan_id=resume_scan_id,
     )
     start_runtime_threads(ctx, lambda: _run_enumeration(ctx))
-    emit_worker_cap_warning(ctx, _worker_cap_message(ctx.scan_plan))
+    for issue in ctx.scan_plan.issues:
+        record_issue(ctx, issue)
+    worker_cap_warning = _worker_cap_message(ctx.scan_plan)
+    if worker_cap_warning is not None:
+        record_issue(
+            ctx,
+            ScanIssue(stage="probe", path="", message=worker_cap_warning),
+        )
+    emit_worker_cap_warning(ctx, worker_cap_warning)
 
     try:
         with ThreadPoolExecutor(max_workers=ctx.executor_worker_limit) as executor:
             _run_pipeline_loop(ctx, executor)
         join_enumeration_thread(ctx)
-        if ctx.enum_error and not ctx.cancel_requested:
+        if ctx.enum_error and not ctx.cancel_requested and not ctx.pause_requested:
             raise ctx.enum_error
-        ctx.issues.extend(ctx.enum_issues)
         scanned_files = (
             len(ctx.enum_files) if ctx.enum_files else len(ctx.present_paths)
         )
         if ctx.cancel_requested:
             return cancelled_result(ctx, scanned_files)
+        if ctx.pause_requested:
+            return paused_result(ctx, scanned_files)
         return completed_result(
             ctx,
             scanned_files,

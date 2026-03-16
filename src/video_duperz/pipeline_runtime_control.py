@@ -77,6 +77,22 @@ def best_effort_end_scan_tx(
         end_scan_tx()
 
 
+def record_issue(ctx: _ScanContext, issue: ScanIssue) -> None:
+    """Persist and emit one scan issue while deduplicating repeated events."""
+    issue_key = (str(issue.stage), str(issue.path), str(issue.message))
+    with ctx.state_lock:
+        if issue_key in ctx.recorded_issue_keys:
+            return
+        ctx.recorded_issue_keys.add(issue_key)
+        ctx.issues.append(issue)
+    insert_issue = getattr(ctx.db, "insert_scan_issue", None)
+    if callable(insert_issue):
+        insert_issue(ctx.scan_id, issue)
+    ctx.rows_since_flush += 1
+    if ctx.issue_cb is not None:
+        ctx.issue_cb(issue)
+
+
 def pipeline_should_stop(
     ctx: _ScanContext,
     flush_pending_batches: Callable[[], None],
@@ -96,9 +112,16 @@ def pipeline_should_stop(
         waiting_items = any(bool(queue) for queue in ctx.lane_queues.values())
         active_count = len(ctx.futures)
     pending_writes = bool(
-        ctx.pending_meta_rows or ctx.pending_fp_rows or ctx.pending_probe_error_rows
+        ctx.pending_meta_rows
+        or ctx.pending_fp_rows
+        or ctx.pending_probe_error_rows
+        or ctx.queued_issues
     )
-    if ctx.cancel_requested and ctx.enum_finished and active_count == 0:
+    if (
+        (ctx.cancel_requested or ctx.pause_requested)
+        and ctx.enum_finished
+        and active_count == 0
+    ):
         flush_pending_batches()
         flush_scan_tx()
         return True
@@ -127,6 +150,7 @@ def wait_for_pipeline_event(ctx: _ScanContext) -> None:
         or ctx.pending_meta_rows
         or ctx.pending_fp_rows
         or ctx.pending_probe_error_rows
+        or ctx.queued_issues
     )
     with ctx.event_cond:
         if not ctx.done_futures and ctx.enum_queue.empty():
@@ -144,12 +168,13 @@ def join_enumeration_thread(ctx: _ScanContext) -> None:
         return
     ctx.enum_thread.join(timeout=5.0)
     if ctx.enum_thread.is_alive():
-        ctx.issues.append(
+        record_issue(
+            ctx,
             ScanIssue(
                 stage="enumerate",
                 path="",
                 message="Enumeration thread did not stop cleanly after timeout",
-            )
+            ),
         )
 
 
@@ -166,6 +191,22 @@ def cancelled_result(ctx: _ScanContext, scanned_files: int) -> ScanResult:
     ctx.db.end_scan_transaction()
     ctx.db.complete_scan(ctx.scan_id, status="cancelled")
     emit_progress(ctx, "done", 1, 1, "Scan cancelled", force=True)
+    return ScanResult(
+        scan_id=ctx.scan_id,
+        groups=ctx.db.load_duplicate_groups(ctx.scan_id),
+        issues=ctx.issues,
+        scanned_files=scanned_files,
+        cached_files=ctx.cached_files,
+        fingerprinted_files=ctx.fingerprinted_files,
+        metrics=collect_metrics(ctx, MatchStats()),
+    )
+
+
+def paused_result(ctx: _ScanContext, scanned_files: int) -> ScanResult:
+    """Build the final result payload for a paused scan."""
+    ctx.db.end_scan_transaction()
+    ctx.db.complete_scan(ctx.scan_id, status="paused")
+    emit_progress(ctx, "done", 1, 1, "Scan paused", force=True)
     return ScanResult(
         scan_id=ctx.scan_id,
         groups=ctx.db.load_duplicate_groups(ctx.scan_id),
@@ -261,14 +302,28 @@ def start_runtime_threads(
         daemon=True,
     )
     ctx.enum_thread.start()
-    if ctx.cancel_event is None:
-        return
-    cancel_event = ctx.cancel_event
-    ctx.cancel_thread = Thread(
-        target=lambda: (cancel_event.wait(), notify_event(ctx)),
-        daemon=True,
-    )
-    ctx.cancel_thread.start()
+    if ctx.cancel_event is not None:
+        cancel_event = ctx.cancel_event
+        ctx.cancel_thread = Thread(
+            target=lambda: (
+                cancel_event.wait(),
+                ctx.stop_event.set(),
+                notify_event(ctx),
+            ),
+            daemon=True,
+        )
+        ctx.cancel_thread.start()
+    if ctx.pause_event is not None:
+        pause_event = ctx.pause_event
+        ctx.pause_thread = Thread(
+            target=lambda: (
+                pause_event.wait(),
+                ctx.stop_event.set(),
+                notify_event(ctx),
+            ),
+            daemon=True,
+        )
+        ctx.pause_thread.start()
 
 
 def emit_worker_cap_warning(ctx: _ScanContext, worker_cap_message: str | None) -> None:

@@ -68,7 +68,10 @@ class ScanContext:
     probe_backend: ProbeBackendId
     drive_worker_overrides: dict[str, int] | None
     cancel_event: Event | None
+    pause_event: Event | None
+    stop_event: Event
     progress_cb: Callable[[ScanProgress], None] | None
+    issue_cb: Callable[[ScanIssue], None] | None
     analyze_file: Callable[[str, VideoMeta | None], AnalyzeOutputLike]
     enumerate_video_files_fn: _EnumerateFn
     build_scan_plan_fn: _ScanPlanFn
@@ -95,6 +98,8 @@ class ScanContext:
     done_futures: deque[Any]
     event_cond: Condition
     state_lock: Lock
+    queued_issues: deque[ScanIssue]
+    recorded_issue_keys: set[tuple[str, str, str]]
     present_paths: set[str]
     streamed_path_keys: set[str]
     pending_discovered: list[VideoRecord]
@@ -124,7 +129,8 @@ class ScanContext:
     total_roots: int
     enum_finished: bool
     cancel_requested: bool
-    cancel_applied: bool
+    pause_requested: bool
+    stop_applied: bool
     enum_files: list[VideoRecord]
     enum_issues: list[ScanIssue]
     enum_error: Exception | None
@@ -135,6 +141,7 @@ class ScanContext:
     last_emit_counter: int
     enum_thread: Thread | None = None
     cancel_thread: Thread | None = None
+    pause_thread: Thread | None = None
 
 
 @dataclass(slots=True)
@@ -196,15 +203,6 @@ def worker_cap_message(scan_plan: Any) -> str | None:
         "Requested worker capacity "
         f"({requested}) reduced to {effective} by per-drive hard caps."
     )
-
-
-def _build_scan_issues(scan_plan: Any) -> list[ScanIssue]:
-    """Carry forward plan issues and add any worker-cap reduction warning."""
-    issues = list(scan_plan.issues)
-    warning_message = worker_cap_message(scan_plan)
-    if warning_message is not None:
-        issues.append(ScanIssue(stage="probe", path="", message=warning_message))
-    return issues
 
 
 def _build_lane_runtime_caps(
@@ -274,12 +272,15 @@ def create_context(
     progress_emit_interval_ms: int,
     progress_emit_every_files: int,
     cancel_event: Event | None,
+    pause_event: Event | None,
     progress_cb: Callable[[ScanProgress], None] | None,
+    issue_cb: Callable[[ScanIssue], None] | None,
     analyze_file: Callable[[str, VideoMeta | None], AnalyzeOutputLike],
     enumerate_video_files_fn: _EnumerateFn,
     build_scan_plan_fn: _ScanPlanFn,
     find_duplicate_edges_fn: _FindEdgesFn,
     build_duplicate_groups_fn: _BuildGroupsFn,
+    resume_scan_id: int | None = None,
 ) -> ScanContext:
     """Create the mutable runtime context used by the streaming pipeline."""
     runtime_settings = _build_runtime_settings(
@@ -291,12 +292,23 @@ def create_context(
         progress_emit_interval_ms=progress_emit_interval_ms,
         progress_emit_every_files=progress_emit_every_files,
     )
-    scan_id = db.create_scan(
-        profile=profile,
-        roots=roots,
-        extensions=extensions,
-        probe_backend=probe_backend,
-    )
+    scan_id = int(resume_scan_id or 0)
+    if scan_id > 0:
+        db.update_scan_definition(
+            scan_id,
+            profile=profile,
+            roots=roots,
+            extensions=extensions,
+            probe_backend=probe_backend,
+            status="running",
+        )
+    else:
+        scan_id = db.create_scan(
+            profile=profile,
+            roots=roots,
+            extensions=extensions,
+            probe_backend=probe_backend,
+        )
     scan_plan = build_scan_plan_fn(
         roots=roots,
         max_workers=runtime_settings.requested_floor,
@@ -308,7 +320,6 @@ def create_context(
         scan_plan,
         runtime_settings.probe_worker_mode,
     )
-    issues = _build_scan_issues(scan_plan)
     lane_states, lane_queues = _build_lane_runtime_state(scan_plan)
     started_at = time.perf_counter()
     return ScanContext(
@@ -319,7 +330,10 @@ def create_context(
         probe_backend=probe_backend,
         drive_worker_overrides=drive_worker_overrides,
         cancel_event=cancel_event,
+        pause_event=pause_event,
+        stop_event=Event(),
         progress_cb=progress_cb,
+        issue_cb=issue_cb,
         analyze_file=analyze_file,
         enumerate_video_files_fn=enumerate_video_files_fn,
         build_scan_plan_fn=build_scan_plan_fn,
@@ -330,7 +344,7 @@ def create_context(
         progress_emit_interval_s=runtime_settings.progress_emit_interval_s,
         progress_emit_every_files=runtime_settings.progress_emit_every_files,
         scan_id=scan_id,
-        issues=issues,
+        issues=[],
         requested_floor=runtime_settings.requested_floor,
         scan_plan=scan_plan,
         effective_worker_limit=effective_worker_limit,
@@ -346,6 +360,8 @@ def create_context(
         done_futures=deque(),
         event_cond=Condition(),
         state_lock=Lock(),
+        queued_issues=deque(),
+        recorded_issue_keys=set(),
         present_paths=set(),
         streamed_path_keys=set(),
         pending_discovered=[],
@@ -375,7 +391,8 @@ def create_context(
         total_roots=max(1, len(roots)),
         enum_finished=False,
         cancel_requested=False,
-        cancel_applied=False,
+        pause_requested=False,
+        stop_applied=False,
         enum_files=[],
         enum_issues=[],
         enum_error=None,

@@ -6,7 +6,8 @@ from threading import Event, Lock
 from types import SimpleNamespace
 
 from video_duperz import pipeline
-from video_duperz.models import MatchStats, ScanProgress, VideoRecord
+from video_duperz.db import Database
+from video_duperz.models import MatchStats, ScanProgress, VideoMeta, VideoRecord
 
 
 class _FakeDb:
@@ -686,3 +687,104 @@ def test_run_scan_cancellation_during_streaming_overlap(monkeypatch) -> None:
 
     assert result.scan_id == 17
     assert db.status == "cancelled"
+
+
+def test_run_scan_pause_and_resume_keeps_same_scan_id(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    files = [
+        _video(str(tmp_path / "lane0-a.mp4"), lane=0),
+        _video(str(tmp_path / "lane0-b.mp4"), lane=0),
+    ]
+    pause_event = Event()
+
+    monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
+    monkeypatch.setattr(
+        pipeline, "ensure_fingerprint_fallback_chain_available", lambda: None
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_physical_drive_scan_plan",
+        lambda roots, max_workers, drive_worker_overrides=None: _lane_plan_for_roots(
+            roots,
+            lane_worker_limits={0: 1},
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
+    )
+    monkeypatch.setattr(
+        pipeline, "build_duplicate_groups", lambda items, edges, profile: []
+    )
+
+    def _fake_enumerate(**kwargs):
+        on_file_discovered = kwargs.get("on_file_discovered")
+        assert callable(on_file_discovered)
+        on_file_discovered(files[0])
+        time.sleep(0.01)
+        on_file_discovered(files[1])
+        pause_event.set()
+        return list(files), []
+
+    def _fake_analyze(path: str, cached_meta: object | None) -> pipeline._AnalyzeOutput:
+        _ = path, cached_meta
+        time.sleep(0.02)
+        return pipeline._AnalyzeOutput(
+            meta=VideoMeta(
+                duration_s=1.0,
+                width=1920,
+                height=1080,
+                fps=24.0,
+                codec="h264",
+                bitrate=1000,
+                has_audio=True,
+                audio_codec="aac",
+                audio_bitrate=128000,
+                audio_languages="eng",
+                subtitle_languages="",
+                is_hdr=False,
+            ),
+            hashes=[11, 22, 33],
+        )
+
+    monkeypatch.setattr(pipeline, "enumerate_video_files", _fake_enumerate)
+    monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)
+
+    with Database(tmp_path / "app.db") as db:
+        paused = pipeline.run_scan(
+            db=db,
+            roots=[str(tmp_path)],
+            extensions=["mp4"],
+            max_workers=1,
+            probe_backend="ffprobe",
+            probe_worker_mode="balanced",
+            db_batch_size=32,
+            db_flush_interval_ms=50,
+            enum_queue_max=256,
+            progress_emit_interval_ms=50,
+            progress_emit_every_files=1,
+            pause_event=pause_event,
+        )
+
+        assert db.scan_summary(paused.scan_id)["status"] == "paused"
+        pause_event.clear()
+
+        resumed = pipeline.run_scan(
+            db=db,
+            roots=[str(tmp_path)],
+            extensions=["mp4"],
+            max_workers=1,
+            probe_backend="ffprobe",
+            probe_worker_mode="balanced",
+            db_batch_size=32,
+            db_flush_interval_ms=50,
+            enum_queue_max=256,
+            progress_emit_interval_ms=50,
+            progress_emit_every_files=1,
+            resume_scan_id=paused.scan_id,
+        )
+
+        assert resumed.scan_id == paused.scan_id
+        assert db.scan_summary(paused.scan_id)["status"] == "done"
+        assert resumed.cached_files >= 1

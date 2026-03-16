@@ -18,7 +18,7 @@ from .scan_sets import (
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 class DatabaseConnectionMixin:
@@ -234,12 +234,25 @@ class DatabaseConnectionMixin:
               FOREIGN KEY(run_id) REFERENCES action_runs(id) ON DELETE CASCADE,
               FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS scan_issues(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              scan_id INTEGER NOT NULL,
+              created_at TEXT NOT NULL,
+              stage TEXT NOT NULL,
+              path TEXT NOT NULL,
+              message TEXT NOT NULL,
+              FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_scan_issues_scan_id
+              ON scan_issues(scan_id, id);
             """
         )
         self._ensure_video_meta_columns()
         self._ensure_backend_scoped_cache_tables()
         self._ensure_fingerprint_decoder_provenance_table()
         self._ensure_scan_columns()
+        self._ensure_scan_issue_table()
         self._backfill_scan_set_keys()
         self.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         self.conn.commit()
@@ -446,6 +459,24 @@ class DatabaseConnectionMixin:
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_scans_set_status "
             "ON scans(scan_set_key, status, id DESC)"
+        )
+
+    def _ensure_scan_issue_table(self) -> None:
+        """Create the persisted per-scan issue table when absent."""
+        self.conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS scan_issues(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              scan_id INTEGER NOT NULL,
+              created_at TEXT NOT NULL,
+              stage TEXT NOT NULL,
+              path TEXT NOT NULL,
+              message TEXT NOT NULL,
+              FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_scan_issues_scan_id
+              ON scan_issues(scan_id, id);
+            """
         )
 
     def _backfill_scan_set_keys(self) -> None:

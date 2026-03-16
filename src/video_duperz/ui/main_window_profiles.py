@@ -196,6 +196,8 @@ class MainWindowProfilesMixin(MainWindowDriveViewMixin):
 
     def _start_scan(self) -> None: ...
 
+    def _resume_scan(self) -> None: ...
+
     def _current_sources_roots(self) -> list[str]:
         return [self.roots_list.item(i).text() for i in range(self.roots_list.count())]
 
@@ -338,11 +340,157 @@ class MainWindowProfilesMixin(MainWindowDriveViewMixin):
 
     def _format_scan_status(self, status: str | None) -> str:
         cleaned = str(status or "").strip().lower()
-        if cleaned in {"done", "cancelled", "running"}:
+        if cleaned in {"done", "cancelled", "running", "paused"}:
             return cleaned
         if not cleaned:
             return "not started"
         return cleaned
+
+    def _clear_loaded_paused_scan(self) -> None:
+        """Forget the currently loaded paused-scan context."""
+        self._loaded_paused_scan_id = None
+        self._loaded_paused_roots = []
+        self._loaded_paused_profile = ""
+        self._loaded_paused_extensions = []
+        self._loaded_paused_probe_backend = ""
+        self.scan_view.set_paused_loaded(False)
+
+    def _set_loaded_paused_scan(
+        self,
+        *,
+        scan_id: int,
+        roots: list[str],
+        profile: str,
+        extensions: list[str],
+        probe_backend: str,
+    ) -> None:
+        """Record the paused-scan definition that is currently loaded in the UI."""
+        self._loaded_paused_scan_id = int(scan_id)
+        self._loaded_paused_roots = normalize_roots_for_display(roots)
+        self._loaded_paused_profile = normalize_similarity_profile(profile)
+        self._loaded_paused_extensions = normalize_extensions(extensions)
+        self._loaded_paused_probe_backend = str(probe_backend or "pyav")
+        self.scan_view.set_paused_loaded(True)
+
+    def _reload_loaded_paused_scan_widgets(self) -> None:
+        """Restore the original paused-scan definition back into the Sources tab."""
+        self.roots_list.clear()
+        for root in self._loaded_paused_roots:
+            self.roots_list.addItem(root)
+        self.roots_list.setCurrentRow(-1)
+        profile_index = self.profile_combo.findText(self._loaded_paused_profile)
+        self.profile_combo.setCurrentIndex(max(0, profile_index))
+        self.extensions_edit.setText(", ".join(self._loaded_paused_extensions))
+        probe_backend_index = self.probe_backend_combo.findText(
+            self._loaded_paused_probe_backend
+        )
+        self.probe_backend_combo.setCurrentIndex(max(0, probe_backend_index))
+        preset_name = (
+            detect_video_extension_preset(self._loaded_paused_extensions)
+            or DEFAULT_VIDEO_EXTENSION_PRESET
+        )
+        preset_index = self.extensions_preset_combo.findText(preset_name)
+        self.extensions_preset_combo.blockSignals(True)
+        self.extensions_preset_combo.setCurrentIndex(max(0, preset_index))
+        self.extensions_preset_combo.blockSignals(False)
+        self._refresh_sources_physical_drive_view()
+        self._update_root_buttons_state()
+
+    def _paused_resume_requires_new_scan(self) -> bool:
+        """Return whether the current paused-scan edits are too risky to resume."""
+        if self._loaded_paused_scan_id is None:
+            return False
+        current_roots = normalize_roots_for_display(self._current_sources_roots())
+        current_root_keys = {root.casefold() for root in current_roots}
+        paused_root_keys = {root.casefold() for root in self._loaded_paused_roots}
+        if not paused_root_keys.issubset(current_root_keys):
+            return True
+        if self._current_sources_profile() != self._loaded_paused_profile:
+            return True
+        if self._current_sources_extensions() != self._loaded_paused_extensions:
+            return True
+        return self._current_probe_backend() != self._loaded_paused_probe_backend
+
+    def _prompt_risky_paused_scan_edit(self) -> str:
+        """Ask whether risky paused-scan edits should start a fresh scan instead."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Paused Scan Changed")
+        box.setText(
+            "This paused scan can only be resumed after adding new folders.\n\n"
+            "Removing folders or changing profile, extensions, or probe backend "
+            "requires a new scan."
+        )
+        start_new = box.addButton("Start New Scan", QMessageBox.ButtonRole.AcceptRole)
+        keep_paused = box.addButton(
+            "Keep Paused Scan Unchanged",
+            QMessageBox.ButtonRole.RejectRole,
+        )
+        box.setDefaultButton(start_new)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is start_new:
+            return "new"
+        if clicked is keep_paused:
+            return "keep"
+        return "keep"
+
+    def _load_paused_scan(
+        self,
+        *,
+        scan_id: int,
+        source_name: str,
+        scan_info: dict[str, object],
+    ) -> None:
+        """Load one paused scan into the Scan tab without resuming it."""
+        roots = normalize_roots_for_display(payload_strings(scan_info.get("roots", [])))
+        profile = normalize_similarity_profile(
+            str(scan_info.get("profile", "balanced"))
+        )
+        extensions = normalize_extensions(
+            payload_strings(scan_info.get("extensions", []))
+        )
+        probe_backend = str(scan_info.get("probe_backend", "pyav"))
+        stamp = self._format_scan_created_at(str(scan_info.get("created_at", "")))
+
+        self._set_loaded_paused_scan(
+            scan_id=scan_id,
+            roots=roots,
+            profile=profile,
+            extensions=extensions,
+            probe_backend=probe_backend,
+        )
+        self.scan_view.reset()
+        lane_plan = build_physical_drive_scan_plan(
+            roots=roots,
+            max_workers=max(1, int(self.max_workers_spin.value())),
+            drive_worker_overrides=self._normalized_drive_worker_overrides(),
+        )
+        self.scan_view.initialize_lane_plan(
+            lane_plan.root_groups,
+            lane_plan.effective_total_workers
+            if lane_plan.effective_total_workers > 0
+            else max(1, int(self.max_workers_spin.value())),
+        )
+        self.scan_view.set_paused_loaded(True)
+        self.scan_view.status_label.setText(f"Paused scan #{scan_id} loaded")
+        self.scan_view.append_progress_note(
+            "paused",
+            (
+                f"Paused scan #{scan_id} loaded from {source_name}. "
+                "Click Resume Scan to continue."
+            ),
+        )
+        self.scan_view.set_issues(self.db.list_scan_issues(scan_id))
+        self.results_view.load_groups([])
+        self.results_view.set_scan_context_note("")
+        self.current_scan_id = None
+        self.tabs.setCurrentWidget(self.scan_view)
+        when = f" from {stamp}" if stamp else ""
+        self.statusBar().showMessage(
+            f"Loaded paused scan #{scan_id}{when}. "
+            "You can add folders, then click Resume Scan."
+        )
 
     def _show_saved_scans_menu(self) -> None:
         if self._saved_scans_menu is None:
@@ -493,6 +641,7 @@ class MainWindowProfilesMixin(MainWindowDriveViewMixin):
 
         latest_scan_id = self.db.latest_scan_id_for_set(scan_set_key)
         if latest_scan_id is None:
+            self._clear_loaded_paused_scan()
             self.current_scan_id = None
             self.results_view.load_groups([])
             self.results_view.set_scan_context_note("")
@@ -503,9 +652,22 @@ class MainWindowProfilesMixin(MainWindowDriveViewMixin):
             )
             return
 
+        scan_info = self.db.get_scan_info(latest_scan_id)
+        probe_backend_index = self.probe_backend_combo.findText(
+            str(scan_info.get("probe_backend", "pyav"))
+        )
+        self.probe_backend_combo.setCurrentIndex(max(0, probe_backend_index))
         summary = self.db.scan_summary(latest_scan_id)
         status_text = self._format_scan_status(summary.get("status"))
+        if status_text == "paused":
+            self._load_paused_scan(
+                scan_id=latest_scan_id,
+                source_name=source_name,
+                scan_info=scan_info,
+            )
+            return
         if status_text != "done":
+            self._clear_loaded_paused_scan()
             self.current_scan_id = None
             self.results_view.load_groups([])
             self.results_view.set_scan_context_note("")
@@ -521,6 +683,7 @@ class MainWindowProfilesMixin(MainWindowDriveViewMixin):
             return
 
         groups = self.db.load_duplicate_groups(latest_scan_id)
+        self._clear_loaded_paused_scan()
         self.current_scan_id = latest_scan_id
         self.results_view.load_groups(groups)
         stamp = self._format_scan_created_at(summary["created_at"])

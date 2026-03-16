@@ -26,6 +26,7 @@ class ScanWorkerSignals(QObject):
     """Signals emitted by the background scan worker."""
 
     progress = Signal(object)
+    issue = Signal(object)
     finished = Signal(object)
     error = Signal(str)
 
@@ -50,6 +51,7 @@ class ScanWorker(QRunnable):
         enum_queue_max: int = 4096,
         progress_emit_interval_ms: int = 200,
         progress_emit_every_files: int = 100,
+        resume_scan_id: int | None = None,
     ) -> None:
         super().__init__()
         self.signals = ScanWorkerSignals()
@@ -70,10 +72,18 @@ class ScanWorker(QRunnable):
         self._enum_queue_max = max(256, int(enum_queue_max))
         self._progress_emit_interval_ms = max(50, int(progress_emit_interval_ms))
         self._progress_emit_every_files = max(10, int(progress_emit_every_files))
+        self._resume_scan_id = (
+            int(resume_scan_id) if resume_scan_id is not None else None
+        )
         self._cancel = Event()
+        self._pause = Event()
 
     def cancel(self) -> None:
         self._cancel.set()
+
+    def pause(self) -> None:
+        """Request a graceful pause for the active scan."""
+        self._pause.set()
 
     def run(self) -> None:
         try:
@@ -95,7 +105,10 @@ class ScanWorker(QRunnable):
                     progress_emit_interval_ms=self._progress_emit_interval_ms,
                     progress_emit_every_files=self._progress_emit_every_files,
                     cancel_event=self._cancel,
+                    pause_event=self._pause,
                     progress_cb=lambda p: self.signals.progress.emit(p),
+                    issue_cb=lambda issue: self.signals.issue.emit(issue),
+                    resume_scan_id=self._resume_scan_id,
                 )
             self.signals.finished.emit(result)
         except Exception:

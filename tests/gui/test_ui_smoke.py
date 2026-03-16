@@ -20,6 +20,7 @@ from video_duperz.models import (
     DuplicateGroup,
     DuplicateItem,
     SavedScanProfilePayload,
+    ScanIssue,
     ScanLaneSnapshot,
     ScanProgress,
     VideoMeta,
@@ -886,6 +887,55 @@ def test_load_saved_scan_profile_cancelled_latest_routes_to_sources(
         window.close()
 
 
+def test_load_saved_scan_profile_paused_loads_scan_tab_and_issues(
+    tmp_path: Path,
+) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        roots = [str(tmp_path / "library")]
+        paused_id = db.create_scan(
+            profile="balanced",
+            roots=roots,
+            extensions=["mp4"],
+            probe_backend="ffprobe",
+        )
+        db.insert_scan_issue(
+            paused_id,
+            ScanIssue(
+                stage="probe",
+                path=str(tmp_path / "library" / "clip.mp4"),
+                message="bad metadata",
+            ),
+        )
+        db.complete_scan(paused_id, status="paused")
+
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path / "old_root")]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        payload = SavedScanProfilePayload(
+            scan_set_key="",
+            roots=roots,
+            similarity_profile="balanced",
+            extensions=["mp4"],
+        )
+        window._load_saved_scan_profile(payload, "Paused Profile")
+        app.processEvents()
+
+        assert window.tabs.currentWidget() == window.scan_view
+        assert window._loaded_paused_scan_id == paused_id
+        assert window.current_scan_id is None
+        assert window.scan_view.resume_btn.isEnabled()
+        assert not window.scan_view.start_btn.isEnabled()
+        assert window.scan_view.issues_list.count() == 1
+        assert "paused" in window.statusBar().currentMessage().lower()
+        assert window.probe_backend_combo.currentText() == "ffprobe"
+        window.close()
+
+
 def test_saved_scans_menu_lists_not_started_named_and_cancelled_auto(
     tmp_path: Path,
 ) -> None:
@@ -1520,6 +1570,62 @@ def test_scan_finished_cancelled_does_not_switch_to_results_tab(tmp_path: Path) 
         window.close()
 
 
+def test_cancel_scan_confirmation_decline_does_not_cancel(
+    tmp_path: Path, monkeypatch
+) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        calls = {"cancel": 0}
+        window.scan_worker = SimpleNamespace(
+            cancel=lambda: calls.__setitem__("cancel", int(calls["cancel"]) + 1)
+        )
+        monkeypatch.setattr(
+            "video_duperz.ui.main_window_scan_actions.QMessageBox.question",
+            lambda *args, **kwargs: QMessageBox.StandardButton.No,
+        )
+
+        window._cancel_scan()
+        app.processEvents()
+
+        assert calls["cancel"] == 0
+        window.close()
+
+
+def test_cancel_scan_confirmation_accepts_and_cancels(
+    tmp_path: Path, monkeypatch
+) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        calls = {"cancel": 0}
+        window.scan_worker = SimpleNamespace(
+            cancel=lambda: calls.__setitem__("cancel", int(calls["cancel"]) + 1)
+        )
+        monkeypatch.setattr(
+            "video_duperz.ui.main_window_scan_actions.QMessageBox.question",
+            lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+        )
+
+        window._cancel_scan()
+        app.processEvents()
+
+        assert calls["cancel"] == 1
+        window.close()
+
+
 def test_rescan_uses_current_sources_and_runs_cleanup_then_start(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -1663,6 +1769,31 @@ def test_scan_view_progress_keeps_parallel_worker_tokens(tmp_path: Path) -> None
         window.close()
 
 
+def test_scan_view_progress_uses_padded_counters(tmp_path: Path) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        window.scan_view.update_progress(
+            ScanProgress(
+                stage="probe",
+                current=12,
+                total=1001,
+                message="Analyzed file.mp4",
+            )
+        )
+        app.processEvents()
+
+        assert "(  12 / 1001)" in window.scan_view.status_label.text()
+        assert "  12 / 1001" in window.scan_view.progress_list.item(0).text()
+        window.close()
+
+
 def test_scan_view_renders_lane_snapshots_and_worker_utilization(
     tmp_path: Path,
 ) -> None:
@@ -1695,6 +1826,8 @@ def test_scan_view_renders_lane_snapshots_and_worker_utilization(
                 analyzed_files_per_s=1.5,
                 analyzed_mib_per_s=2.0,
                 cache_hit_ratio=0.4,
+                elapsed_s=120.0,
+                total_analyze_files=10,
                 lane_snapshots=[
                     ScanLaneSnapshot(
                         lane=0,
@@ -1736,10 +1869,7 @@ def test_scan_view_renders_lane_snapshots_and_worker_utilization(
         app.processEvents()
 
         assert not window.scan_view.worker_progress.isVisible()
-        assert (
-            "Worker status is shown per lane"
-            in window.scan_view.worker_hint_label.text()
-        )
+        assert window.scan_view.eta_label.text().startswith("ETA: 5m | Done by ")
         assert window.scan_view.lane_table.rowCount() == 2
         assert window.scan_view.lane_table.columnCount() == 12
         assert window.scan_view.lane_table.item(0, 2).text() == "running"
@@ -1760,6 +1890,8 @@ def test_scan_view_renders_lane_snapshots_and_worker_utilization(
         )
         assert "cache hit 40.0%" in window.scan_view.io_stats_label.text()
         assert window.scan_view.rescan_btn.text() == "Rescan"
+        assert window.scan_view.pause_btn.text() == "Pause Scan"
+        assert window.scan_view.resume_btn.text() == "Resume Scan"
         window.close()
 
 

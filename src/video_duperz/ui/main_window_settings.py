@@ -71,6 +71,8 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
 
     def _current_sources_extensions(self) -> list[str]: ...
 
+    def _clear_loaded_paused_scan(self) -> None: ...
+
     def _browse_executable_path(
         self,
         target_edit: QLineEdit,
@@ -535,6 +537,7 @@ class MainWindowRootsMixin(MainWindowSavedViewsMixin):
             return
         self._saved_scan_profiles = {}
         self.db.clear_all_scans()
+        self._clear_loaded_paused_scan()
         self.current_scan_id = None
         self.results_view.load_groups([])
         self.results_view.set_scan_context_note("")

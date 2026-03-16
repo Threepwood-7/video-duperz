@@ -31,8 +31,27 @@ from .models import ScanIssue, VideoRecord
 
 ProgressFn = Callable[[int, int, str], None]
 FileDiscoveredFn = Callable[[VideoRecord], None]
+IssueFn = Callable[[ScanIssue], None]
 DiskToken = str
 RootTokens = tuple[str, set[DiskToken]]
+
+
+def _record_enum_issue(
+    issues: list[ScanIssue],
+    *,
+    path: str,
+    message: str,
+    issue_cb: IssueFn | None,
+) -> None:
+    """Append one enumeration issue and optionally emit it immediately."""
+    issue = ScanIssue(
+        stage="enumerate",
+        path=path,
+        message=message,
+    )
+    issues.append(issue)
+    if issue_cb is not None:
+        issue_cb(issue)
 
 
 @dataclass(slots=True)
@@ -295,26 +314,32 @@ def _enumerate_root(
     source_root: str,
     parallel_lane: int,
     on_file_discovered: FileDiscoveredFn | None = None,
+    issue_cb: IssueFn | None = None,
 ) -> tuple[list[VideoRecord], list[ScanIssue]]:
     found: list[VideoRecord] = []
     issues: list[ScanIssue] = []
     if not is_local_windows_path(root):
-        issues.append(
-            ScanIssue(
-                stage="enumerate",
-                path=root,
-                message="Network paths are not supported in v1",
-            )
+        _record_enum_issue(
+            issues,
+            path=root,
+            message="Network paths are not supported in v1",
+            issue_cb=issue_cb,
         )
         return found, issues
     if not os.path.exists(root):
-        issues.append(
-            ScanIssue(stage="enumerate", path=root, message="Path does not exist")
+        _record_enum_issue(
+            issues,
+            path=root,
+            message="Path does not exist",
+            issue_cb=issue_cb,
         )
         return found, issues
     if not os.path.isdir(root):
-        issues.append(
-            ScanIssue(stage="enumerate", path=root, message="Path is not a directory")
+        _record_enum_issue(
+            issues,
+            path=root,
+            message="Path is not a directory",
+            issue_cb=issue_cb,
         )
         return found, issues
 
@@ -335,12 +360,11 @@ def _enumerate_root(
                         if not entry.is_file(follow_symlinks=False):
                             continue
                     except OSError as exc:
-                        issues.append(
-                            ScanIssue(
-                                stage="enumerate",
-                                path=entry.path,
-                                message=f"Unreadable entry: {exc}",
-                            )
+                        _record_enum_issue(
+                            issues,
+                            path=entry.path,
+                            message=f"Unreadable entry: {exc}",
+                            issue_cb=issue_cb,
                         )
                         continue
 
@@ -350,12 +374,11 @@ def _enumerate_root(
                     try:
                         st = entry.stat(follow_symlinks=False)
                     except OSError as exc:
-                        issues.append(
-                            ScanIssue(
-                                stage="enumerate",
-                                path=entry.path,
-                                message=f"Unreadable file: {exc}",
-                            )
+                        _record_enum_issue(
+                            issues,
+                            path=entry.path,
+                            message=f"Unreadable file: {exc}",
+                            issue_cb=issue_cb,
                         )
                         continue
                     found.append(
@@ -373,12 +396,11 @@ def _enumerate_root(
                     if on_file_discovered:
                         on_file_discovered(found[-1])
         except OSError as exc:
-            issues.append(
-                ScanIssue(
-                    stage="enumerate",
-                    path=current_dir,
-                    message=f"Unreadable directory: {exc}",
-                )
+            _record_enum_issue(
+                issues,
+                path=current_dir,
+                message=f"Unreadable directory: {exc}",
+                issue_cb=issue_cb,
             )
     return found, issues
 
@@ -392,6 +414,7 @@ def enumerate_video_files(
     cancel_event: Event | None = None,
     progress_cb: ProgressFn | None = None,
     on_file_discovered: FileDiscoveredFn | None = None,
+    issue_cb: IssueFn | None = None,
 ) -> tuple[list[VideoRecord], list[ScanIssue]]:
     """Enumerate matching video files across the planned physical-drive lanes."""
     ext_set = {e.lower().lstrip(".") for e in extensions}
@@ -405,6 +428,9 @@ def enumerate_video_files(
         drive_worker_overrides=drive_worker_overrides,
     )
     issues.extend(plan.issues)
+    if issue_cb is not None:
+        for issue in plan.issues:
+            issue_cb(issue)
 
     groups = plan.root_groups
     if not groups:
@@ -451,6 +477,7 @@ def enumerate_video_files(
                     source_root=root,
                     parallel_lane=lane_index,
                     on_file_discovered=on_file_discovered,
+                    issue_cb=issue_cb,
                 )
                 group_found.extend(root_found)
                 group_issues.extend(root_issues)
@@ -478,12 +505,11 @@ def enumerate_video_files(
                     group_found, group_issues = future.result()
                 except Exception as exc:
                     group_path = ", ".join(group)
-                    issues.append(
-                        ScanIssue(
-                            stage="enumerate",
-                            path=group_path,
-                            message=f"Worker failed: {exc}",
-                        )
+                    _record_enum_issue(
+                        issues,
+                        path=group_path,
+                        message=f"Worker failed: {exc}",
+                        issue_cb=issue_cb,
                     )
                     continue
                 found.extend(group_found)

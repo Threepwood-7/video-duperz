@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -10,6 +11,7 @@ from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 from ..db import Database
 from ..exporters import export_scan
+from ..models import ScanIssue
 from ..scanner import build_physical_drive_scan_plan
 from .main_window_core import DeleteTarget, metric_float, metric_int, payload_dict
 from .main_window_profiles import MainWindowProfilesMixin
@@ -26,6 +28,10 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
 
     def _start_scan(self) -> None:
         """Create and launch a new background scan worker from current settings."""
+        self._launch_scan()
+
+    def _launch_scan(self, *, resume_scan_id: int | None = None) -> None:
+        """Create and launch one background scan worker from the current UI state."""
         self._persist_settings()
         if not self.settings.scan_roots:
             QMessageBox.warning(
@@ -36,12 +42,19 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
             self.tabs.setCurrentWidget(self.sources_tab)
             return
 
+        self._clear_loaded_paused_scan()
         lane_plan = build_physical_drive_scan_plan(
             roots=list(self.settings.scan_roots),
             max_workers=int(self.settings.max_workers),
             drive_worker_overrides=self.settings.drive_worker_overrides,
         )
         self.scan_view.reset()
+        if resume_scan_id is not None:
+            self.scan_view.set_issues(self.db.list_scan_issues(resume_scan_id))
+            self.scan_view.append_progress_note(
+                "paused",
+                f"Resuming paused scan #{resume_scan_id}",
+            )
         self.scan_view.initialize_lane_plan(
             lane_plan.root_groups,
             lane_plan.effective_total_workers
@@ -50,7 +63,10 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
         )
         self._set_scan_tab_lock(True)
         self.scan_view.set_running(True)
-        self.statusBar().showMessage("Scan started")
+        if resume_scan_id is None:
+            self.statusBar().showMessage("Scan started")
+        else:
+            self.statusBar().showMessage(f"Resuming scan #{resume_scan_id}...")
         self.tabs.setCurrentWidget(self.scan_view)
 
         self.scan_worker = ScanWorker(
@@ -69,17 +85,59 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
             enum_queue_max=self.settings.scan_enum_queue_max,
             progress_emit_interval_ms=self.settings.scan_progress_emit_interval_ms,
             progress_emit_every_files=self.settings.scan_progress_emit_every_files,
+            resume_scan_id=resume_scan_id,
         )
         self.scan_worker.signals.progress.connect(self.scan_view.update_progress)
+        self.scan_worker.signals.issue.connect(self._scan_issue)
         self.scan_worker.signals.finished.connect(self._scan_finished)
         self.scan_worker.signals.error.connect(self._scan_error)
         self.thread_pool.start(self.scan_worker)
 
+    def _pause_scan(self) -> None:
+        """Request a graceful pause of the active scan worker."""
+        if self.scan_worker is None:
+            return
+        self.scan_worker.pause()
+        self.statusBar().showMessage("Pausing scan...")
+
+    def _resume_scan(self) -> None:
+        """Resume the currently loaded paused scan when edits are still safe."""
+        paused_scan_id = self._loaded_paused_scan_id
+        if paused_scan_id is None:
+            return
+        if self._paused_resume_requires_new_scan():
+            choice = self._prompt_risky_paused_scan_edit()
+            if choice == "new":
+                self._clear_loaded_paused_scan()
+                self._launch_scan()
+                return
+            self._reload_loaded_paused_scan_widgets()
+            self.tabs.setCurrentWidget(self.scan_view)
+            self.statusBar().showMessage("Paused scan kept unchanged.")
+            return
+        self._launch_scan(resume_scan_id=paused_scan_id)
+
     def _cancel_scan(self) -> None:
         """Request cancellation of the active scan worker."""
-        if self.scan_worker:
-            self.scan_worker.cancel()
-            self.statusBar().showMessage("Cancelling scan...")
+        if self.scan_worker is None:
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Cancel Scan",
+            "Cancel the current scan?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        self.scan_worker.cancel()
+        self.statusBar().showMessage("Cancelling scan...")
+
+    def _scan_issue(self, issue: object) -> None:
+        """Append one live scan issue to the Scan tab as it arrives."""
+        if not isinstance(issue, ScanIssue):
+            return
+        self.scan_view.append_issue(issue)
+        self.statusBar().showMessage(f"Scan issue [{issue.stage}]: {issue.message}")
 
     def _scan_finished(self, result: ScanResult) -> None:
         """Refresh persisted results after a scan worker completes."""
@@ -98,11 +156,34 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
         if status_text != "done":
             self.current_scan_id = None
             self.tabs.setCurrentWidget(self.scan_view)
+            if status_text == "paused":
+                scan_info = self.db.get_scan_info(finished_scan_id)
+                self._set_loaded_paused_scan(
+                    scan_id=finished_scan_id,
+                    roots=list(scan_info.get("roots", [])),
+                    profile=str(scan_info.get("profile", "balanced")),
+                    extensions=list(scan_info.get("extensions", [])),
+                    probe_backend=str(scan_info.get("probe_backend", "pyav")),
+                )
+                self.scan_view.set_paused_loaded(True)
+                self.scan_view.append_progress_note(
+                    "paused",
+                    (
+                        f"Scan #{finished_scan_id} paused. "
+                        "You can edit sources, then resume."
+                    ),
+                )
+                self.statusBar().showMessage(
+                    f"Scan {finished_scan_id} paused: {len(result.issues)} issues."
+                )
+                return
+            self._clear_loaded_paused_scan()
             self.statusBar().showMessage(
                 f"Scan {finished_scan_id} {status_text}: {len(result.issues)} issues."
             )
             return
 
+        self._clear_loaded_paused_scan()
         groups = self.db.load_duplicate_groups(finished_scan_id)
         self.results_view.load_groups(groups)
         self.results_view.set_scan_context_note("")
@@ -128,6 +209,25 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
         self.scan_view.set_running(False)
         self.statusBar().showMessage("Scan failed")
         QMessageBox.critical(self, "Scan Error", details)
+
+    def _open_scan_subject_in_explorer(self, path: str) -> None:
+        """Open Explorer on the selected progress or issue path."""
+        target = Path(path) if path.strip() else None
+        if target is None:
+            self.statusBar().showMessage("No file is associated with that row.")
+            return
+        try:
+            if not target.exists():
+                self.statusBar().showMessage("The selected path no longer exists.")
+                return
+            command = (
+                ["explorer.exe", str(target)]
+                if target.is_dir()
+                else ["explorer.exe", "/select,", str(target)]
+            )
+            subprocess.Popen(command)
+        except Exception as exc:
+            QMessageBox.warning(self, "Explorer Launch Failed", str(exc))
 
     def _next_zdele_path(self, source: Path) -> Path:
         """Return the next available `.z_dele` rename target for a file."""

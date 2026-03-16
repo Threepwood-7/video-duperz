@@ -16,6 +16,7 @@ from .matcher import build_duplicate_groups, find_duplicate_edges
 from .models import (
     FrameDecodeBackendId,
     ProbeBackendId,
+    ScanIssue,
     ScanProgress,
     ScanResult,
     VideoMeta,
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
     from .db import Database
 
 ProgressCallback = Callable[[ScanProgress], None]
+IssueCallback = Callable[[ScanIssue], None]
 
 
 @dataclass(slots=True)
@@ -100,32 +102,51 @@ def build_analyze_file(
     ffprobe_exe_path: str = "",
 ) -> Callable[[str], _AnalyzeOutput]:
     """Build a single-path analyze callable for the selected probe backend."""
+    runtime_analyze = _build_runtime_analyze_file(
+        probe_backend,
+        ffmpeg_exe_path=ffmpeg_exe_path,
+        ffprobe_exe_path=ffprobe_exe_path,
+    )
+
+    def _analyze_uncached(path: str) -> _AnalyzeOutput:
+        return runtime_analyze(path, None)
+
+    return _analyze_uncached
+
+
+def _build_runtime_analyze_file(
+    probe_backend: ProbeBackendId,
+    *,
+    ffmpeg_exe_path: str = "",
+    ffprobe_exe_path: str = "",
+) -> Callable[[str, VideoMeta | None], _AnalyzeOutput]:
+    """Build the runtime analyze callable used by the threaded pipeline."""
     probe_video_kwargs: dict[str, str] = {}
     if ffprobe_exe_path:
         probe_video_kwargs["ffprobe_exe_path"] = ffprobe_exe_path
     if probe_backend == "ffprobe" and not ffmpeg_exe_path and not ffprobe_exe_path:
-        return partial(_analyze_file, cached_meta=None)
-    if probe_backend == "ffprobe":
-        return partial(
-            _analyze_file_with_probe,
-            cached_meta=None,
+        return _analyze_file
+
+    target_backend: ProbeBackendId = (
+        "ffprobe" if probe_backend == "ffprobe" else probe_backend
+    )
+
+    def _analyze_with_runtime_probe(
+        path: str,
+        cached_meta: VideoMeta | None,
+    ) -> _AnalyzeOutput:
+        return _analyze_file_with_probe(
+            path,
+            cached_meta,
             probe_video_fn=partial(
                 probe_video,
-                backend="ffprobe",
+                backend=target_backend,
                 **probe_video_kwargs,
             ),
             ffmpeg_exe_path=ffmpeg_exe_path,
         )
-    return partial(
-        _analyze_file_with_probe,
-        cached_meta=None,
-        probe_video_fn=partial(
-            probe_video,
-            backend=probe_backend,
-            **probe_video_kwargs,
-        ),
-        ffmpeg_exe_path=ffmpeg_exe_path,
-    )
+
+    return _analyze_with_runtime_probe
 
 
 def run_scan(
@@ -146,41 +167,27 @@ def run_scan(
     progress_emit_interval_ms: int,
     progress_emit_every_files: int,
     cancel_event: Event | None = None,
+    pause_event: Event | None = None,
     progress_cb: ProgressCallback | None = None,
+    issue_cb: IssueCallback | None = None,
+    resume_scan_id: int | None = None,
 ) -> ScanResult:
     """Run a full scan using the default probe, fingerprint, and matcher pipeline."""
     probe_video_kwargs: dict[str, str] = {}
     if ffprobe_exe_path:
         probe_video_kwargs["ffprobe_exe_path"] = ffprobe_exe_path
+    analyze_file = _build_runtime_analyze_file(
+        probe_backend,
+        ffmpeg_exe_path=ffmpeg_exe_path,
+        ffprobe_exe_path=ffprobe_exe_path,
+    )
     if probe_backend == "ffprobe":
-        analyze_file = (
-            partial(_analyze_file, cached_meta=None)
-            if not ffmpeg_exe_path and not ffprobe_exe_path
-            else partial(
-                _analyze_file_with_probe,
-                probe_video_fn=partial(
-                    probe_video,
-                    backend="ffprobe",
-                    **probe_video_kwargs,
-                ),
-                ffmpeg_exe_path=ffmpeg_exe_path,
-            )
-        )
         ensure_available_fn = (
             (lambda: ensure_ffprobe_available(ffprobe_exe_path))
             if ffprobe_exe_path
             else ensure_ffprobe_available
         )
     else:
-        analyze_file = partial(
-            _analyze_file_with_probe,
-            probe_video_fn=partial(
-                probe_video,
-                backend=probe_backend,
-                **probe_video_kwargs,
-            ),
-            ffmpeg_exe_path=ffmpeg_exe_path,
-        )
         ensure_available_fn = (
             partial(
                 ensure_probe_backend_available,
@@ -213,11 +220,14 @@ def run_scan(
         progress_emit_interval_ms=progress_emit_interval_ms,
         progress_emit_every_files=progress_emit_every_files,
         cancel_event=cancel_event,
+        pause_event=pause_event,
         progress_cb=progress_cb,
+        issue_cb=issue_cb,
         analyze_file=analyze_file,
         ensure_ffprobe_available_fn=ensure_available_fn,
         enumerate_video_files_fn=enumerate_video_files,
         build_scan_plan_fn=build_physical_drive_scan_plan,
         find_duplicate_edges_fn=find_duplicate_edges,
         build_duplicate_groups_fn=build_duplicate_groups,
+        resume_scan_id=resume_scan_id,
     )
