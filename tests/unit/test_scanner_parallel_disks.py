@@ -97,7 +97,7 @@ def test_lookup_failure_falls_back_to_volume_identity_and_emits_issue(
     )
 
 
-def test_parallel_enumeration_returns_files_from_all_roots_without_global_sort(
+def test_parallel_enumeration_returns_files_from_all_roots_in_global_alpha_order(
     tmp_path: Path, monkeypatch
 ) -> None:
     root_z = tmp_path / "z_root"
@@ -120,7 +120,7 @@ def test_parallel_enumeration_returns_files_from_all_roots_without_global_sort(
     )
 
     assert not issues
-    assert {Path(item.path).name for item in found} == {"a.mp4", "z.mp4"}
+    assert [Path(item.path).name for item in found] == ["a.mp4", "z.mp4"]
 
 
 def test_parallel_cancellation_returns_partial_results_without_crash(

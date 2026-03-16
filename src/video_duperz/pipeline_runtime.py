@@ -55,7 +55,6 @@ from .pipeline_runtime_lanes import (
     apply_cancel_state,
     ensure_lane_state_locked,
     finalize_task,
-    queue_lane_if_ready_locked,
     refresh_lane_state_locked,
     submit_ready_lanes,
 )
@@ -98,6 +97,12 @@ def _decide_cached_analysis(cache: _CachedArtifacts | None) -> _CacheReuseDecisi
     ):
         return _CacheReuseDecision(cached_meta=cached_meta, skip_analysis=True)
     return _CacheReuseDecision(cached_meta=cached_meta, skip_analysis=False)
+
+
+def _video_record_sort_key(record: VideoRecord) -> tuple[str, str]:
+    """Return the canonical alpha-order sort key for one discovered record."""
+    normalized_path = str(record.path)
+    return (path_key(normalized_path), normalized_path)
 
 
 def _prepare_total_locked(ctx: _ScanContext) -> int:
@@ -228,14 +233,7 @@ def _queue_enum_item(ctx: _ScanContext, item: object) -> None:
 
 
 def _on_file_discovered(ctx: _ScanContext, file: object) -> None:
-    if ctx.stop_event.is_set():
-        return
-    key = path_key(str(getattr(file, "path", "")))
-    with ctx.state_lock:
-        if key in ctx.streamed_path_keys:
-            return
-        ctx.streamed_path_keys.add(key)
-    _queue_enum_item(ctx, file)
+    _ = ctx, file
 
 
 def _on_enumerate_progress(
@@ -296,16 +294,10 @@ def _run_enumeration(ctx: _ScanContext) -> None:
             on_file_discovered=partial(_handle_file_discovered, ctx),
             issue_cb=partial(_queue_runtime_issue, ctx),
         )
-        ctx.enum_files = list(files)
+        ctx.enum_files = sorted(files, key=_video_record_sort_key)
         for issue in local_issues:
             _queue_runtime_issue(ctx, issue)
-        # Keep compatibility with tests that bypass the streaming callback.
         for file in ctx.enum_files:
-            key = path_key(str(getattr(file, "path", "")))
-            with ctx.state_lock:
-                if key in ctx.streamed_path_keys:
-                    continue
-                ctx.streamed_path_keys.add(key)
             _queue_enum_item(ctx, file)
     except Exception as exc:
         ctx.enum_error = exc
@@ -334,10 +326,11 @@ def _drain_enum_queue(ctx: _ScanContext) -> list[VideoRecord | object]:
 def _process_discovered_batch(ctx: _ScanContext, batch: list[VideoRecord]) -> None:
     if not batch:
         return
+    ordered_batch = sorted(batch, key=_video_record_sort_key)
     upsert_payload: list[dict[str, object]] = []
     cache_payload: list[dict[str, object]] = []
     valid: list[tuple[VideoRecord, int, str, int, str]] = []
-    for file in batch:
+    for file in ordered_batch:
         lane = int(getattr(file, "parallel_lane", 0))
         source_root = str(getattr(file, "source_root", ""))
         path = str(getattr(file, "path", ""))
@@ -426,11 +419,11 @@ def _process_discovered_batch(ctx: _ScanContext, batch: list[VideoRecord]) -> No
         with ctx.state_lock:
             if ctx.resume_scan_id is not None:
                 ctx.resume_reprocessed_files += 1
+            ctx.pending_tasks.append(task)
             ctx.lane_queues.setdefault(lane, deque()).append(task)
             lane_state = ensure_lane_state_locked(ctx, lane, source_root)
             lane_state.queued += 1
             ctx.total_analyze_files += 1
-            queue_lane_if_ready_locked(ctx, lane)
             refresh_lane_state_locked(ctx, lane)
     ctx.last_discovered_batch_at = time.perf_counter()
 
@@ -539,6 +532,7 @@ def _ingest_discovered_queue(ctx: _ScanContext) -> bool:
         if stop_requested:
             continue
         ctx.pending_discovered.append(queued)
+    ctx.pending_discovered.sort(key=_video_record_sort_key)
     return True
 
 

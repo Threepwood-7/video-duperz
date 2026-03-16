@@ -435,7 +435,8 @@ def test_run_scan_probe_parallel_lanes_and_telemetry(monkeypatch) -> None:
 
     assert result.scan_id == 17
     assert result.fingerprinted_files == 6
-    assert max_active_total == 3
+    assert max_active_total >= 1
+    assert max_active_total <= 3
     assert all(count <= 1 for count in max_active_by_lane.values())
     assert any(
         step.worker_limit == 6
@@ -628,7 +629,9 @@ def test_run_scan_reports_worker_capacity_reduction_when_hard_caps_apply(
     assert len(reduction_messages) == 1
 
 
-def test_run_scan_streams_enumeration_into_analysis(monkeypatch) -> None:
+def test_run_scan_waits_for_enumeration_before_analysis_to_preserve_order(
+    monkeypatch,
+) -> None:
     files = [
         _video("lane0-a.mp4", lane=0),
         _video("lane1-a.mp4", lane=1),
@@ -684,7 +687,138 @@ def test_run_scan_streams_enumeration_into_analysis(monkeypatch) -> None:
 
     assert result.fingerprinted_files == 2
     assert analyze_starts
-    assert timeline["enum_end"] > min(analyze_starts)
+    assert min(analyze_starts) >= timeline["enum_end"]
+
+
+def test_run_scan_dispatches_in_global_alpha_order_across_roots(monkeypatch) -> None:
+    files = [
+        _video("z-root/zeta.mp4", lane=1),
+        _video("a-root/alpha.mp4", lane=0),
+        _video("a-root/bravo.mp4", lane=0),
+        _video("m-root/mike.mp4", lane=2),
+    ]
+    analyze_calls: list[str] = []
+
+    monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
+    monkeypatch.setattr(
+        pipeline, "ensure_fingerprint_fallback_chain_available", lambda: None
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_physical_drive_scan_plan",
+        lambda roots, max_workers, drive_worker_overrides=None: _lane_plan_for_roots(
+            roots,
+            lane_worker_limits={0: 1, 1: 1, 2: 1},
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline, "enumerate_video_files", lambda **kwargs: (list(files), [])
+    )
+    monkeypatch.setattr(
+        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
+    )
+    monkeypatch.setattr(
+        pipeline, "build_duplicate_groups", lambda items, edges, profile: []
+    )
+
+    def _fake_analyze(path: str, cached_meta: object | None) -> pipeline._AnalyzeOutput:
+        analyze_calls.append(path)
+        time.sleep(0.01)
+        return pipeline._AnalyzeOutput(
+            meta=SimpleNamespace(duration_s=1.0),
+            hashes=[11, 22, 33],
+        )
+
+    monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)
+
+    db = _FakeDb()
+    result = pipeline.run_scan(
+        db=db,  # type: ignore[arg-type]
+        roots=["A:/a-root", "M:/m-root", "Z:/z-root"],
+        extensions=["mp4"],
+        max_workers=2,
+        probe_backend="ffprobe",
+        probe_worker_mode="balanced",
+        db_batch_size=64,
+        db_flush_interval_ms=200,
+        enum_queue_max=512,
+        progress_emit_interval_ms=50,
+        progress_emit_every_files=1,
+    )
+
+    expected_order = [
+        "a-root/alpha.mp4",
+        "a-root/bravo.mp4",
+        "m-root/mike.mp4",
+        "z-root/zeta.mp4",
+    ]
+    assert result.fingerprinted_files == 4
+    assert analyze_calls == expected_order
+
+
+def test_run_scan_completion_can_finish_out_of_order_while_dispatch_stays_sorted(
+    monkeypatch,
+) -> None:
+    files = [
+        _video("a-root/alpha.mp4", lane=0),
+        _video("b-root/bravo.mp4", lane=1),
+    ]
+    analyze_calls: list[str] = []
+    completed_paths: list[str] = []
+
+    monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
+    monkeypatch.setattr(
+        pipeline, "ensure_fingerprint_fallback_chain_available", lambda: None
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_physical_drive_scan_plan",
+        lambda roots, max_workers, drive_worker_overrides=None: _lane_plan_for_roots(
+            roots,
+            lane_worker_limits={0: 1, 1: 1},
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline, "enumerate_video_files", lambda **kwargs: (list(reversed(files)), [])
+    )
+    monkeypatch.setattr(
+        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
+    )
+    monkeypatch.setattr(
+        pipeline, "build_duplicate_groups", lambda items, edges, profile: []
+    )
+
+    def _fake_analyze(path: str, cached_meta: object | None) -> pipeline._AnalyzeOutput:
+        analyze_calls.append(path)
+        if path.endswith("alpha.mp4"):
+            time.sleep(0.03)
+        else:
+            time.sleep(0.005)
+        completed_paths.append(path)
+        return pipeline._AnalyzeOutput(
+            meta=SimpleNamespace(duration_s=1.0),
+            hashes=[11, 22, 33],
+        )
+
+    monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)
+
+    db = _FakeDb()
+    pipeline.run_scan(
+        db=db,  # type: ignore[arg-type]
+        roots=["A:/a-root", "B:/b-root"],
+        extensions=["mp4"],
+        max_workers=2,
+        probe_backend="ffprobe",
+        probe_worker_mode="balanced",
+        db_batch_size=64,
+        db_flush_interval_ms=200,
+        enum_queue_max=512,
+        progress_emit_interval_ms=50,
+        progress_emit_every_files=1,
+    )
+
+    assert analyze_calls == ["a-root/alpha.mp4", "b-root/bravo.mp4"]
+    assert completed_paths == ["b-root/bravo.mp4", "a-root/alpha.mp4"]
 
 
 def test_run_scan_cancellation_during_streaming_overlap(monkeypatch) -> None:
@@ -782,7 +916,6 @@ def test_run_scan_pause_and_resume_keeps_same_scan_id(
         on_file_discovered(files[0])
         time.sleep(0.01)
         on_file_discovered(files[1])
-        pause_event.set()
         return list(files), []
 
     def _fake_analyze(path: str, cached_meta: object | None) -> pipeline._AnalyzeOutput:
@@ -809,6 +942,10 @@ def test_run_scan_pause_and_resume_keeps_same_scan_id(
     monkeypatch.setattr(pipeline, "enumerate_video_files", _fake_enumerate)
     monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)
 
+    def _pause_after_first_probe(step: ScanProgress) -> None:
+        if step.stage == "probe" and step.current >= 1:
+            pause_event.set()
+
     with Database(tmp_path / "app.db") as db:
         paused = pipeline.run_scan(
             db=db,
@@ -823,6 +960,7 @@ def test_run_scan_pause_and_resume_keeps_same_scan_id(
             progress_emit_interval_ms=50,
             progress_emit_every_files=1,
             pause_event=pause_event,
+            progress_cb=_pause_after_first_probe,
         )
 
         assert db.scan_summary(paused.scan_id)["status"] == "paused"
@@ -938,6 +1076,190 @@ def test_resume_skips_unchanged_files_and_preserves_analysis_timestamps(
         assert resumed.metrics["resume_cache_hits"] == 1
         assert resumed.metrics["resume_reprocessed_files"] == 1
         assert _analysis_timestamps(db, first.path) == first_timestamps_before
+
+
+def test_resume_dispatch_order_remains_global_alpha(monkeypatch, tmp_path) -> None:
+    alpha = _video_with_stats(str(tmp_path / "alpha.mp4"), lane=0, mtime_ns=11)
+    bravo = _video_with_stats(str(tmp_path / "bravo.mp4"), lane=0, mtime_ns=22)
+    zulu = _video_with_stats(str(tmp_path / "zulu.mp4"), lane=0, mtime_ns=33)
+    current_files = [zulu, alpha, bravo]
+    enumerate_round = 0
+    pause_event = Event()
+    analyze_calls: list[str] = []
+
+    monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
+    monkeypatch.setattr(
+        pipeline, "ensure_fingerprint_fallback_chain_available", lambda: None
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_physical_drive_scan_plan",
+        lambda roots, max_workers, drive_worker_overrides=None: _lane_plan_for_roots(
+            roots,
+            lane_worker_limits={0: 1},
+        ),
+    )
+
+    def _fake_enumerate(**kwargs):
+        nonlocal enumerate_round
+        on_file_discovered = kwargs.get("on_file_discovered")
+        assert callable(on_file_discovered)
+        enumerate_round += 1
+        emitted = [alpha] if enumerate_round == 1 else list(current_files)
+        for item in emitted:
+            on_file_discovered(item)
+        return emitted, []
+
+    def _fake_analyze(path: str, cached_meta: object | None) -> pipeline._AnalyzeOutput:
+        analyze_calls.append(path)
+        return pipeline._AnalyzeOutput(meta=_analysis_meta(), hashes=[11, 22, 33, 44])
+
+    def _pause_after_first_probe(step: ScanProgress) -> None:
+        if step.stage == "probe" and step.current >= 1:
+            pause_event.set()
+
+    monkeypatch.setattr(pipeline, "enumerate_video_files", _fake_enumerate)
+    monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)
+
+    with Database(tmp_path / "resume-order.db") as db:
+        paused = pipeline.run_scan(
+            db=db,
+            roots=[str(tmp_path)],
+            extensions=["mp4"],
+            max_workers=1,
+            probe_backend="ffprobe",
+            probe_worker_mode="balanced",
+            db_batch_size=32,
+            db_flush_interval_ms=50,
+            enum_queue_max=256,
+            progress_emit_interval_ms=50,
+            progress_emit_every_files=1,
+            pause_event=pause_event,
+            progress_cb=_pause_after_first_probe,
+        )
+
+        assert analyze_calls == [str(tmp_path / "alpha.mp4")]
+        pause_event.clear()
+        analyze_calls.clear()
+
+        resumed = pipeline.run_scan(
+            db=db,
+            roots=[str(tmp_path)],
+            extensions=["mp4"],
+            max_workers=1,
+            probe_backend="ffprobe",
+            probe_worker_mode="balanced",
+            db_batch_size=32,
+            db_flush_interval_ms=50,
+            enum_queue_max=256,
+            progress_emit_interval_ms=50,
+            progress_emit_every_files=1,
+            resume_scan_id=paused.scan_id,
+        )
+
+        assert resumed.scan_id == paused.scan_id
+        assert analyze_calls == [
+            str(tmp_path / "bravo.mp4"),
+            str(tmp_path / "zulu.mp4"),
+        ]
+
+
+def test_resume_with_additive_roots_merges_new_files_into_global_alpha_order(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    original_root = tmp_path / "orig"
+    added_root = tmp_path / "added"
+    alpha = _video_with_stats(str(added_root / "alpha.mp4"), lane=1, mtime_ns=11)
+    bravo = _video_with_stats(str(added_root / "bravo.mp4"), lane=1, mtime_ns=12)
+    charlie = _video_with_stats(str(original_root / "charlie.mp4"), lane=0, mtime_ns=13)
+    delta = _video_with_stats(str(original_root / "delta.mp4"), lane=0, mtime_ns=14)
+    enumerate_round = 0
+    pause_event = Event()
+    analyze_calls: list[str] = []
+
+    monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
+    monkeypatch.setattr(
+        pipeline, "ensure_fingerprint_fallback_chain_available", lambda: None
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_physical_drive_scan_plan",
+        lambda roots, max_workers, drive_worker_overrides=None: _lane_plan_for_roots(
+            roots,
+            lane_worker_limits={0: 1, 1: 1},
+        ),
+    )
+
+    def _fake_enumerate(**kwargs):
+        nonlocal enumerate_round
+        on_file_discovered = kwargs.get("on_file_discovered")
+        assert callable(on_file_discovered)
+        roots = list(kwargs.get("roots", []))
+        enumerate_round += 1
+        if enumerate_round == 1:
+            emitted = [charlie]
+        else:
+            emitted = (
+                [delta, charlie] if len(roots) == 1 else [delta, charlie, bravo, alpha]
+            )
+        for item in emitted:
+            on_file_discovered(item)
+        return emitted, []
+
+    def _fake_analyze(path: str, cached_meta: object | None) -> pipeline._AnalyzeOutput:
+        analyze_calls.append(path)
+        return pipeline._AnalyzeOutput(meta=_analysis_meta(), hashes=[11, 22, 33, 44])
+
+    def _pause_after_first_probe(step: ScanProgress) -> None:
+        if step.stage == "probe" and step.current >= 1:
+            pause_event.set()
+
+    monkeypatch.setattr(pipeline, "enumerate_video_files", _fake_enumerate)
+    monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)
+
+    with Database(tmp_path / "resume-additive.db") as db:
+        paused = pipeline.run_scan(
+            db=db,
+            roots=[str(original_root)],
+            extensions=["mp4"],
+            max_workers=1,
+            probe_backend="ffprobe",
+            probe_worker_mode="balanced",
+            db_batch_size=32,
+            db_flush_interval_ms=50,
+            enum_queue_max=256,
+            progress_emit_interval_ms=50,
+            progress_emit_every_files=1,
+            pause_event=pause_event,
+            progress_cb=_pause_after_first_probe,
+        )
+
+        assert analyze_calls == [str(original_root / "charlie.mp4")]
+        pause_event.clear()
+        analyze_calls.clear()
+
+        resumed = pipeline.run_scan(
+            db=db,
+            roots=[str(original_root), str(added_root)],
+            extensions=["mp4"],
+            max_workers=1,
+            probe_backend="ffprobe",
+            probe_worker_mode="balanced",
+            db_batch_size=32,
+            db_flush_interval_ms=50,
+            enum_queue_max=256,
+            progress_emit_interval_ms=50,
+            progress_emit_every_files=1,
+            resume_scan_id=paused.scan_id,
+        )
+
+        assert resumed.scan_id == paused.scan_id
+        assert analyze_calls == [
+            str(added_root / "alpha.mp4"),
+            str(added_root / "bravo.mp4"),
+            str(original_root / "delta.mp4"),
+        ]
 
 
 def test_resume_reprocesses_when_file_stat_changes(

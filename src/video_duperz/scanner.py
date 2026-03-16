@@ -36,6 +36,17 @@ DiskToken = str
 RootTokens = tuple[str, set[DiskToken]]
 
 
+def _normalized_path_sort_key(path: str) -> tuple[str, str]:
+    """Return the canonical alpha-order sort key for one filesystem path."""
+    normalized = str(path)
+    return (path_key(normalized), normalized)
+
+
+def _video_record_sort_key(record: VideoRecord) -> tuple[str, str]:
+    """Return the canonical alpha-order sort key for one discovered record."""
+    return _normalized_path_sort_key(record.path)
+
+
 def _record_enum_issue(
     issues: list[ScanIssue],
     *,
@@ -350,7 +361,11 @@ def _enumerate_root(
         current_dir = stack.pop()
         try:
             with os.scandir(current_dir) as entries:
-                for entry in entries:
+                sorted_entries = sorted(
+                    entries,
+                    key=lambda entry: _normalized_path_sort_key(entry.path),
+                )
+                for entry in sorted_entries:
                     if cancel_event and cancel_event.is_set():
                         break
                     try:
@@ -402,6 +417,7 @@ def _enumerate_root(
                 message=f"Unreadable directory: {exc}",
                 issue_cb=issue_cb,
             )
+    found.sort(key=_video_record_sort_key)
     return found, issues
 
 
@@ -515,4 +531,5 @@ def enumerate_video_files(
                 found.extend(group_found)
                 issues.extend(group_issues)
 
+    found.sort(key=_video_record_sort_key)
     return found, issues

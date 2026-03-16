@@ -74,54 +74,7 @@ def queue_lane_if_ready_locked(ctx: _ScanContext, lane: int) -> None:
         ctx: Shared scan runtime context.
         lane: Lane identifier that may be ready for worker submission.
     """
-    queue_size = len(ctx.lane_queues.get(lane, ()))
-    if queue_size <= 0:
-        return
-    if int(ctx.active_by_lane.get(lane, 0)) >= lane_runtime_cap_locked(ctx, lane):
-        return
-    if lane in ctx.ready_set:
-        return
-    ctx.ready_lanes.append(lane)
-    ctx.ready_set.add(lane)
-
-
-def submit_next_for_lane(
-    ctx: _ScanContext,
-    executor: ThreadPoolExecutor,
-    lane: int,
-    on_future_done: Callable[[Future[_AnalyzeOutputLike]], None],
-) -> bool:
-    """Submit the next queued analysis task for one lane.
-
-    Args:
-        ctx: Shared scan runtime context.
-        executor: Thread pool used for file analysis tasks.
-        lane: Lane identifier to submit from.
-        on_future_done: Callback attached to the submitted future.
-
-    Returns:
-        ``True`` when a task was submitted, otherwise ``False``.
-    """
-    with ctx.state_lock:
-        lane_queue = ctx.lane_queues.get(lane)
-        if not lane_queue:
-            return False
-        lane_active_count = int(ctx.active_by_lane.get(lane, 0))
-        if lane_active_count >= lane_runtime_cap_locked(ctx, lane):
-            return False
-        task = lane_queue.popleft()
-        lane_state = ensure_lane_state_locked(ctx, lane, task.source_root)
-        lane_state.queued = max(0, lane_state.queued - 1)
-        lane_state.active_file = task.path
-        ctx.active_by_lane[lane] = lane_active_count + 1
-        ctx.active_workers += 1
-        queue_lane_if_ready_locked(ctx, lane)
-        refresh_lane_state_locked(ctx, lane)
-    future = executor.submit(ctx.analyze_file, task.path, task.cached_meta)
-    future.add_done_callback(on_future_done)
-    with ctx.state_lock:
-        ctx.futures[future] = task
-    return True
+    _ = ctx, lane
 
 
 def submit_ready_lanes(
@@ -142,15 +95,29 @@ def submit_ready_lanes(
     submitted = 0
     while True:
         with ctx.state_lock:
-            if (
-                len(ctx.futures) >= effective_worker_limit_locked(ctx)
-                or not ctx.ready_lanes
-            ):
+            if len(ctx.futures) >= effective_worker_limit_locked(ctx):
                 return submitted
-            lane = ctx.ready_lanes.popleft()
-            ctx.ready_set.discard(lane)
-        if submit_next_for_lane(ctx, executor, lane, on_future_done):
-            submitted += 1
+            if not ctx.pending_tasks:
+                return submitted
+            task = ctx.pending_tasks[0]
+            lane_active_count = int(ctx.active_by_lane.get(task.lane, 0))
+            if lane_active_count >= lane_runtime_cap_locked(ctx, task.lane):
+                return submitted
+            ctx.pending_tasks.popleft()
+            lane_queue = ctx.lane_queues.get(task.lane)
+            if lane_queue:
+                lane_queue.popleft()
+            lane_state = ensure_lane_state_locked(ctx, task.lane, task.source_root)
+            lane_state.queued = max(0, lane_state.queued - 1)
+            lane_state.active_file = task.path
+            ctx.active_by_lane[task.lane] = lane_active_count + 1
+            ctx.active_workers += 1
+            refresh_lane_state_locked(ctx, task.lane)
+        future = executor.submit(ctx.analyze_file, task.path, task.cached_meta)
+        future.add_done_callback(on_future_done)
+        with ctx.state_lock:
+            ctx.futures[future] = task
+        submitted += 1
 
 
 def finalize_task(ctx: _ScanContext, task: _AnalyzeTask) -> tuple[int, int]:
@@ -188,6 +155,7 @@ def apply_cancel_state(ctx: _ScanContext) -> None:
     with ctx.state_lock:
         ctx.ready_lanes.clear()
         ctx.ready_set.clear()
+        ctx.pending_tasks.clear()
         for lane_id, queue in ctx.lane_queues.items():
             queue.clear()
             refresh_lane_state_locked(ctx, lane_id)
