@@ -55,6 +55,7 @@ class AnalyzeTask:
     source_root: str
     path: str
     size: int
+    mtime_ns: int
 
 
 @dataclass(slots=True)
@@ -82,6 +83,7 @@ class ScanContext:
     progress_emit_interval_s: float
     progress_emit_every_files: int
     scan_id: int
+    resume_scan_id: int | None
     issues: list[ScanIssue]
     requested_floor: int
     scan_plan: Any
@@ -103,10 +105,10 @@ class ScanContext:
     present_paths: set[str]
     streamed_path_keys: set[str]
     pending_discovered: list[VideoRecord]
-    pending_meta_rows: list[tuple[int, VideoMeta]]
-    pending_fp_rows: list[tuple[int, int, list[int]]]
+    pending_meta_rows: list[tuple[int, int, int, VideoMeta]]
+    pending_fp_rows: list[tuple[int, int, int, int, list[int]]]
     pending_fp_provenance_rows: list[tuple[int, FrameDecodeBackendId, str]]
-    pending_probe_error_rows: list[tuple[int, str]]
+    pending_probe_error_rows: list[tuple[int, int, int, str]]
     scan_started_at: float
     stage_seconds: dict[str, float]
     flush_count: int
@@ -117,6 +119,8 @@ class ScanContext:
     last_pending_write_at: float
     last_discovered_batch_at: float
     cached_files: int
+    resume_cache_hits: int
+    resume_reprocessed_files: int
     fingerprinted_files: int
     prepared_files: int
     discovered_files: int
@@ -344,6 +348,7 @@ def create_context(
         progress_emit_interval_s=runtime_settings.progress_emit_interval_s,
         progress_emit_every_files=runtime_settings.progress_emit_every_files,
         scan_id=scan_id,
+        resume_scan_id=resume_scan_id,
         issues=[],
         requested_floor=runtime_settings.requested_floor,
         scan_plan=scan_plan,
@@ -379,6 +384,8 @@ def create_context(
         last_pending_write_at=started_at,
         last_discovered_batch_at=started_at,
         cached_files=0,
+        resume_cache_hits=0,
+        resume_reprocessed_files=0,
         fingerprinted_files=0,
         prepared_files=0,
         discovered_files=0,

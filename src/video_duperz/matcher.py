@@ -32,25 +32,9 @@ def aspect_bin(width: int, height: int) -> float:
     return round((width / height) * 4) / 4.0
 
 
-def resolution_bin(width: int, height: int) -> int:
-    """Bucket resolutions by approximate quarter-megapixel increments."""
-    pixels = max(0, int(width) * int(height))
-    if pixels <= 0:
-        return 0
-    return round(pixels / 250_000)
-
-
-def fps_bin(value: float) -> float:
-    """Bucket frame rates into half-frame-per-second increments."""
-    fps = float(value)
-    if fps <= 0:
-        return 0.0
-    return round(fps * 2.0) / 2.0
-
-
-def duration_half_sec(duration_s: float) -> int:
-    """Bucket durations into half-second increments."""
-    return round(max(0.0, float(duration_s)) * 2.0)
+def duration_bucket(duration_s: float) -> int:
+    """Bucket durations into coarse five-second windows for candidate lookup."""
+    return round(max(0.0, float(duration_s)) / 5.0)
 
 
 def _prefilter_hamming_median(a: list[int], b: list[int]) -> float:
@@ -63,7 +47,7 @@ def _prefilter_hamming_median(a: list[int], b: list[int]) -> float:
 
 
 def _is_candidate(a: MatchItem, b: MatchItem) -> bool:
-    if abs(a.duration_s - b.duration_s) > 2.0:
+    if abs(a.duration_s - b.duration_s) > 3.0:
         return False
     shortest = min(a.duration_s, b.duration_s)
     longest = max(a.duration_s, b.duration_s)
@@ -84,14 +68,12 @@ def find_duplicate_edges(
 ) -> tuple[list[DuplicateEdge], MatchStats]:
     """Find likely duplicate pairs by bucketing and comparing match items."""
     threshold = PROFILE_THRESHOLD.get(profile, PROFILE_THRESHOLD["balanced"])
-    buckets: dict[tuple[int, float, int, float], list[MatchItem]] = defaultdict(list)
+    buckets: dict[tuple[int, float], list[MatchItem]] = defaultdict(list)
     for item in items:
         buckets[
             (
-                duration_half_sec(item.duration_s),
+                duration_bucket(item.duration_s),
                 aspect_bin(item.width, item.height),
-                resolution_bin(item.width, item.height),
-                fps_bin(item.fps),
             )
         ].append(item)
 

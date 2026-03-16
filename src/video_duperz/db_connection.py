@@ -18,7 +18,7 @@ from .scan_sets import (
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 9
 
 
 class DatabaseConnectionMixin:
@@ -144,6 +144,9 @@ class DatabaseConnectionMixin:
             CREATE TABLE IF NOT EXISTS video_meta(
               file_id INTEGER NOT NULL,
               probe_backend TEXT NOT NULL DEFAULT 'pyav',
+              probed_at TEXT NOT NULL,
+              source_size INTEGER NOT NULL,
+              source_mtime_ns INTEGER NOT NULL,
               duration_s REAL NOT NULL,
               width INTEGER NOT NULL,
               height INTEGER NOT NULL,
@@ -166,6 +169,8 @@ class DatabaseConnectionMixin:
             CREATE TABLE IF NOT EXISTS fingerprints(
               file_id INTEGER NOT NULL,
               probe_backend TEXT NOT NULL DEFAULT 'pyav',
+              source_size INTEGER NOT NULL,
+              source_mtime_ns INTEGER NOT NULL,
               algo_version INTEGER NOT NULL,
               frame_count INTEGER NOT NULL,
               hash_blob BLOB NOT NULL,
@@ -287,6 +292,9 @@ class DatabaseConnectionMixin:
                 CREATE TABLE video_meta_new(
                   file_id INTEGER NOT NULL,
                   probe_backend TEXT NOT NULL DEFAULT 'pyav',
+                  probed_at TEXT NOT NULL,
+                  source_size INTEGER NOT NULL,
+                  source_mtime_ns INTEGER NOT NULL,
                   duration_s REAL NOT NULL,
                   width INTEGER NOT NULL,
                   height INTEGER NOT NULL,
@@ -304,7 +312,8 @@ class DatabaseConnectionMixin:
                   FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
                 );
                 INSERT INTO video_meta_new(
-                  file_id, probe_backend, duration_s, width, height, fps,
+                  file_id, probe_backend, probed_at, source_size, source_mtime_ns,
+                  duration_s, width, height, fps,
                   codec, bitrate, has_audio, audio_codec, audio_bitrate,
                   audio_languages,
                   subtitle_languages, is_hdr, probe_error
@@ -315,6 +324,12 @@ class DatabaseConnectionMixin:
                     WHEN TRIM(COALESCE(probe_backend, '')) = '' THEN 'ffprobe'
                     ELSE probe_backend
                   END,
+                  CASE
+                    WHEN TRIM(COALESCE(probed_at, '')) = '' THEN CURRENT_TIMESTAMP
+                    ELSE probed_at
+                  END,
+                  source_size,
+                  source_mtime_ns,
                   duration_s,
                   width,
                   height,
@@ -349,6 +364,8 @@ class DatabaseConnectionMixin:
                 CREATE TABLE fingerprints_new(
                   file_id INTEGER NOT NULL,
                   probe_backend TEXT NOT NULL DEFAULT 'pyav',
+                  source_size INTEGER NOT NULL,
+                  source_mtime_ns INTEGER NOT NULL,
                   algo_version INTEGER NOT NULL,
                   frame_count INTEGER NOT NULL,
                   hash_blob BLOB NOT NULL,
@@ -357,7 +374,8 @@ class DatabaseConnectionMixin:
                   FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
                 );
                 INSERT INTO fingerprints_new(
-                  file_id, probe_backend, algo_version, frame_count,
+                  file_id, probe_backend, source_size, source_mtime_ns,
+                  algo_version, frame_count,
                   hash_blob, created_at
                 )
                 SELECT
@@ -366,6 +384,8 @@ class DatabaseConnectionMixin:
                     WHEN TRIM(COALESCE(probe_backend, '')) = '' THEN 'ffprobe'
                     ELSE probe_backend
                   END,
+                  source_size,
+                  source_mtime_ns,
                   algo_version,
                   frame_count,
                   hash_blob,
@@ -391,9 +411,45 @@ class DatabaseConnectionMixin:
                 "ALTER TABLE video_meta ADD COLUMN probe_backend TEXT NOT NULL "
                 "DEFAULT 'ffprobe'"
             )
+        if "probed_at" not in columns:
+            self.conn.execute(
+                "ALTER TABLE video_meta ADD COLUMN probed_at TEXT NOT NULL DEFAULT ''"
+            )
+        if "source_size" not in columns:
+            self.conn.execute(
+                "ALTER TABLE video_meta ADD COLUMN source_size INTEGER NOT NULL "
+                "DEFAULT 0"
+            )
+        if "source_mtime_ns" not in columns:
+            self.conn.execute(
+                "ALTER TABLE video_meta ADD COLUMN source_mtime_ns INTEGER NOT NULL "
+                "DEFAULT 0"
+            )
         self.conn.execute(
             "UPDATE video_meta SET probe_backend = 'ffprobe' "
             "WHERE TRIM(COALESCE(probe_backend, '')) = ''"
+        )
+        self.conn.execute(
+            "UPDATE video_meta SET probed_at = CURRENT_TIMESTAMP "
+            "WHERE TRIM(COALESCE(probed_at, '')) = ''"
+        )
+        self.conn.execute(
+            """
+            UPDATE video_meta
+            SET source_size = (
+              SELECT f.size FROM files f WHERE f.id = video_meta.file_id
+            )
+            WHERE source_size = 0
+            """
+        )
+        self.conn.execute(
+            """
+            UPDATE video_meta
+            SET source_mtime_ns = (
+              SELECT f.mtime_ns FROM files f WHERE f.id = video_meta.file_id
+            )
+            WHERE source_mtime_ns = 0
+            """
         )
         if "audio_codec" not in columns:
             self.conn.execute(
@@ -427,9 +483,37 @@ class DatabaseConnectionMixin:
                 "ALTER TABLE fingerprints "
                 "ADD COLUMN probe_backend TEXT NOT NULL DEFAULT 'ffprobe'"
             )
+        if "source_size" not in fp_columns:
+            self.conn.execute(
+                "ALTER TABLE fingerprints ADD COLUMN source_size INTEGER NOT NULL "
+                "DEFAULT 0"
+            )
+        if "source_mtime_ns" not in fp_columns:
+            self.conn.execute(
+                "ALTER TABLE fingerprints ADD COLUMN source_mtime_ns "
+                "INTEGER NOT NULL DEFAULT 0"
+            )
         self.conn.execute(
             "UPDATE fingerprints SET probe_backend = 'ffprobe' "
             "WHERE TRIM(COALESCE(probe_backend, '')) = ''"
+        )
+        self.conn.execute(
+            """
+            UPDATE fingerprints
+            SET source_size = (
+              SELECT f.size FROM files f WHERE f.id = fingerprints.file_id
+            )
+            WHERE source_size = 0
+            """
+        )
+        self.conn.execute(
+            """
+            UPDATE fingerprints
+            SET source_mtime_ns = (
+              SELECT f.mtime_ns FROM files f WHERE f.id = fingerprints.file_id
+            )
+            WHERE source_mtime_ns = 0
+            """
         )
 
     def _ensure_scan_columns(self) -> None:

@@ -54,6 +54,9 @@ def collect_metrics(ctx: _ScanContext, match_stats: MatchStats) -> dict[str, obj
         "flush_count": int(ctx.flush_count),
         "avg_rows_per_flush": float(avg_rows_per_flush),
         "max_queue_depth": int(ctx.max_queue_depth),
+        "resume_scan_id": ctx.resume_scan_id,
+        "resume_cache_hits": int(ctx.resume_cache_hits),
+        "resume_reprocessed_files": int(ctx.resume_reprocessed_files),
     }
 
 

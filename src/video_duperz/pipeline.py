@@ -213,6 +213,7 @@ def run_scan(
         profile=profile,
         max_workers=max_workers,
         drive_worker_overrides=drive_worker_overrides,
+        probe_backend=probe_backend,
         probe_worker_mode=probe_worker_mode,
         db_batch_size=db_batch_size,
         db_flush_interval_ms=db_flush_interval_ms,

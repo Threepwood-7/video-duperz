@@ -5,7 +5,7 @@ from collections import defaultdict
 from threading import Event, Lock
 from types import SimpleNamespace
 
-from video_duperz import pipeline
+from video_duperz import pipeline, pipeline_runtime, pipeline_runtime_control
 from video_duperz.db import Database
 from video_duperz.models import MatchStats, ScanProgress, VideoMeta, VideoRecord
 
@@ -85,7 +85,7 @@ class _FakeDb:
 
     def save_probe_errors_batch(
         self,
-        rows: list[tuple[int, str]],
+        rows: list[tuple[int, int, int, str]],
         *,
         probe_backend: str = "pyav",
     ) -> None:
@@ -103,7 +103,7 @@ class _FakeDb:
 
     def save_video_meta_batch(
         self,
-        rows: list[tuple[int, object]],
+        rows: list[tuple[int, int, int, object]],
         *,
         probe_backend: str = "pyav",
     ) -> None:
@@ -121,7 +121,7 @@ class _FakeDb:
 
     def save_fingerprints_batch(
         self,
-        rows: list[tuple[int, int, list[int]]],
+        rows: list[tuple[int, int, int, int, list[int]]],
         *,
         probe_backend: str = "pyav",
     ) -> None:
@@ -184,6 +184,64 @@ def _video(path: str, lane: int) -> VideoRecord:
         source_root=f"root-{lane}",
         parallel_lane=lane,
     )
+
+
+def _video_with_stats(
+    path: str,
+    lane: int,
+    *,
+    size: int = 10,
+    mtime_ns: int = 1,
+) -> VideoRecord:
+    return VideoRecord(
+        path=path,
+        size=size,
+        mtime_ns=mtime_ns,
+        ctime_ns=mtime_ns,
+        ext="mp4",
+        scan_id=17,
+        source_root=f"root-{lane}",
+        parallel_lane=lane,
+    )
+
+
+def _analysis_meta() -> VideoMeta:
+    return VideoMeta(
+        duration_s=1.0,
+        width=1920,
+        height=1080,
+        fps=24.0,
+        codec="h264",
+        bitrate=1000,
+        has_audio=True,
+        audio_codec="aac",
+        audio_bitrate=128000,
+        audio_languages="eng",
+        subtitle_languages="",
+        is_hdr=False,
+    )
+
+
+def _analysis_timestamps(
+    db: Database,
+    path: str,
+    *,
+    probe_backend: str = "ffprobe",
+) -> tuple[str, str]:
+    row = db.conn.execute(
+        """
+        SELECT vm.probed_at, fp.created_at
+        FROM files f
+        JOIN video_meta vm
+          ON vm.file_id = f.id AND vm.probe_backend = ?
+        JOIN fingerprints fp
+          ON fp.file_id = f.id AND fp.probe_backend = ?
+        WHERE f.path = ?
+        """,
+        (probe_backend, probe_backend, path),
+    ).fetchone()
+    assert row is not None
+    return (str(row["probed_at"]), str(row["created_at"]))
 
 
 def _lane_plan_for_roots(
@@ -788,3 +846,551 @@ def test_run_scan_pause_and_resume_keeps_same_scan_id(
         assert resumed.scan_id == paused.scan_id
         assert db.scan_summary(paused.scan_id)["status"] == "done"
         assert resumed.cached_files >= 1
+
+
+def test_resume_skips_unchanged_files_and_preserves_analysis_timestamps(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    first = _video_with_stats(str(tmp_path / "cached.mp4"), lane=0, mtime_ns=11)
+    second = _video_with_stats(str(tmp_path / "pending.mp4"), lane=0, mtime_ns=22)
+    current_files = [first, second]
+    enumerate_round = 0
+    pause_event = Event()
+    analyze_calls: list[tuple[str, bool]] = []
+
+    monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
+    monkeypatch.setattr(
+        pipeline, "ensure_fingerprint_fallback_chain_available", lambda: None
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_physical_drive_scan_plan",
+        lambda roots, max_workers, drive_worker_overrides=None: _lane_plan_for_roots(
+            roots,
+            lane_worker_limits={0: 1},
+        ),
+    )
+
+    def _fake_enumerate(**kwargs):
+        nonlocal enumerate_round
+        on_file_discovered = kwargs.get("on_file_discovered")
+        assert callable(on_file_discovered)
+        enumerate_round += 1
+        emitted = [first] if enumerate_round == 1 else list(current_files)
+        for item in emitted:
+            on_file_discovered(item)
+        return emitted, []
+
+    def _fake_analyze(path: str, cached_meta: object | None) -> pipeline._AnalyzeOutput:
+        analyze_calls.append((path, cached_meta is not None))
+        time.sleep(0.01)
+        return pipeline._AnalyzeOutput(meta=_analysis_meta(), hashes=[11, 22, 33, 44])
+
+    def _pause_after_first_probe(step: ScanProgress) -> None:
+        if step.stage == "probe" and step.current >= 1:
+            pause_event.set()
+
+    monkeypatch.setattr(pipeline, "enumerate_video_files", _fake_enumerate)
+    monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)
+
+    with Database(tmp_path / "resume-cache.db") as db:
+        paused = pipeline.run_scan(
+            db=db,
+            roots=[str(tmp_path)],
+            extensions=["mp4"],
+            max_workers=1,
+            probe_backend="ffprobe",
+            probe_worker_mode="balanced",
+            db_batch_size=32,
+            db_flush_interval_ms=50,
+            enum_queue_max=256,
+            progress_emit_interval_ms=50,
+            progress_emit_every_files=1,
+            pause_event=pause_event,
+            progress_cb=_pause_after_first_probe,
+        )
+
+        assert paused.scan_id > 0
+        assert analyze_calls == [(first.path, False)]
+        first_timestamps_before = _analysis_timestamps(db, first.path)
+
+        pause_event.clear()
+        analyze_calls.clear()
+
+        resumed = pipeline.run_scan(
+            db=db,
+            roots=[str(tmp_path)],
+            extensions=["mp4"],
+            max_workers=1,
+            probe_backend="ffprobe",
+            probe_worker_mode="balanced",
+            db_batch_size=32,
+            db_flush_interval_ms=50,
+            enum_queue_max=256,
+            progress_emit_interval_ms=50,
+            progress_emit_every_files=1,
+            resume_scan_id=paused.scan_id,
+        )
+
+        assert resumed.scan_id == paused.scan_id
+        assert analyze_calls == [(second.path, False)]
+        assert resumed.metrics["resume_cache_hits"] == 1
+        assert resumed.metrics["resume_reprocessed_files"] == 1
+        assert _analysis_timestamps(db, first.path) == first_timestamps_before
+
+
+def test_resume_reprocesses_when_file_stat_changes(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    file_path = str(tmp_path / "changed.mp4")
+    current_file = _video_with_stats(file_path, lane=0, size=10, mtime_ns=11)
+    pause_event = Event()
+    analyze_calls: list[tuple[str, bool]] = []
+
+    monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
+    monkeypatch.setattr(
+        pipeline, "ensure_fingerprint_fallback_chain_available", lambda: None
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_physical_drive_scan_plan",
+        lambda roots, max_workers, drive_worker_overrides=None: _lane_plan_for_roots(
+            roots,
+            lane_worker_limits={0: 1},
+        ),
+    )
+
+    def _fake_enumerate(**kwargs):
+        on_file_discovered = kwargs.get("on_file_discovered")
+        assert callable(on_file_discovered)
+        on_file_discovered(current_file)
+        return [current_file], []
+
+    def _fake_analyze(path: str, cached_meta: object | None) -> pipeline._AnalyzeOutput:
+        analyze_calls.append((path, cached_meta is not None))
+        time.sleep(0.01)
+        return pipeline._AnalyzeOutput(meta=_analysis_meta(), hashes=[11, 22, 33, 44])
+
+    def _pause_after_first_probe(step: ScanProgress) -> None:
+        if step.stage == "probe" and step.current >= 1:
+            pause_event.set()
+
+    monkeypatch.setattr(pipeline, "enumerate_video_files", _fake_enumerate)
+    monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)
+
+    with Database(tmp_path / "resume-changed.db") as db:
+        paused = pipeline.run_scan(
+            db=db,
+            roots=[str(tmp_path)],
+            extensions=["mp4"],
+            max_workers=1,
+            probe_backend="ffprobe",
+            probe_worker_mode="balanced",
+            db_batch_size=32,
+            db_flush_interval_ms=50,
+            enum_queue_max=256,
+            progress_emit_interval_ms=50,
+            progress_emit_every_files=1,
+            pause_event=pause_event,
+            progress_cb=_pause_after_first_probe,
+        )
+
+        initial_timestamps = _analysis_timestamps(db, file_path)
+        pause_event.clear()
+        analyze_calls.clear()
+        time.sleep(0.01)
+        current_file = _video_with_stats(file_path, lane=0, size=10, mtime_ns=22)
+
+        resumed = pipeline.run_scan(
+            db=db,
+            roots=[str(tmp_path)],
+            extensions=["mp4"],
+            max_workers=1,
+            probe_backend="ffprobe",
+            probe_worker_mode="balanced",
+            db_batch_size=32,
+            db_flush_interval_ms=50,
+            enum_queue_max=256,
+            progress_emit_interval_ms=50,
+            progress_emit_every_files=1,
+            resume_scan_id=paused.scan_id,
+        )
+
+        assert resumed.scan_id == paused.scan_id
+        assert analyze_calls == [(file_path, False)]
+        assert resumed.metrics["resume_cache_hits"] == 0
+        assert resumed.metrics["resume_reprocessed_files"] == 1
+        assert _analysis_timestamps(db, file_path) != initial_timestamps
+
+
+def test_resume_reprocesses_when_file_size_changes(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    file_path = str(tmp_path / "changed-size.mp4")
+    current_file = _video_with_stats(file_path, lane=0, size=10, mtime_ns=11)
+    pause_event = Event()
+    analyze_calls: list[tuple[str, bool]] = []
+
+    monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
+    monkeypatch.setattr(
+        pipeline, "ensure_fingerprint_fallback_chain_available", lambda: None
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_physical_drive_scan_plan",
+        lambda roots, max_workers, drive_worker_overrides=None: _lane_plan_for_roots(
+            roots,
+            lane_worker_limits={0: 1},
+        ),
+    )
+
+    def _fake_enumerate(**kwargs):
+        on_file_discovered = kwargs.get("on_file_discovered")
+        assert callable(on_file_discovered)
+        on_file_discovered(current_file)
+        return [current_file], []
+
+    def _fake_analyze(path: str, cached_meta: object | None) -> pipeline._AnalyzeOutput:
+        analyze_calls.append((path, cached_meta is not None))
+        return pipeline._AnalyzeOutput(meta=_analysis_meta(), hashes=[11, 22, 33, 44])
+
+    def _pause_after_first_probe(step: ScanProgress) -> None:
+        if step.stage == "probe" and step.current >= 1:
+            pause_event.set()
+
+    monkeypatch.setattr(pipeline, "enumerate_video_files", _fake_enumerate)
+    monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)
+
+    with Database(tmp_path / "resume-size.db") as db:
+        paused = pipeline.run_scan(
+            db=db,
+            roots=[str(tmp_path)],
+            extensions=["mp4"],
+            max_workers=1,
+            probe_backend="ffprobe",
+            probe_worker_mode="balanced",
+            db_batch_size=32,
+            db_flush_interval_ms=50,
+            enum_queue_max=256,
+            progress_emit_interval_ms=50,
+            progress_emit_every_files=1,
+            pause_event=pause_event,
+            progress_cb=_pause_after_first_probe,
+        )
+
+        initial_timestamps = _analysis_timestamps(db, file_path)
+        pause_event.clear()
+        analyze_calls.clear()
+        time.sleep(0.01)
+        current_file = _video_with_stats(file_path, lane=0, size=99, mtime_ns=11)
+
+        resumed = pipeline.run_scan(
+            db=db,
+            roots=[str(tmp_path)],
+            extensions=["mp4"],
+            max_workers=1,
+            probe_backend="ffprobe",
+            probe_worker_mode="balanced",
+            db_batch_size=32,
+            db_flush_interval_ms=50,
+            enum_queue_max=256,
+            progress_emit_interval_ms=50,
+            progress_emit_every_files=1,
+            resume_scan_id=paused.scan_id,
+        )
+
+        assert resumed.scan_id == paused.scan_id
+        assert analyze_calls == [(file_path, False)]
+        assert resumed.metrics["resume_cache_hits"] == 0
+        assert resumed.metrics["resume_reprocessed_files"] == 1
+        assert _analysis_timestamps(db, file_path) != initial_timestamps
+
+
+def test_resume_reprocesses_partial_cached_state_without_reprobing(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    file_path = str(tmp_path / "partial.mp4")
+    record = _video_with_stats(file_path, lane=0, size=10, mtime_ns=11)
+
+    monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
+    monkeypatch.setattr(
+        pipeline, "ensure_fingerprint_fallback_chain_available", lambda: None
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_physical_drive_scan_plan",
+        lambda roots, max_workers, drive_worker_overrides=None: _lane_plan_for_roots(
+            roots,
+            lane_worker_limits={0: 1},
+        ),
+    )
+
+    def _fake_enumerate(**kwargs):
+        on_file_discovered = kwargs.get("on_file_discovered")
+        assert callable(on_file_discovered)
+        on_file_discovered(record)
+        return [record], []
+
+    analyze_calls: list[tuple[str, bool]] = []
+
+    def _fake_analyze(path: str, cached_meta: object | None) -> pipeline._AnalyzeOutput:
+        analyze_calls.append((path, cached_meta is not None))
+        return pipeline._AnalyzeOutput(meta=_analysis_meta(), hashes=[11, 22, 33, 44])
+
+    monkeypatch.setattr(pipeline, "enumerate_video_files", _fake_enumerate)
+    monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)
+
+    with Database(tmp_path / "resume-partial.db") as db:
+        scan_id = db.create_scan(
+            profile="balanced",
+            roots=[str(tmp_path)],
+            extensions=["mp4"],
+            probe_backend="ffprobe",
+        )
+        file_id = db.upsert_file(
+            path=file_path,
+            size=10,
+            mtime_ns=11,
+            ctime_ns=11,
+            ext="mp4",
+            scan_id=scan_id,
+        )
+        db.save_video_meta(file_id, _analysis_meta(), probe_backend="ffprobe")
+        probe_timestamp_before = db.conn.execute(
+            """
+            SELECT probed_at
+            FROM video_meta
+            WHERE file_id = ? AND probe_backend = 'ffprobe'
+            """,
+            (file_id,),
+        ).fetchone()
+        assert probe_timestamp_before is not None
+        db.complete_scan(scan_id, status="paused")
+
+        resumed = pipeline.run_scan(
+            db=db,
+            roots=[str(tmp_path)],
+            extensions=["mp4"],
+            max_workers=1,
+            probe_backend="ffprobe",
+            probe_worker_mode="balanced",
+            db_batch_size=32,
+            db_flush_interval_ms=50,
+            enum_queue_max=256,
+            progress_emit_interval_ms=50,
+            progress_emit_every_files=1,
+            resume_scan_id=scan_id,
+        )
+
+        probe_timestamp_after = db.conn.execute(
+            """
+            SELECT probed_at
+            FROM video_meta
+            WHERE file_id = ? AND probe_backend = 'ffprobe'
+            """,
+            (file_id,),
+        ).fetchone()
+        fingerprint_row = db.conn.execute(
+            """
+            SELECT created_at
+            FROM fingerprints
+            WHERE file_id = ? AND probe_backend = 'ffprobe'
+            """,
+            (file_id,),
+        ).fetchone()
+        assert resumed.scan_id == scan_id
+        assert analyze_calls == [(file_path, True)]
+        assert resumed.metrics["resume_cache_hits"] == 0
+        assert resumed.metrics["resume_reprocessed_files"] == 1
+        assert probe_timestamp_after is not None
+        assert fingerprint_row is not None
+        assert str(probe_timestamp_before["probed_at"]) == str(
+            probe_timestamp_after["probed_at"]
+        )
+
+
+def test_resume_reprocesses_when_fingerprint_algo_version_changes(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    file_path = str(tmp_path / "algo-shift.mp4")
+    record = _video_with_stats(file_path, lane=0, size=10, mtime_ns=11)
+    pause_event = Event()
+    analyze_calls: list[tuple[str, bool]] = []
+
+    monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
+    monkeypatch.setattr(
+        pipeline, "ensure_fingerprint_fallback_chain_available", lambda: None
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_physical_drive_scan_plan",
+        lambda roots, max_workers, drive_worker_overrides=None: _lane_plan_for_roots(
+            roots,
+            lane_worker_limits={0: 1},
+        ),
+    )
+
+    def _fake_enumerate(**kwargs):
+        on_file_discovered = kwargs.get("on_file_discovered")
+        assert callable(on_file_discovered)
+        on_file_discovered(record)
+        return [record], []
+
+    def _fake_analyze(path: str, cached_meta: object | None) -> pipeline._AnalyzeOutput:
+        analyze_calls.append((path, cached_meta is not None))
+        return pipeline._AnalyzeOutput(meta=_analysis_meta(), hashes=[11, 22, 33, 44])
+
+    def _pause_after_first_probe(step: ScanProgress) -> None:
+        if step.stage == "probe" and step.current >= 1:
+            pause_event.set()
+
+    monkeypatch.setattr(pipeline, "enumerate_video_files", _fake_enumerate)
+    monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)
+
+    with Database(tmp_path / "resume-algo.db") as db:
+        paused = pipeline.run_scan(
+            db=db,
+            roots=[str(tmp_path)],
+            extensions=["mp4"],
+            max_workers=1,
+            probe_backend="ffprobe",
+            probe_worker_mode="balanced",
+            db_batch_size=32,
+            db_flush_interval_ms=50,
+            enum_queue_max=256,
+            progress_emit_interval_ms=50,
+            progress_emit_every_files=1,
+            pause_event=pause_event,
+            progress_cb=_pause_after_first_probe,
+        )
+
+        pause_event.clear()
+        analyze_calls.clear()
+        monkeypatch.setattr(pipeline_runtime, "ALGO_VERSION", 9_999)
+        monkeypatch.setattr(pipeline_runtime_control, "ALGO_VERSION", 9_999)
+
+        resumed = pipeline.run_scan(
+            db=db,
+            roots=[str(tmp_path)],
+            extensions=["mp4"],
+            max_workers=1,
+            probe_backend="ffprobe",
+            probe_worker_mode="balanced",
+            db_batch_size=32,
+            db_flush_interval_ms=50,
+            enum_queue_max=256,
+            progress_emit_interval_ms=50,
+            progress_emit_every_files=1,
+            resume_scan_id=paused.scan_id,
+        )
+
+        assert resumed.scan_id == paused.scan_id
+        assert analyze_calls == [(file_path, True)]
+        assert resumed.metrics["resume_cache_hits"] == 0
+        assert resumed.metrics["resume_reprocessed_files"] == 1
+
+
+def test_resume_keeps_duplicate_groups_correct_after_pause(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    first_a = _video_with_stats(str(tmp_path / "pair-a-01.mp4"), lane=0, mtime_ns=11)
+    second_a = _video_with_stats(str(tmp_path / "pair-a-02.mp4"), lane=0, mtime_ns=12)
+    first_b = _video_with_stats(str(tmp_path / "pair-b-01.mp4"), lane=0, mtime_ns=21)
+    second_b = _video_with_stats(str(tmp_path / "pair-b-02.mp4"), lane=0, mtime_ns=22)
+    current_files = [first_a, second_a, first_b, second_b]
+    enumerate_round = 0
+    pause_event = Event()
+    analyze_calls: list[str] = []
+    hash_by_path = {
+        first_a.path: [0x0000000000000000] * 6,
+        second_a.path: [0x0000000000000000] * 6,
+        first_b.path: [0xFFFFFFFFFFFFFFFF] * 6,
+        second_b.path: [0xFFFFFFFFFFFFFFFF] * 6,
+    }
+
+    monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
+    monkeypatch.setattr(
+        pipeline, "ensure_fingerprint_fallback_chain_available", lambda: None
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_physical_drive_scan_plan",
+        lambda roots, max_workers, drive_worker_overrides=None: _lane_plan_for_roots(
+            roots,
+            lane_worker_limits={0: 1},
+        ),
+    )
+
+    def _fake_enumerate(**kwargs):
+        nonlocal enumerate_round
+        on_file_discovered = kwargs.get("on_file_discovered")
+        assert callable(on_file_discovered)
+        enumerate_round += 1
+        emitted = [first_a] if enumerate_round == 1 else list(current_files)
+        for item in emitted:
+            on_file_discovered(item)
+        return emitted, []
+
+    def _fake_analyze(path: str, cached_meta: object | None) -> pipeline._AnalyzeOutput:
+        analyze_calls.append(path)
+        return pipeline._AnalyzeOutput(
+            meta=_analysis_meta(),
+            hashes=hash_by_path[path],
+        )
+
+    def _pause_after_first_probe(step: ScanProgress) -> None:
+        if step.stage == "probe" and step.current >= 1:
+            pause_event.set()
+
+    monkeypatch.setattr(pipeline, "enumerate_video_files", _fake_enumerate)
+    monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)
+
+    with Database(tmp_path / "resume-duplicates.db") as db:
+        paused = pipeline.run_scan(
+            db=db,
+            roots=[str(tmp_path)],
+            extensions=["mp4"],
+            max_workers=1,
+            probe_backend="ffprobe",
+            probe_worker_mode="balanced",
+            db_batch_size=32,
+            db_flush_interval_ms=50,
+            enum_queue_max=256,
+            progress_emit_interval_ms=50,
+            progress_emit_every_files=1,
+            pause_event=pause_event,
+            progress_cb=_pause_after_first_probe,
+        )
+
+        assert analyze_calls == [first_a.path]
+        pause_event.clear()
+        analyze_calls.clear()
+
+        resumed = pipeline.run_scan(
+            db=db,
+            roots=[str(tmp_path)],
+            extensions=["mp4"],
+            max_workers=1,
+            probe_backend="ffprobe",
+            probe_worker_mode="balanced",
+            db_batch_size=32,
+            db_flush_interval_ms=50,
+            enum_queue_max=256,
+            progress_emit_interval_ms=50,
+            progress_emit_every_files=1,
+            resume_scan_id=paused.scan_id,
+        )
+
+        path_groups = {
+            frozenset(item.path for item in group.items) for group in resumed.groups
+        }
+        assert resumed.scan_id == paused.scan_id
+        assert resumed.metrics["resume_cache_hits"] == 1
+        assert frozenset({first_a.path, second_a.path}) in path_groups
+        assert frozenset({first_b.path, second_b.path}) in path_groups

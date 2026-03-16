@@ -47,6 +47,11 @@ def test_db_migration_backfills_scan_set_columns(tmp_path: Path) -> None:
         assert str(row["scan_set_key"])
         assert str(row["extensions_json"]) == "[]"
         assert str(row["probe_backend"]) == "ffprobe"
+        video_meta_cols = {
+            str(row["name"])
+            for row in db.conn.execute("PRAGMA table_info(video_meta)").fetchall()
+        }
+        assert "probed_at" in video_meta_cols
 
 
 def test_latest_scan_queries_by_scan_set() -> None:
@@ -323,6 +328,8 @@ def test_scan_batch_methods_roundtrip() -> None:
             [
                 (
                     file_a,
+                    10,
+                    11,
                     VideoMeta(
                         duration_s=12.0,
                         width=1920,
@@ -340,11 +347,11 @@ def test_scan_batch_methods_roundtrip() -> None:
                 )
             ]
         )
-        db.save_fingerprints_batch([(file_a, ALGO_VERSION, [1, 2, 3, 4])])
+        db.save_fingerprints_batch([(file_a, 10, 11, ALGO_VERSION, [1, 2, 3, 4])])
         db.save_fingerprint_provenance_batch(
             [(file_a, "pyav", '{"decoder_backend":"pyav"}')]
         )
-        db.save_probe_errors_batch([(file_b, "probe failed")])
+        db.save_probe_errors_batch([(file_b, 20, 22, "probe failed")])
 
         group = DuplicateGroup(
             scan_id=scan_id,
@@ -408,7 +415,9 @@ def test_scan_batch_methods_roundtrip() -> None:
         )
         assert "D:/Videos/a.mp4" in cached
         assert "meta" in cached["D:/Videos/a.mp4"]
+        assert cached["D:/Videos/a.mp4"]["meta_probed_at"]
         assert "fingerprint" in cached["D:/Videos/a.mp4"]
+        assert cached["D:/Videos/a.mp4"]["fingerprint_created_at"]
         assert cached["D:/Videos/a.mp4"]["fingerprint"]["algo_version"] == ALGO_VERSION
         provenance_row = db.conn.execute(
             """
@@ -501,3 +510,29 @@ def test_cached_artifacts_are_probe_backend_specific() -> None:
         assert pyav_cache["meta"].codec == "hevc"
         assert ffprobe_cache["fingerprint"]["hashes"] == [1, 2, 3, 4]
         assert pyav_cache["fingerprint"]["hashes"] == [9, 8, 7, 6]
+
+
+def test_probe_error_rows_do_not_count_as_cached_probe_metadata() -> None:
+    with Database(":memory:") as db:
+        scan_id = db.create_scan(
+            profile="balanced", roots=["D:/Videos"], extensions=["mp4"]
+        )
+        file_id = db.upsert_file(
+            path="D:/Videos/broken.mp4",
+            size=10,
+            mtime_ns=11,
+            ctime_ns=11,
+            ext="mp4",
+            scan_id=scan_id,
+        )
+
+        db.save_probe_error(file_id, "broken container", probe_backend="ffprobe")
+
+        cached = db.get_cached_artifacts(
+            "D:/Videos/broken.mp4",
+            size=10,
+            mtime_ns=11,
+            probe_backend="ffprobe",
+        )
+
+        assert cached is None

@@ -6,6 +6,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
 from functools import partial
 from queue import Empty, Full
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
@@ -66,6 +67,7 @@ if TYPE_CHECKING:
     from threading import Event
 
     from .db import Database
+    from .db_artifacts import CachedArtifacts as _CachedArtifacts
 
 ReturnT = TypeVar("ReturnT")
 P = ParamSpec("P")
@@ -73,6 +75,29 @@ _ScanPlanFn = Callable[..., Any]
 _EnumerateFn = Callable[..., tuple[list[VideoRecord], list[ScanIssue]]]
 _FindEdgesFn = Callable[..., tuple[Any, MatchStats]]
 _BuildGroupsFn = Callable[..., list[Any]]
+
+
+@dataclass(slots=True)
+class _CacheReuseDecision:
+    """Normalized cache decision for one discovered file."""
+
+    cached_meta: VideoMeta | None
+    skip_analysis: bool
+
+
+def _decide_cached_analysis(cache: _CachedArtifacts | None) -> _CacheReuseDecision:
+    """Return whether a file can fully reuse persisted analysis rows."""
+    if cache is None:
+        return _CacheReuseDecision(cached_meta=None, skip_analysis=False)
+    cached_meta = cache.get("meta")
+    cached_fp = cache.get("fingerprint")
+    if (
+        cached_meta is not None
+        and cached_fp is not None
+        and int(cached_fp["algo_version"]) == ALGO_VERSION
+    ):
+        return _CacheReuseDecision(cached_meta=cached_meta, skip_analysis=True)
+    return _CacheReuseDecision(cached_meta=cached_meta, skip_analysis=False)
 
 
 def _prepare_total_locked(ctx: _ScanContext) -> int:
@@ -377,27 +402,30 @@ def _process_discovered_batch(ctx: _ScanContext, batch: list[VideoRecord]) -> No
             continue
         file.file_id = file_id
         cache = cache_by_path.get(path)
-        if cache and "meta" in cache and "fingerprint" in cache:
-            fp = cache["fingerprint"]
-            if int(fp.get("algo_version", -1)) == ALGO_VERSION:
-                with ctx.state_lock:
-                    ctx.cached_files += 1
-                    lane_state = ensure_lane_state_locked(ctx, lane, source_root)
-                    lane_state.completed += 1
-                    refresh_lane_state_locked(ctx, lane)
-                continue
+        cache_decision = _decide_cached_analysis(cache)
+        if cache_decision.skip_analysis:
+            with ctx.state_lock:
+                ctx.cached_files += 1
+                if ctx.resume_scan_id is not None:
+                    ctx.resume_cache_hits += 1
+                lane_state = ensure_lane_state_locked(ctx, lane, source_root)
+                lane_state.completed += 1
+                refresh_lane_state_locked(ctx, lane)
+            continue
 
-        cached_meta = cache.get("meta") if cache else None
         task = _AnalyzeTask(
             file=file,
             file_id=file_id,
-            cached_meta=cached_meta,
+            cached_meta=cache_decision.cached_meta,
             lane=lane,
             source_root=source_root,
             path=path,
             size=file_size,
+            mtime_ns=int(getattr(file, "mtime_ns", 0)),
         )
         with ctx.state_lock:
+            if ctx.resume_scan_id is not None:
+                ctx.resume_reprocessed_files += 1
             ctx.lane_queues.setdefault(lane, deque()).append(task)
             lane_state = ensure_lane_state_locked(ctx, lane, source_root)
             lane_state.queued += 1
@@ -419,7 +447,9 @@ def _record_future_error(
     exc: Exception,
 ) -> None:
     if isinstance(exc, ProbeError):
-        ctx.pending_probe_error_rows.append((task.file_id, str(exc)))
+        ctx.pending_probe_error_rows.append(
+            (task.file_id, task.size, task.mtime_ns, str(exc))
+        )
         record_issue(ctx, ScanIssue(stage="probe", path=task.path, message=str(exc)))
         return
     if isinstance(exc, FingerprintError):
@@ -437,8 +467,12 @@ def _record_future_success(
     output: _AnalyzeOutputLike,
 ) -> None:
     if task.cached_meta is None:
-        ctx.pending_meta_rows.append((task.file_id, output.meta))
-    ctx.pending_fp_rows.append((task.file_id, ALGO_VERSION, output.hashes))
+        ctx.pending_meta_rows.append(
+            (task.file_id, task.size, task.mtime_ns, output.meta)
+        )
+    ctx.pending_fp_rows.append(
+        (task.file_id, task.size, task.mtime_ns, ALGO_VERSION, output.hashes)
+    )
     ctx.pending_fp_provenance_rows.append(
         (
             task.file_id,
