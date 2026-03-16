@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -87,7 +88,8 @@ class ScanView(QWidget):
         self.worker_progress.setVisible(False)
         self.io_stats_label = QLabel(
             "I/O Stats: discovered 0 @ 0.00/s, 0.00 MiB/s | analyzed 0 @ "
-            "0.00/s, 0.00 MiB/s | cache hit 0.0% | reused 0 | fp-only 0 | reprobe 0",
+            "0.00/s, 0.00 MiB/s | cache hit 0.0% | reused 0 | fp-only 0 | reprobe 0"
+            " | skipped failed 0",
             self,
         )
         self.lane_table = QTableWidget(0, 13, self)
@@ -152,6 +154,13 @@ class ScanView(QWidget):
         self.rescan_btn = QPushButton("Rescan", self)
         self.pause_btn = QPushButton("Pause Scan", self)
         self.resume_btn = QPushButton("Resume Scan", self)
+        self.retry_failed_checkbox = QCheckBox(
+            "Retry previously failed files (0)",
+            self,
+        )
+        self.retry_failed_checkbox.setChecked(True)
+        self.retry_failed_checkbox.setEnabled(False)
+        self.retry_failed_checkbox.setVisible(False)
         self.cancel_btn = QPushButton("Cancel Scan", self)
         self._apply_mode("idle")
 
@@ -166,6 +175,7 @@ class ScanView(QWidget):
         actions.addWidget(self.rescan_btn)
         actions.addWidget(self.pause_btn)
         actions.addWidget(self.resume_btn)
+        actions.addWidget(self.retry_failed_checkbox)
         actions.addWidget(self.cancel_btn)
         actions.addStretch(1)
 
@@ -260,6 +270,7 @@ class ScanView(QWidget):
         self.io_stats_label.setText(
             "I/O Stats: discovered 0 @ 0.00/s, 0.00 MiB/s | analyzed 0 @ "
             "0.00/s, 0.00 MiB/s | cache hit 0.0% | reused 0 | fp-only 0 | reprobe 0"
+            " | skipped failed 0"
         )
         self.lane_table.setRowCount(0)
         self.progress_list.clear()
@@ -268,6 +279,7 @@ class ScanView(QWidget):
         self._lane_rows = {}
         self._worker_limit = 0
         self._paused_loaded = False
+        self._set_retry_failed_state(visible=False, count=0, checked=True)
         self._apply_mode("idle")
 
     def initialize_lane_plan(
@@ -419,6 +431,7 @@ class ScanView(QWidget):
         cache_hits = int(progress.cached_files or 0)
         fingerprint_only = int(progress.fingerprint_only_files or 0)
         reprobes = int(progress.probe_and_fingerprint_files or 0)
+        skipped_failed = int(progress.skipped_failed_files or 0)
         self.io_stats_label.setText(
             "I/O Stats: "
             f"discovered {discovered_files} ({discovered_mib:.2f} MiB) @ "
@@ -426,7 +439,8 @@ class ScanView(QWidget):
             f"analyzed {analyzed_files} ({analyzed_mib:.2f} MiB) @ "
             f"{analyzed_fps:.2f}/s, {analyzed_mibps:.2f} MiB/s | "
             f"cache hit {cache_hit_ratio:.1f}% | reused {cache_hits} | "
-            f"fp-only {fingerprint_only} | reprobe {reprobes}"
+            f"fp-only {fingerprint_only} | reprobe {reprobes} | "
+            f"skipped failed {skipped_failed}"
         )
 
     def _display_counter_values(self, progress: ScanProgress) -> tuple[int, int]:
@@ -434,7 +448,7 @@ class ScanView(QWidget):
         if (
             progress.completed_files is not None
             and progress.total_work_files is not None
-            and progress.stage in {"cache", "fingerprint", "probe", "error"}
+            and progress.stage in {"cache", "fingerprint", "probe", "error", "skip"}
         ):
             return (
                 int(progress.completed_files),
@@ -456,10 +470,41 @@ class ScanView(QWidget):
         self._paused_loaded = bool(paused_loaded)
         if self._paused_loaded:
             self._apply_mode("paused")
+            self.retry_failed_checkbox.setVisible(True)
             if not self.status_label.text().strip():
                 self.status_label.setText("Paused")
             return
+        self._set_retry_failed_state(visible=False, count=0, checked=True)
         self._apply_mode("idle")
+
+    def _set_retry_failed_state(
+        self,
+        *,
+        visible: bool,
+        count: int,
+        checked: bool,
+    ) -> None:
+        """Update the paused-only failed-file retry checkbox state."""
+        retry_count = max(0, int(count))
+        self.retry_failed_checkbox.setText(
+            f"Retry previously failed files ({retry_count})"
+        )
+        self.retry_failed_checkbox.setChecked(bool(checked))
+        self.retry_failed_checkbox.setEnabled(retry_count > 0)
+        self.retry_failed_checkbox.setVisible(bool(visible))
+
+    def set_retry_failed_file_count(self, count: int) -> None:
+        """Show the failed-file retry checkbox for the loaded paused scan."""
+        self._set_retry_failed_state(visible=True, count=count, checked=True)
+
+    def retry_failed_files_enabled(self) -> bool:
+        """Return whether the next resume should retry prior failed files."""
+        if (
+            not self.retry_failed_checkbox.isVisible()
+            or not self.retry_failed_checkbox.isEnabled()
+        ):
+            return True
+        return self.retry_failed_checkbox.isChecked()
 
     def append_progress_note(
         self,

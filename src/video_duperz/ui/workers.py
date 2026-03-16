@@ -52,6 +52,7 @@ class ScanWorker(QRunnable):
         progress_emit_interval_ms: int = 200,
         progress_emit_every_files: int = 100,
         resume_scan_id: int | None = None,
+        retry_failed_files: bool = True,
     ) -> None:
         super().__init__()
         self.signals = ScanWorkerSignals()
@@ -75,6 +76,7 @@ class ScanWorker(QRunnable):
         self._resume_scan_id = (
             int(resume_scan_id) if resume_scan_id is not None else None
         )
+        self._retry_failed_files = bool(retry_failed_files)
         self._cancel = Event()
         self._pause = Event()
 
@@ -109,6 +111,7 @@ class ScanWorker(QRunnable):
                     progress_cb=lambda p: self.signals.progress.emit(p),
                     issue_cb=lambda issue: self.signals.issue.emit(issue),
                     resume_scan_id=self._resume_scan_id,
+                    retry_failed_files=self._retry_failed_files,
                 )
             self.signals.finished.emit(result)
         except Exception:

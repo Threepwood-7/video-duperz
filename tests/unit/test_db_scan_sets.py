@@ -52,6 +52,13 @@ def test_db_migration_backfills_scan_set_columns(tmp_path: Path) -> None:
             for row in db.conn.execute("PRAGMA table_info(video_meta)").fetchall()
         }
         assert "probed_at" in video_meta_cols
+        failed_cols = {
+            str(row["name"])
+            for row in db.conn.execute(
+                "PRAGMA table_info(scan_failed_files)"
+            ).fetchall()
+        }
+        assert "normalized_path" in failed_cols
 
 
 def test_latest_scan_queries_by_scan_set() -> None:
@@ -204,6 +211,51 @@ def test_scan_issue_rows_persist_and_list_for_paused_scans() -> None:
         assert [issue.stage for issue in issues] == ["probe", "enumerate"]
         assert issues[0].path == "D:/Videos/bad.mp4"
         assert issues[1].message == "worker cap reduced"
+
+
+def test_failed_file_rows_persist_clear_and_ignore_non_file_issues() -> None:
+    with Database(":memory:") as db:
+        scan_id = db.create_scan(
+            profile="balanced",
+            roots=["D:/Videos"],
+            extensions=["mp4"],
+        )
+
+        db.upsert_failed_file(
+            scan_id,
+            ScanIssue(
+                stage="probe",
+                path="D:/Videos/bad.mp4",
+                message="invalid stream metadata",
+            ),
+        )
+        db.upsert_failed_file(
+            scan_id,
+            ScanIssue(
+                stage="fingerprint",
+                path="d:/videos/BAD.mp4",
+                message="decoder timeout",
+            ),
+        )
+        db.upsert_failed_file(
+            scan_id,
+            ScanIssue(stage="enumerate", path="", message="worker cap reduced"),
+        )
+
+        failed_rows = db.list_failed_files(scan_id)
+
+        assert db.count_failed_files(scan_id) == 1
+        assert len(failed_rows) == 1
+        assert len(db.failed_file_path_keys(scan_id)) == 1
+        assert failed_rows[0]["normalized_path"]
+        assert failed_rows[0]["display_path"] == "d:/videos/BAD.mp4"
+        assert failed_rows[0]["stage"] == "fingerprint"
+        assert failed_rows[0]["message"] == "decoder timeout"
+
+        db.clear_failed_file(scan_id, "D:/Videos/bad.mp4")
+
+        assert db.count_failed_files(scan_id) == 0
+        assert db.list_failed_files(scan_id) == []
 
 
 def test_purge_for_fresh_rescan_deletes_scan_set_and_selected_root_artifacts() -> None:

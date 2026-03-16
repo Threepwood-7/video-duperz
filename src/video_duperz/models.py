@@ -164,6 +164,7 @@ class ScanProgress:
     total_analyze_files: int | None = None
     completed_files: int | None = None
     total_work_files: int | None = None
+    skipped_failed_files: int | None = None
     fingerprint_only_files: int | None = None
     probe_and_fingerprint_files: int | None = None
     lane_snapshots: list[ScanLaneSnapshot] | None = None

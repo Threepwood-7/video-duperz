@@ -30,7 +30,12 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
         """Create and launch a new background scan worker from current settings."""
         self._launch_scan()
 
-    def _launch_scan(self, *, resume_scan_id: int | None = None) -> None:
+    def _launch_scan(
+        self,
+        *,
+        resume_scan_id: int | None = None,
+        retry_failed_files: bool = True,
+    ) -> None:
         """Create and launch one background scan worker from the current UI state."""
         self._persist_settings()
         if not self.settings.scan_roots:
@@ -51,9 +56,18 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
         self.scan_view.reset()
         if resume_scan_id is not None:
             self.scan_view.set_issues(self.db.list_scan_issues(resume_scan_id))
+            failed_count = self.db.count_failed_files(resume_scan_id)
+            self.scan_view.set_retry_failed_file_count(failed_count)
             self.scan_view.append_progress_note(
                 "paused",
-                f"Resuming paused scan #{resume_scan_id}",
+                (
+                    f"Resuming paused scan #{resume_scan_id}"
+                    if retry_failed_files
+                    else (
+                        f"Resuming paused scan #{resume_scan_id} "
+                        "without retrying prior failed files"
+                    )
+                ),
             )
         self.scan_view.initialize_lane_plan(
             lane_plan.root_groups,
@@ -66,7 +80,8 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
         if resume_scan_id is None:
             self.statusBar().showMessage("Scan started")
         else:
-            self.statusBar().showMessage(f"Resuming scan #{resume_scan_id}...")
+            suffix = "" if retry_failed_files else " (skipping prior failed files)"
+            self.statusBar().showMessage(f"Resuming scan #{resume_scan_id}{suffix}...")
         self.tabs.setCurrentWidget(self.scan_view)
 
         self.scan_worker = ScanWorker(
@@ -86,6 +101,7 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
             progress_emit_interval_ms=self.settings.scan_progress_emit_interval_ms,
             progress_emit_every_files=self.settings.scan_progress_emit_every_files,
             resume_scan_id=resume_scan_id,
+            retry_failed_files=retry_failed_files,
         )
         self.scan_worker.signals.progress.connect(self.scan_view.update_progress)
         self.scan_worker.signals.issue.connect(self._scan_issue)
@@ -115,7 +131,10 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
             self.tabs.setCurrentWidget(self.scan_view)
             self.statusBar().showMessage("Paused scan kept unchanged.")
             return
-        self._launch_scan(resume_scan_id=paused_scan_id)
+        self._launch_scan(
+            resume_scan_id=paused_scan_id,
+            retry_failed_files=self.scan_view.retry_failed_files_enabled(),
+        )
 
     def _cancel_scan(self) -> None:
         """Request cancellation of the active scan worker."""
@@ -166,11 +185,15 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
                     probe_backend=str(scan_info.get("probe_backend", "pyav")),
                 )
                 self.scan_view.set_paused_loaded(True)
+                self.scan_view.set_retry_failed_file_count(
+                    self.db.count_failed_files(finished_scan_id)
+                )
                 self.scan_view.append_progress_note(
                     "paused",
                     (
                         f"Scan #{finished_scan_id} paused. "
-                        "You can edit sources, then resume."
+                        "You can edit sources, choose whether to retry failed "
+                        "files, then resume."
                     ),
                 )
                 self.statusBar().showMessage(

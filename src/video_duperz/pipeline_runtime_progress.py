@@ -113,6 +113,7 @@ def emit_progress(
     with ctx.state_lock:
         snapshots = _clone_lane_snapshots_locked(ctx, elapsed_s)
         completed_files = int(ctx.cached_files + ctx.analyzed_files)
+        completed_files += int(ctx.skipped_failed_files)
         total_work_files = (
             len(ctx.enum_files)
             if ctx.enum_finished and ctx.enum_files
@@ -171,6 +172,7 @@ def emit_progress(
                 total_analyze_files=ctx.total_analyze_files,
                 completed_files=completed_files,
                 total_work_files=total_work_files,
+                skipped_failed_files=ctx.skipped_failed_files,
                 fingerprint_only_files=ctx.fingerprint_only_files,
                 probe_and_fingerprint_files=ctx.probe_and_fingerprint_files,
                 lane_snapshots=snapshots,

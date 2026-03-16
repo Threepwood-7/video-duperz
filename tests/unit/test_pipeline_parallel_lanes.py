@@ -7,7 +7,13 @@ from types import SimpleNamespace
 
 from video_duperz import pipeline, pipeline_runtime, pipeline_runtime_control
 from video_duperz.db import Database
-from video_duperz.models import MatchStats, ScanProgress, VideoMeta, VideoRecord
+from video_duperz.models import (
+    MatchStats,
+    ScanIssue,
+    ScanProgress,
+    VideoMeta,
+    VideoRecord,
+)
 
 
 class _FakeDb:
@@ -1631,6 +1637,97 @@ def test_resume_reprocesses_partial_cached_state_without_reprobing(
         )
         assert not any(
             step.stage == "probe" and step.subject_path == file_path
+            for step in progress_steps
+        )
+
+
+def test_resume_can_skip_previously_failed_files(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    failed_path = str(tmp_path / "failed.mp4")
+    good_path = str(tmp_path / "good.mp4")
+    failed_record = _video_with_stats(failed_path, lane=0, size=10, mtime_ns=11)
+    good_record = _video_with_stats(good_path, lane=0, size=20, mtime_ns=22)
+    analyze_calls: list[str] = []
+    progress_steps: list[ScanProgress] = []
+
+    monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
+    monkeypatch.setattr(
+        pipeline, "ensure_fingerprint_fallback_chain_available", lambda: None
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_physical_drive_scan_plan",
+        lambda roots, max_workers, drive_worker_overrides=None: _lane_plan_for_roots(
+            roots,
+            lane_worker_limits={0: 1},
+        ),
+    )
+
+    def _fake_enumerate(**kwargs):
+        on_file_discovered = kwargs.get("on_file_discovered")
+        assert callable(on_file_discovered)
+        on_file_discovered(failed_record)
+        on_file_discovered(good_record)
+        return [failed_record, good_record], []
+
+    def _fake_analyze(path: str, cached_meta: object | None) -> pipeline._AnalyzeOutput:
+        _ = cached_meta
+        analyze_calls.append(path)
+        return pipeline._AnalyzeOutput(meta=_analysis_meta(), hashes=[11, 22, 33, 44])
+
+    monkeypatch.setattr(pipeline, "enumerate_video_files", _fake_enumerate)
+    monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)
+
+    with Database(tmp_path / "resume-skip-failed.db") as db:
+        scan_id = db.create_scan(
+            profile="balanced",
+            roots=[str(tmp_path)],
+            extensions=["mp4"],
+            probe_backend="ffprobe",
+        )
+        db.upsert_failed_file(
+            scan_id,
+            ScanIssue(
+                stage="probe",
+                path=failed_path,
+                message="broken container",
+            ),
+        )
+        db.complete_scan(scan_id, status="paused")
+
+        resumed = pipeline.run_scan(
+            db=db,
+            roots=[str(tmp_path)],
+            extensions=["mp4"],
+            max_workers=1,
+            probe_backend="ffprobe",
+            probe_worker_mode="balanced",
+            db_batch_size=32,
+            db_flush_interval_ms=50,
+            enum_queue_max=256,
+            progress_emit_interval_ms=50,
+            progress_emit_every_files=1,
+            resume_scan_id=scan_id,
+            retry_failed_files=False,
+            progress_cb=progress_steps.append,
+        )
+
+        assert resumed.scan_id == scan_id
+        assert analyze_calls == [good_path]
+        assert resumed.metrics["skipped_failed_files"] == 1
+        assert db.count_failed_files(scan_id) == 1
+        assert any(
+            step.stage == "skip"
+            and step.subject_path == failed_path
+            and step.completed_files == 1
+            for step in progress_steps
+        )
+        assert any(
+            step.stage == "probe"
+            and step.subject_path == good_path
+            and step.completed_files == 2
             for step in progress_steps
         )
 

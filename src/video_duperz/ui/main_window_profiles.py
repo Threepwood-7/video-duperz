@@ -473,12 +473,14 @@ class MainWindowProfilesMixin(MainWindowDriveViewMixin):
             else max(1, int(self.max_workers_spin.value())),
         )
         self.scan_view.set_paused_loaded(True)
+        failed_count = self.db.count_failed_files(scan_id)
+        self.scan_view.set_retry_failed_file_count(failed_count)
         self.scan_view.status_label.setText(f"Paused scan #{scan_id} loaded")
         self.scan_view.append_progress_note(
             "paused",
             (
                 f"Paused scan #{scan_id} loaded from {source_name}. "
-                "Click Resume Scan to continue."
+                "Choose whether to retry prior failed files, then click Resume Scan."
             ),
         )
         self.scan_view.set_issues(self.db.list_scan_issues(scan_id))
@@ -489,7 +491,8 @@ class MainWindowProfilesMixin(MainWindowDriveViewMixin):
         when = f" from {stamp}" if stamp else ""
         self.statusBar().showMessage(
             f"Loaded paused scan #{scan_id}{when}. "
-            "You can add folders, then click Resume Scan."
+            "You can add folders, choose whether to retry failed files, "
+            "then click Resume Scan."
         )
 
     def _show_saved_scans_menu(self) -> None:

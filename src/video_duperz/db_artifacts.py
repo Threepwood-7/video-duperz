@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, TypedDict, cast
 
+from threep_commons.fs_paths import path_key
+
 from .db_shared import (
     coerce_int,
     decode_hashes,
@@ -47,6 +49,17 @@ class CachedArtifacts(TypedDict, total=False):
     meta_probed_at: str
     fingerprint: CachedFingerprintPayload
     fingerprint_created_at: str
+
+
+class FailedFileRow(TypedDict):
+    """Persisted failed-file payload for paused-scan resume decisions."""
+
+    normalized_path: str
+    display_path: str
+    stage: str
+    message: str
+    created_at: str
+    updated_at: str
 
 
 class DatabaseArtifactMixin:
@@ -223,6 +236,109 @@ class DatabaseArtifactMixin:
         """Delete all persisted issue rows for one scan."""
         self.conn.execute("DELETE FROM scan_issues WHERE scan_id = ?", (scan_id,))
         self._commit_if_needed()
+
+    @staticmethod
+    def _is_retryable_failed_issue(issue: ScanIssue) -> bool:
+        """Return whether one issue should count as a resumable failed file."""
+        stage = str(issue.stage).strip().lower()
+        path = str(issue.path).strip()
+        return stage in {"probe", "fingerprint", "analyze"} and bool(path)
+
+    def upsert_failed_file(self, scan_id: int, issue: ScanIssue) -> None:
+        """Persist one retryable failed-file row for a paused or running scan."""
+        if not self._is_retryable_failed_issue(issue):
+            return
+        now = utc_now_iso()
+        normalized_path = path_key(issue.path)
+        self.conn.execute(
+            """
+            INSERT INTO scan_failed_files(
+              scan_id, normalized_path, display_path, stage, message,
+              created_at, updated_at
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(scan_id, normalized_path) DO UPDATE SET
+              display_path = excluded.display_path,
+              stage = excluded.stage,
+              message = excluded.message,
+              updated_at = excluded.updated_at
+            """,
+            (
+                int(scan_id),
+                normalized_path,
+                str(issue.path),
+                str(issue.stage),
+                str(issue.message),
+                now,
+                now,
+            ),
+        )
+        self._commit_if_needed()
+
+    def clear_failed_file(self, scan_id: int, path: str) -> None:
+        """Delete one retryable failed-file marker after a successful retry."""
+        normalized_path = path_key(path)
+        if not normalized_path:
+            return
+        self.conn.execute(
+            """
+            DELETE FROM scan_failed_files
+            WHERE scan_id = ? AND normalized_path = ?
+            """,
+            (int(scan_id), normalized_path),
+        )
+        self._commit_if_needed()
+
+    def list_failed_files(self, scan_id: int) -> list[FailedFileRow]:
+        """Load retryable failed-file rows for one scan."""
+        rows = self.conn.execute(
+            """
+            SELECT normalized_path, display_path, stage, message, created_at, updated_at
+            FROM scan_failed_files
+            WHERE scan_id = ?
+            ORDER BY normalized_path
+            """,
+            (int(scan_id),),
+        ).fetchall()
+        return [
+            FailedFileRow(
+                normalized_path=str(row["normalized_path"] or ""),
+                display_path=str(row["display_path"] or ""),
+                stage=str(row["stage"] or ""),
+                message=str(row["message"] or ""),
+                created_at=str(row["created_at"] or ""),
+                updated_at=str(row["updated_at"] or ""),
+            )
+            for row in rows
+        ]
+
+    def count_failed_files(self, scan_id: int) -> int:
+        """Return the number of retryable failed files for one scan."""
+        row = self.conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM scan_failed_files
+            WHERE scan_id = ?
+            """,
+            (int(scan_id),),
+        ).fetchone()
+        return int(row["c"] if row is not None else 0)
+
+    def failed_file_path_keys(self, scan_id: int) -> set[str]:
+        """Return normalized failed-file path keys for one scan."""
+        rows = self.conn.execute(
+            """
+            SELECT normalized_path
+            FROM scan_failed_files
+            WHERE scan_id = ?
+            """,
+            (int(scan_id),),
+        ).fetchall()
+        return {
+            str(row["normalized_path"] or "")
+            for row in rows
+            if str(row["normalized_path"] or "")
+        }
 
     def upsert_file(
         self,

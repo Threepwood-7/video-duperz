@@ -114,7 +114,9 @@ def _prepare_total_locked(ctx: _ScanContext) -> int:
 
 def _completed_total_locked(ctx: _ScanContext) -> tuple[int, int]:
     """Return the overall completed-work counter and total visible work."""
-    completed_files = int(ctx.cached_files + ctx.analyzed_files)
+    completed_files = int(
+        ctx.cached_files + ctx.analyzed_files + ctx.skipped_failed_files
+    )
     total_work_files = (
         len(ctx.enum_files)
         if ctx.enum_finished and ctx.enum_files
@@ -433,6 +435,29 @@ def _process_discovered_batch(ctx: _ScanContext, batch: list[VideoRecord]) -> No
         if file_id <= 0:
             continue
         file.file_id = file_id
+        normalized_path = path_key(path)
+        if (
+            ctx.resume_scan_id is not None
+            and not ctx.retry_failed_files
+            and normalized_path in ctx.failed_path_keys
+        ):
+            with ctx.state_lock:
+                lane_state = ensure_lane_state_locked(ctx, lane, source_root)
+                ctx.skipped_failed_files += 1
+                lane_state.completed += 1
+                completed_now, completed_total = _completed_total_locked(ctx)
+                refresh_lane_state_locked(ctx, lane)
+            stage, message = _skipped_failed_progress_details(path)
+            emit_progress(
+                ctx,
+                stage,
+                completed_now,
+                completed_total,
+                message,
+                file_counter=completed_now,
+                subject_path=path,
+            )
+            continue
         cache = cache_by_path.get(path)
         cache_decision = _decide_cached_analysis(cache)
         if cache_decision.skip_analysis:
@@ -476,7 +501,11 @@ def _process_discovered_batch(ctx: _ScanContext, batch: list[VideoRecord]) -> No
         with ctx.state_lock:
             if ctx.resume_scan_id is not None:
                 ctx.resume_reprocessed_files += 1
-            ctx.lane_queues.setdefault(lane, deque()).append(task)
+            lane_queue = ctx.lane_queues.get(lane)
+            if lane_queue is None:
+                lane_queue = deque[_AnalyzeTask]()
+                ctx.lane_queues[lane] = lane_queue
+            lane_queue.append(task)
             lane_state = ensure_lane_state_locked(ctx, lane, source_root)
             lane_state.queued += 1
             ctx.total_analyze_files += 1
@@ -515,6 +544,11 @@ def _record_future_success(
     task: _AnalyzeTask,
     output: _AnalyzeOutputLike,
 ) -> None:
+    clear_failed_file = getattr(ctx.db, "clear_failed_file", None)
+    if callable(clear_failed_file):
+        clear_failed_file(ctx.scan_id, task.path)
+    with ctx.state_lock:
+        ctx.failed_path_keys.discard(path_key(task.path))
     if task.cached_meta is None:
         ctx.pending_meta_rows.append(
             (task.file_id, task.size, task.mtime_ns, output.meta)
@@ -545,6 +579,11 @@ def _record_future_success(
 def _cache_hit_progress_details(path: str) -> tuple[str, str, ScanWorkKind]:
     """Return the visible progress payload for one cache-hit decision."""
     return ("cache", f"Reused cached analysis {path}", "cache_hit")
+
+
+def _skipped_failed_progress_details(path: str) -> tuple[str, str]:
+    """Return the visible progress payload for one skipped prior failure."""
+    return ("skip", f"Skipped prior failed file {path}")
 
 
 def _task_progress_details(task: _AnalyzeTask) -> tuple[str, str, ScanWorkKind]:
@@ -779,6 +818,7 @@ def run_scan_runtime(
     find_duplicate_edges_fn: _FindEdgesFn = find_duplicate_edges,
     build_duplicate_groups_fn: _BuildGroupsFn = build_duplicate_groups,
     resume_scan_id: int | None = None,
+    retry_failed_files: bool = True,
 ) -> ScanResult:
     """Execute the scan runtime with injectable seams for tests and UI workflows."""
     ensure_ffprobe_available_fn()
@@ -806,6 +846,7 @@ def run_scan_runtime(
         find_duplicate_edges_fn=find_duplicate_edges_fn,
         build_duplicate_groups_fn=build_duplicate_groups_fn,
         resume_scan_id=resume_scan_id,
+        retry_failed_files=retry_failed_files,
     )
     start_runtime_threads(ctx, lambda: _run_enumeration(ctx))
     for issue in ctx.scan_plan.issues:

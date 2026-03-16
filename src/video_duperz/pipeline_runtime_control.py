@@ -57,6 +57,7 @@ def collect_metrics(ctx: _ScanContext, match_stats: MatchStats) -> dict[str, obj
         "resume_scan_id": ctx.resume_scan_id,
         "resume_cache_hits": int(ctx.resume_cache_hits),
         "resume_reprocessed_files": int(ctx.resume_reprocessed_files),
+        "skipped_failed_files": int(ctx.skipped_failed_files),
         "fingerprint_only_files": int(ctx.fingerprint_only_files),
         "probe_and_fingerprint_files": int(ctx.probe_and_fingerprint_files),
     }
@@ -93,6 +94,9 @@ def record_issue(ctx: _ScanContext, issue: ScanIssue) -> None:
     insert_issue = getattr(ctx.db, "insert_scan_issue", None)
     if callable(insert_issue):
         insert_issue(ctx.scan_id, issue)
+    upsert_failed_file = getattr(ctx.db, "upsert_failed_file", None)
+    if callable(upsert_failed_file):
+        upsert_failed_file(ctx.scan_id, issue)
     ctx.rows_since_flush += 1
     if ctx.issue_cb is not None:
         ctx.issue_cb(issue)

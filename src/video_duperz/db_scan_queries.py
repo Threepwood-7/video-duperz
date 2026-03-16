@@ -50,6 +50,12 @@ class DatabaseScanQueryMixin:
               ON fp.file_id = f.id AND fp.probe_backend = s.probe_backend
             WHERE f.scan_id = ? AND f.exists_flag = 1 AND fp.algo_version = ?
               AND vm.duration_s > 0
+              AND NOT EXISTS(
+                SELECT 1
+                FROM scan_failed_files sff
+                WHERE sff.scan_id = f.scan_id
+                  AND sff.display_path = f.path COLLATE NOCASE
+              )
             ORDER BY f.path
             """,
             (scan_id, algo_version),

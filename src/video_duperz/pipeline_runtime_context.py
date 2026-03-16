@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from queue import Queue
 from threading import Condition, Event, Lock, Thread
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from threep_commons.fs_paths import path_key
 
@@ -43,6 +43,14 @@ class AnalyzeOutputLike(Protocol):
     fingerprint_s: float
     fingerprint_decoder_backend: FrameDecodeBackendId
     fingerprint_provenance_json: str
+
+
+class _FailedFilePathKeysFn(Protocol):
+    """Protocol for the optional DB helper that lists failed path keys."""
+
+    def __call__(self, scan_id: int) -> set[str]:
+        """Return normalized failed-file path keys for one scan."""
+        ...
 
 
 @dataclass(slots=True)
@@ -86,6 +94,7 @@ class ScanContext:
     progress_emit_every_files: int
     scan_id: int
     resume_scan_id: int | None
+    retry_failed_files: bool
     issues: list[ScanIssue]
     requested_floor: int
     scan_plan: Any
@@ -107,6 +116,7 @@ class ScanContext:
     recorded_issue_keys: set[tuple[str, str, str]]
     present_paths: set[str]
     streamed_path_keys: set[str]
+    failed_path_keys: set[str]
     pending_discovered: list[VideoRecord]
     pending_meta_rows: list[tuple[int, int, int, VideoMeta]]
     pending_fp_rows: list[tuple[int, int, int, int, list[int]]]
@@ -124,6 +134,7 @@ class ScanContext:
     cached_files: int
     resume_cache_hits: int
     resume_reprocessed_files: int
+    skipped_failed_files: int
     fingerprint_only_files: int
     probe_and_fingerprint_files: int
     fingerprinted_files: int
@@ -271,6 +282,15 @@ def _initial_stage_seconds() -> dict[str, float]:
     }
 
 
+def _load_failed_path_keys(db: object, scan_id: int) -> set[str]:
+    """Load explicit failed-file path keys when the DB supports that API."""
+    failed_file_path_keys = getattr(db, "failed_file_path_keys", None)
+    if not callable(failed_file_path_keys) or scan_id <= 0:
+        return set()
+    getter = cast("_FailedFilePathKeysFn", failed_file_path_keys)
+    return set(getter(scan_id))
+
+
 def create_context(
     db: Database,
     roots: list[str],
@@ -296,6 +316,7 @@ def create_context(
     find_duplicate_edges_fn: _FindEdgesFn,
     build_duplicate_groups_fn: _BuildGroupsFn,
     resume_scan_id: int | None = None,
+    retry_failed_files: bool = True,
 ) -> ScanContext:
     """Create the mutable runtime context used by the streaming pipeline."""
     runtime_settings = _build_runtime_settings(
@@ -360,6 +381,7 @@ def create_context(
         progress_emit_every_files=runtime_settings.progress_emit_every_files,
         scan_id=scan_id,
         resume_scan_id=resume_scan_id,
+        retry_failed_files=bool(retry_failed_files),
         issues=[],
         requested_floor=runtime_settings.requested_floor,
         scan_plan=scan_plan,
@@ -381,6 +403,7 @@ def create_context(
         recorded_issue_keys=set(),
         present_paths=set(),
         streamed_path_keys=set(),
+        failed_path_keys=_load_failed_path_keys(db, scan_id),
         pending_discovered=[],
         pending_meta_rows=[],
         pending_fp_rows=[],
@@ -398,6 +421,7 @@ def create_context(
         cached_files=0,
         resume_cache_hits=0,
         resume_reprocessed_files=0,
+        skipped_failed_files=0,
         fingerprint_only_files=0,
         probe_and_fingerprint_files=0,
         fingerprinted_files=0,

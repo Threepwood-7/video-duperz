@@ -923,6 +923,14 @@ def test_load_saved_scan_profile_paused_loads_scan_tab_and_issues(
                 message="bad metadata",
             ),
         )
+        db.upsert_failed_file(
+            paused_id,
+            ScanIssue(
+                stage="probe",
+                path=str(tmp_path / "library" / "clip.mp4"),
+                message="bad metadata",
+            ),
+        )
         db.complete_scan(paused_id, status="paused")
 
         settings = default_settings()
@@ -945,9 +953,68 @@ def test_load_saved_scan_profile_paused_loads_scan_tab_and_issues(
         assert window.current_scan_id is None
         assert window.scan_view.resume_btn.isEnabled()
         assert not window.scan_view.start_btn.isEnabled()
+        assert window.scan_view.retry_failed_checkbox.isVisible()
+        assert window.scan_view.retry_failed_checkbox.isEnabled()
+        assert window.scan_view.retry_failed_checkbox.isChecked()
+        assert window.scan_view.retry_failed_checkbox.text().endswith("(1)")
         assert window.scan_view.issues_list.count() == 1
         assert "paused" in window.statusBar().currentMessage().lower()
         assert window.probe_backend_combo.currentText() == "ffprobe"
+        window.close()
+
+
+def test_resume_scan_passes_retry_failed_checkbox_state(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        roots = [str(tmp_path / "library")]
+        paused_id = db.create_scan(
+            profile="balanced",
+            roots=roots,
+            extensions=["mp4"],
+            probe_backend="ffprobe",
+        )
+        db.upsert_failed_file(
+            paused_id,
+            ScanIssue(
+                stage="fingerprint",
+                path=str(tmp_path / "library" / "clip.mp4"),
+                message="decoder timeout",
+            ),
+        )
+        db.complete_scan(paused_id, status="paused")
+
+        settings = default_settings()
+        settings.scan_roots = roots
+        settings.extensions = ["mp4"]
+        settings.probe_backend = "ffprobe"
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        scan_info = db.get_scan_info(paused_id)
+        window._load_paused_scan(
+            scan_id=paused_id,
+            source_name="Paused Profile",
+            scan_info=scan_info,
+        )
+        app.processEvents()
+        window.scan_view.retry_failed_checkbox.setChecked(False)
+
+        captured: dict[str, object] = {}
+
+        def _capture_launch(**kwargs: object) -> None:
+            captured.update(kwargs)
+
+        monkeypatch.setattr(window, "_launch_scan", _capture_launch)
+
+        window._resume_scan()
+
+        assert captured["resume_scan_id"] == paused_id
+        assert captured["retry_failed_files"] is False
         window.close()
 
 

@@ -171,6 +171,7 @@ def run_scan(
     progress_cb: ProgressCallback | None = None,
     issue_cb: IssueCallback | None = None,
     resume_scan_id: int | None = None,
+    retry_failed_files: bool = True,
 ) -> ScanResult:
     """Run a full scan using the default probe, fingerprint, and matcher pipeline."""
     probe_video_kwargs: dict[str, str] = {}
@@ -231,4 +232,5 @@ def run_scan(
         find_duplicate_edges_fn=find_duplicate_edges,
         build_duplicate_groups_fn=build_duplicate_groups,
         resume_scan_id=resume_scan_id,
+        retry_failed_files=retry_failed_files,
     )
