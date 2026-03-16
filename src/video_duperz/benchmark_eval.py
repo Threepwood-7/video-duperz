@@ -7,10 +7,10 @@ import time
 from collections import Counter, deque
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass, field
-from pathlib import PurePath
 from typing import TYPE_CHECKING, Literal, cast
 
 from .fingerprint import ensure_fingerprint_fallback_chain_available
+from .media_format_policy import is_problematic_media_path
 from .pipeline import build_analyze_file
 from .probe import ensure_probe_backend_available
 from .scanner import build_physical_drive_scan_plan, enumerate_video_files
@@ -41,9 +41,6 @@ _BENCHMARK_VIDEO_EXTENSIONS = (
     "webm",
     "flv",
     "vob",
-)
-_BENCHMARK_RISKY_SUFFIXES = frozenset(
-    {".wmv", ".asf", ".avi", ".mov", ".mpg", ".mpeg", ".flv"}
 )
 
 
@@ -145,15 +142,13 @@ def _sorted_records(records: Iterable[VideoRecord]) -> list[VideoRecord]:
 
 def _sample_file_from_record(record: VideoRecord) -> BenchmarkSampleFile:
     """Convert one enumerated record into a benchmark sample file."""
-
-    suffix = PurePath(record.path).suffix.lower()
     return BenchmarkSampleFile(
         path=record.path,
         source_root=record.source_root,
         lane=int(record.parallel_lane),
         size=int(record.size),
         ext=str(record.ext).lower(),
-        is_risky=suffix in _BENCHMARK_RISKY_SUFFIXES,
+        is_risky=is_problematic_media_path(record.path),
     )
 
 

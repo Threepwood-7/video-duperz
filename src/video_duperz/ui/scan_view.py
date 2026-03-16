@@ -26,6 +26,40 @@ if TYPE_CHECKING:
     from ..models import ScanIssue, ScanLaneSnapshot, ScanProgress
 
 
+class _LaneProgressCell(QWidget):
+    """Centered container widget for one lane progress bar."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        self.progress_bar = QProgressBar(self)
+        self.progress_bar.setObjectName("scan_lane_progress_bar")
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setRange(0, 0)
+        self.progress_bar.setFormat("0 / 0+")
+        self.progress_bar.setFixedHeight(12)
+        self.progress_bar.setStyleSheet(
+            """
+            QProgressBar {
+                min-height: 12px;
+                max-height: 12px;
+                border: 1px solid #c8c8c8;
+                border-radius: 4px;
+                background: #f6f6f6;
+                text-align: center;
+                padding: 0px;
+            }
+            QProgressBar::chunk {
+                background-color: #6aa84f;
+                border-radius: 3px;
+            }
+            """
+        )
+        layout.addWidget(self.progress_bar)
+
+
 class ScanView(QWidget):
     """UI panel for scan controls, progress events, lane stats, and issues."""
 
@@ -53,10 +87,10 @@ class ScanView(QWidget):
         self.worker_progress.setVisible(False)
         self.io_stats_label = QLabel(
             "I/O Stats: discovered 0 @ 0.00/s, 0.00 MiB/s | analyzed 0 @ "
-            "0.00/s, 0.00 MiB/s | cache hit 0.0%",
+            "0.00/s, 0.00 MiB/s | cache hit 0.0% | reused 0 | fp-only 0 | reprobe 0",
             self,
         )
-        self.lane_table = QTableWidget(0, 12, self)
+        self.lane_table = QTableWidget(0, 13, self)
         self.lane_table.setHorizontalHeaderLabels(
             [
                 "Lane",
@@ -65,6 +99,7 @@ class ScanView(QWidget):
                 "Discovered",
                 "Queued",
                 "Completed",
+                "Progress",
                 "Active File",
                 "Workers",
                 "Disc/s",
@@ -80,18 +115,21 @@ class ScanView(QWidget):
         self.lane_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.lane_table.verticalHeader().setVisible(False)
         lane_header = self.lane_table.horizontalHeader()
-        lane_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        lane_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        lane_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        lane_header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        lane_header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        lane_header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
-        lane_header.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
-        lane_header.setSectionResizeMode(7, QHeaderView.ResizeMode.ResizeToContents)
-        lane_header.setSectionResizeMode(8, QHeaderView.ResizeMode.ResizeToContents)
-        lane_header.setSectionResizeMode(9, QHeaderView.ResizeMode.ResizeToContents)
-        lane_header.setSectionResizeMode(10, QHeaderView.ResizeMode.ResizeToContents)
-        lane_header.setSectionResizeMode(11, QHeaderView.ResizeMode.ResizeToContents)
+        lane_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        lane_header.setStretchLastSection(False)
+        self.lane_table.setColumnWidth(0, 56)
+        self.lane_table.setColumnWidth(1, 240)
+        self.lane_table.setColumnWidth(2, 90)
+        self.lane_table.setColumnWidth(3, 84)
+        self.lane_table.setColumnWidth(4, 72)
+        self.lane_table.setColumnWidth(5, 84)
+        self.lane_table.setColumnWidth(6, 130)
+        self.lane_table.setColumnWidth(7, 260)
+        self.lane_table.setColumnWidth(8, 80)
+        self.lane_table.setColumnWidth(9, 72)
+        self.lane_table.setColumnWidth(10, 86)
+        self.lane_table.setColumnWidth(11, 72)
+        self.lane_table.setColumnWidth(12, 86)
         self.progress_list = QListWidget(self)
         self.progress_list.setUniformItemSizes(True)
         self.progress_list.setSelectionMode(
@@ -164,8 +202,8 @@ class ScanView(QWidget):
 
     def _format_eta(self, progress: ScanProgress) -> str:
         """Format the ETA label from the current analysis throughput."""
-        analyzed = int(progress.analyzed_files or 0)
-        total = int(progress.total_analyze_files or 0)
+        analyzed = int(progress.completed_files or progress.analyzed_files or 0)
+        total = int(progress.total_work_files or progress.total_analyze_files or 0)
         elapsed_s = float(progress.elapsed_s or 0.0)
         if analyzed < 3 or elapsed_s < 5.0 or total <= analyzed:
             return "ETA: --"
@@ -184,10 +222,8 @@ class ScanView(QWidget):
     def _progress_row_text(self, progress: ScanProgress) -> str:
         """Render one stable detailed-progress row string."""
         message = progress.message.strip() or progress.stage
-        return (
-            f"[{progress.stage}] "
-            f"{self._format_counter(progress.current, progress.total)} -> {message}"
-        )
+        current, total = self._display_counter_values(progress)
+        return f"[{progress.stage}] {self._format_counter(current, total)} -> {message}"
 
     def _issue_row_text(self, issue: ScanIssue) -> str:
         """Render one stable issue row string."""
@@ -223,7 +259,7 @@ class ScanView(QWidget):
         self.eta_label.setText("ETA: --")
         self.io_stats_label.setText(
             "I/O Stats: discovered 0 @ 0.00/s, 0.00 MiB/s | analyzed 0 @ "
-            "0.00/s, 0.00 MiB/s | cache hit 0.0%"
+            "0.00/s, 0.00 MiB/s | cache hit 0.0% | reused 0 | fp-only 0 | reprobe 0"
         )
         self.lane_table.setRowCount(0)
         self.progress_list.clear()
@@ -251,14 +287,28 @@ class ScanView(QWidget):
             self.lane_table.setItem(row, 3, QTableWidgetItem("0"))
             self.lane_table.setItem(row, 4, QTableWidgetItem("0"))
             self.lane_table.setItem(row, 5, QTableWidgetItem("0"))
-            self.lane_table.setItem(row, 6, QTableWidgetItem(""))
-            self.lane_table.setItem(row, 7, QTableWidgetItem("0/0"))
-            self.lane_table.setItem(row, 8, QTableWidgetItem("0.00"))
+            self.lane_table.setCellWidget(row, 6, self._create_lane_progress_cell())
+            self.lane_table.setItem(row, 7, QTableWidgetItem(""))
+            self.lane_table.setItem(row, 8, QTableWidgetItem("0/0"))
             self.lane_table.setItem(row, 9, QTableWidgetItem("0.00"))
             self.lane_table.setItem(row, 10, QTableWidgetItem("0.00"))
             self.lane_table.setItem(row, 11, QTableWidgetItem("0.00"))
+            self.lane_table.setItem(row, 12, QTableWidgetItem("0.00"))
             self._apply_row_background(row, "pending")
         self._set_worker_progress(0, worker_limit)
+
+    def _create_lane_progress_cell(self) -> _LaneProgressCell:
+        """Create one vertically centered lane-progress cell widget."""
+        return _LaneProgressCell(self.lane_table)
+
+    def _lane_progress_bar(self, row: int) -> QProgressBar:
+        """Return the lane progress-bar widget for one table row."""
+        widget = self.lane_table.cellWidget(row, 6)
+        if isinstance(widget, _LaneProgressCell):
+            return widget.progress_bar
+        progress_cell = self._create_lane_progress_cell()
+        self.lane_table.setCellWidget(row, 6, progress_cell)
+        return progress_cell.progress_bar
 
     def _set_worker_progress(self, active_workers: int, worker_limit: int) -> None:
         bounded_limit = max(0, int(worker_limit))
@@ -309,21 +359,52 @@ class ScanView(QWidget):
         self.lane_table.setItem(row, 3, QTableWidgetItem(str(int(snapshot.discovered))))
         self.lane_table.setItem(row, 4, QTableWidgetItem(str(int(snapshot.queued))))
         self.lane_table.setItem(row, 5, QTableWidgetItem(str(int(snapshot.completed))))
-        self.lane_table.setItem(row, 6, QTableWidgetItem(snapshot.active_file))
-        self.lane_table.setItem(row, 7, QTableWidgetItem(workers_text))
+        progress_bar = self._lane_progress_bar(row)
+        self._update_lane_progress_bar(progress_bar, snapshot)
+        self.lane_table.setItem(row, 7, QTableWidgetItem(snapshot.active_file))
+        self.lane_table.setItem(row, 8, QTableWidgetItem(workers_text))
         self.lane_table.setItem(
-            row, 8, QTableWidgetItem(f"{float(snapshot.discovered_files_per_s):.2f}")
+            row, 9, QTableWidgetItem(f"{float(snapshot.discovered_files_per_s):.2f}")
         )
         self.lane_table.setItem(
-            row, 9, QTableWidgetItem(f"{float(snapshot.discovered_mib_per_s):.2f}")
+            row, 10, QTableWidgetItem(f"{float(snapshot.discovered_mib_per_s):.2f}")
         )
         self.lane_table.setItem(
-            row, 10, QTableWidgetItem(f"{float(snapshot.analyzed_files_per_s):.2f}")
+            row, 11, QTableWidgetItem(f"{float(snapshot.analyzed_files_per_s):.2f}")
         )
         self.lane_table.setItem(
-            row, 11, QTableWidgetItem(f"{float(snapshot.analyzed_mib_per_s):.2f}")
+            row, 12, QTableWidgetItem(f"{float(snapshot.analyzed_mib_per_s):.2f}")
         )
         self._apply_row_background(row, snapshot.state)
+
+    def _update_lane_progress_bar(
+        self,
+        progress_bar: QProgressBar,
+        snapshot: ScanLaneSnapshot,
+    ) -> None:
+        """Render one lane-progress widget from the current snapshot."""
+        discovered = max(0, int(snapshot.discovered))
+        completed = max(0, int(snapshot.completed))
+        if not snapshot.discovery_complete and discovered <= 0:
+            progress_bar.setRange(0, 0)
+            progress_bar.setFormat("0 / 0+")
+        else:
+            display_total = max(1, discovered)
+            progress_bar.setRange(0, display_total)
+            progress_bar.setValue(min(completed, display_total))
+            suffix = "" if snapshot.discovery_complete else "+"
+            progress_bar.setFormat(f"{completed} / {discovered}{suffix}")
+        progress_bar.setToolTip(
+            "Completed {completed} of {discovered}{suffix} | "
+            "cache {cache_hits}, fp-only {fingerprint_only}, reprobe {reprobe}".format(
+                completed=completed,
+                discovered=discovered,
+                suffix="" if snapshot.discovery_complete else "+",
+                cache_hits=int(snapshot.cache_hits),
+                fingerprint_only=int(snapshot.fingerprint_only),
+                reprobe=int(snapshot.probe_and_fingerprint),
+            )
+        )
 
     def _update_io_stats(self, progress: ScanProgress) -> None:
         discovered_files = int(progress.discovered_files or 0)
@@ -335,14 +416,31 @@ class ScanView(QWidget):
         analyzed_fps = float(progress.analyzed_files_per_s or 0.0)
         analyzed_mibps = float(progress.analyzed_mib_per_s or 0.0)
         cache_hit_ratio = float(progress.cache_hit_ratio or 0.0) * 100.0
+        cache_hits = int(progress.cached_files or 0)
+        fingerprint_only = int(progress.fingerprint_only_files or 0)
+        reprobes = int(progress.probe_and_fingerprint_files or 0)
         self.io_stats_label.setText(
             "I/O Stats: "
             f"discovered {discovered_files} ({discovered_mib:.2f} MiB) @ "
             f"{discovered_fps:.2f}/s, {discovered_mibps:.2f} MiB/s | "
             f"analyzed {analyzed_files} ({analyzed_mib:.2f} MiB) @ "
             f"{analyzed_fps:.2f}/s, {analyzed_mibps:.2f} MiB/s | "
-            f"cache hit {cache_hit_ratio:.1f}%"
+            f"cache hit {cache_hit_ratio:.1f}% | reused {cache_hits} | "
+            f"fp-only {fingerprint_only} | reprobe {reprobes}"
         )
+
+    def _display_counter_values(self, progress: ScanProgress) -> tuple[int, int]:
+        """Return the preferred visible counter pair for one progress frame."""
+        if (
+            progress.completed_files is not None
+            and progress.total_work_files is not None
+            and progress.stage in {"cache", "fingerprint", "probe", "error"}
+        ):
+            return (
+                int(progress.completed_files),
+                max(1, int(progress.total_work_files)),
+            )
+        return (int(progress.current), max(1, int(progress.total)))
 
     def set_running(self, running: bool) -> None:
         if running:
@@ -378,8 +476,8 @@ class ScanView(QWidget):
         self._last_progress_row = ""
 
     def update_progress(self, progress: ScanProgress) -> None:
-        total = max(1, progress.total)
-        value = int((progress.current / total) * 100)
+        display_current, display_total = self._display_counter_values(progress)
+        value = int((display_current / max(1, display_total)) * 100)
         self.stage_progress.setValue(max(0, min(100, value)))
         self.eta_label.setText(self._format_eta(progress))
         if progress.worker_limit is not None or progress.active_workers is not None:
@@ -392,7 +490,7 @@ class ScanView(QWidget):
                 self._upsert_lane_snapshot(snapshot)
         self._update_io_stats(progress)
         message = progress.message.strip() or progress.stage
-        counter_text = self._format_counter(progress.current, progress.total)
+        counter_text = self._format_counter(display_current, display_total)
         self.status_label.setText(f"{progress.stage}: {message} ({counter_text})")
         progress_row = self._progress_row_text(progress)
         if progress_row != self._last_progress_row:

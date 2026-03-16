@@ -7,6 +7,7 @@ import pytest
 
 from video_duperz.fingerprint import (
     FingerprintError,
+    _decoder_timeout_for_path,
     _DecoderAttemptResult,
     _ffmpeg_gray_samples,
     build_fingerprint_record_with_fallback,
@@ -113,7 +114,7 @@ def test_decoder_subprocess_payload_includes_ffmpeg_override(
     assert result.decoder_backend == "ffmpeg"
 
 
-def test_risky_formats_bypass_opencv() -> None:
+def test_problematic_formats_bypass_opencv() -> None:
     seen_backends: list[str] = []
 
     def _runner(
@@ -129,7 +130,7 @@ def test_risky_formats_bypass_opencv() -> None:
     result = build_fingerprint_record_with_fallback(
         file_id=7,
         duration_s=12.5,
-        path="D:/Videos/stuck.wmv",
+        path="D:/Videos/archive.avi",
         attempt_runner=_runner,
     )
 
@@ -137,6 +138,66 @@ def test_risky_formats_bypass_opencv() -> None:
     assert seen_backends == ["ffmpeg"]
     assert result.decoder_backend == "ffmpeg"
     assert provenance["risky_format_bypass"] is True
+
+
+def test_problematic_formats_get_extended_decoder_timeout() -> None:
+    assert _decoder_timeout_for_path("D:/Videos/stuck.wmv", 15.0) == 60.0
+    assert _decoder_timeout_for_path("D:/Videos/archive.avi", 15.0) == 60.0
+    assert _decoder_timeout_for_path("D:/Videos/sample.flv", 15.0) == 60.0
+
+
+def test_normal_formats_keep_default_decoder_timeout() -> None:
+    assert _decoder_timeout_for_path("D:/Videos/ok.mp4", 15.0) == 15.0
+    assert _decoder_timeout_for_path("D:/Videos/ok.mkv", 15.0) == 15.0
+
+
+def test_problematic_formats_pass_extended_timeout_to_attempt_runner() -> None:
+    seen_timeouts: list[float] = []
+
+    def _runner(
+        path: str,
+        duration_s: float,
+        decoder_backend: str,
+        timeout_s: float,
+    ) -> _DecoderAttemptResult:
+        _ = path, duration_s, decoder_backend
+        seen_timeouts.append(timeout_s)
+        return _DecoderAttemptResult(status="success", hashes=[1, 2, 3])
+
+    build_fingerprint_record_with_fallback(
+        file_id=17,
+        duration_s=12.0,
+        path="D:/Videos/tricky.mpeg",
+        attempt_runner=_runner,
+    )
+
+    assert seen_timeouts == [60.0]
+
+
+def test_problematic_mov_formats_use_ffmpeg_first_then_pyav() -> None:
+    seen_backends: list[str] = []
+
+    def _runner(
+        path: str,
+        duration_s: float,
+        decoder_backend: str,
+        timeout_s: float,
+    ) -> _DecoderAttemptResult:
+        _ = path, duration_s, timeout_s
+        seen_backends.append(decoder_backend)
+        if decoder_backend == "ffmpeg":
+            return _DecoderAttemptResult(status="error", message="ffmpeg failed")
+        return _DecoderAttemptResult(status="success", hashes=[8, 9, 10])
+
+    result = build_fingerprint_record_with_fallback(
+        file_id=18,
+        duration_s=13.0,
+        path="D:/Videos/tricky.mov",
+        attempt_runner=_runner,
+    )
+
+    assert seen_backends == ["ffmpeg", "pyav"]
+    assert result.decoder_backend == "pyav"
 
 
 def test_non_risky_formats_try_opencv_first_then_fallback() -> None:

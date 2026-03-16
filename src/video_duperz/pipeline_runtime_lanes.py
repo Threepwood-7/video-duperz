@@ -61,7 +61,7 @@ def refresh_lane_state_locked(ctx: _ScanContext, lane: int) -> None:
         state.state = "running"
     elif queue_size > 0:
         state.state = "queued"
-    elif ctx.enum_finished and state.completed >= state.discovered:
+    elif state.discovery_complete and state.completed >= state.discovered:
         state.state = "done"
     elif state.discovered > 0:
         state.state = "idle"
@@ -102,6 +102,7 @@ def submit_ready_lanes(
     ctx: _ScanContext,
     executor: ThreadPoolExecutor,
     on_future_done: Callable[[Future[_AnalyzeOutputLike]], None],
+    on_task_started: Callable[[_AnalyzeTask], None] | None = None,
 ) -> int:
     """Submit ready lanes until the scheduler reaches its worker limit.
 
@@ -137,6 +138,8 @@ def submit_ready_lanes(
         future.add_done_callback(on_future_done)
         with ctx.state_lock:
             ctx.futures[future] = task
+        if on_task_started is not None:
+            on_task_started(task)
         submitted += 1
 
 
@@ -148,7 +151,7 @@ def finalize_task(ctx: _ScanContext, task: _AnalyzeTask) -> tuple[int, int]:
         task: Completed analysis task to retire.
 
     Returns:
-        Tuple of analyzed-file count and total analysis target.
+        Tuple of completed-work count and total work target.
     """
     with ctx.state_lock:
         ctx.analyzed_files += 1
@@ -162,7 +165,12 @@ def finalize_task(ctx: _ScanContext, task: _AnalyzeTask) -> tuple[int, int]:
         lane_state.completed += 1
         lane_state.active_file = ""
         refresh_lane_state_locked(ctx, task.lane)
-        return ctx.analyzed_files, max(1, ctx.total_analyze_files)
+        total_work_files = (
+            len(ctx.enum_files)
+            if ctx.enum_finished and ctx.enum_files
+            else max(1, ctx.prepared_files)
+        )
+        return (ctx.cached_files + ctx.analyzed_files, total_work_files)
 
 
 def apply_cancel_state(ctx: _ScanContext) -> None:

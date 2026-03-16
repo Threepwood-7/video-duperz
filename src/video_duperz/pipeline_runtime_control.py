@@ -57,6 +57,8 @@ def collect_metrics(ctx: _ScanContext, match_stats: MatchStats) -> dict[str, obj
         "resume_scan_id": ctx.resume_scan_id,
         "resume_cache_hits": int(ctx.resume_cache_hits),
         "resume_reprocessed_files": int(ctx.resume_reprocessed_files),
+        "fingerprint_only_files": int(ctx.fingerprint_only_files),
+        "probe_and_fingerprint_files": int(ctx.probe_and_fingerprint_files),
     }
 
 

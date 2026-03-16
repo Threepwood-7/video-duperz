@@ -14,7 +14,14 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton, QSpinBox
+from PySide6.QtWidgets import (
+    QApplication,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QSpinBox,
+    QWidget,
+)
 
 from video_duperz.models import (
     DuplicateGroup,
@@ -85,6 +92,14 @@ def _wait_until_table_text(
         QTest.qWait(10)
     item = table.item(row, column)
     return "" if item is None else item.text()
+
+
+def _lane_progress_bar(cell_widget: QWidget | None) -> QProgressBar:
+    """Return the inner lane progress bar from one table cell widget."""
+    assert cell_widget is not None
+    progress_bar = cell_widget.findChild(QProgressBar, "scan_lane_progress_bar")
+    assert progress_bar is not None
+    return progress_bar
 
 
 def test_main_window_launches_with_new_results_table(tmp_path: Path) -> None:
@@ -1825,9 +1840,14 @@ def test_scan_view_renders_lane_snapshots_and_worker_utilization(
                 analyzed_bytes=4 * 1024 * 1024,
                 analyzed_files_per_s=1.5,
                 analyzed_mib_per_s=2.0,
+                cached_files=2,
                 cache_hit_ratio=0.4,
                 elapsed_s=120.0,
                 total_analyze_files=10,
+                completed_files=4,
+                total_work_files=10,
+                fingerprint_only_files=1,
+                probe_and_fingerprint_files=2,
                 lane_snapshots=[
                     ScanLaneSnapshot(
                         lane=0,
@@ -1839,6 +1859,10 @@ def test_scan_view_renders_lane_snapshots_and_worker_utilization(
                         analyzed=1,
                         analyzed_bytes=2 * 1024 * 1024,
                         completed=1,
+                        discovery_complete=False,
+                        cache_hits=1,
+                        fingerprint_only=0,
+                        probe_and_fingerprint=0,
                         discovered_files_per_s=1.2,
                         discovered_mib_per_s=2.4,
                         analyzed_files_per_s=0.4,
@@ -1856,6 +1880,10 @@ def test_scan_view_renders_lane_snapshots_and_worker_utilization(
                         analyzed=2,
                         analyzed_bytes=2 * 1024 * 1024,
                         completed=2,
+                        discovery_complete=True,
+                        cache_hits=1,
+                        fingerprint_only=1,
+                        probe_and_fingerprint=1,
                         discovered_files_per_s=1.3,
                         discovered_mib_per_s=1.6,
                         analyzed_files_per_s=1.1,
@@ -1869,26 +1897,40 @@ def test_scan_view_renders_lane_snapshots_and_worker_utilization(
         app.processEvents()
 
         assert not window.scan_view.worker_progress.isVisible()
-        assert window.scan_view.eta_label.text().startswith("ETA: 5m | Done by ")
+        assert window.scan_view.eta_label.text().startswith("ETA: 3m | Done by ")
         assert window.scan_view.lane_table.rowCount() == 2
-        assert window.scan_view.lane_table.columnCount() == 12
+        assert window.scan_view.lane_table.columnCount() == 13
         assert window.scan_view.lane_table.item(0, 2).text() == "running"
-        assert window.scan_view.lane_table.item(0, 6).text() == "R:/Videos/a.mp4"
-        assert window.scan_view.lane_table.item(0, 8).text() == "1.20"
-        assert window.scan_view.lane_table.item(0, 9).text() == "2.40"
-        assert window.scan_view.lane_table.item(0, 10).text() == "0.40"
-        assert window.scan_view.lane_table.item(0, 11).text() == "0.80"
+        lane0_progress_cell = window.scan_view.lane_table.cellWidget(0, 6)
+        assert lane0_progress_cell is not None
+        lane0_progress = _lane_progress_bar(lane0_progress_cell)
+        assert lane0_progress.format() == "1 / 3+"
+        lane0_layout = lane0_progress_cell.layout()
+        assert lane0_layout is not None
+        assert bool(lane0_layout.alignment() & Qt.AlignmentFlag.AlignVCenter)
+        assert window.scan_view.lane_table.item(0, 7).text() == "R:/Videos/a.mp4"
+        assert window.scan_view.lane_table.item(0, 9).text() == "1.20"
+        assert window.scan_view.lane_table.item(0, 10).text() == "2.40"
+        assert window.scan_view.lane_table.item(0, 11).text() == "0.40"
+        assert window.scan_view.lane_table.item(0, 12).text() == "0.80"
         assert (
             window.scan_view.lane_table.item(0, 0).background().color().name().lower()
             == "#f0f8ff"
         )
         assert window.scan_view.lane_table.item(1, 2).text() == "idle"
         assert window.scan_view.lane_table.item(1, 5).text() == "2"
+        lane1_progress = _lane_progress_bar(
+            window.scan_view.lane_table.cellWidget(1, 6)
+        )
+        assert lane1_progress.format() == "2 / 2"
         assert (
             window.scan_view.lane_table.item(1, 0).background().color().name().lower()
             == "#f5f5f5"
         )
         assert "cache hit 40.0%" in window.scan_view.io_stats_label.text()
+        assert "reused 2" in window.scan_view.io_stats_label.text()
+        assert "fp-only 1" in window.scan_view.io_stats_label.text()
+        assert "reprobe 2" in window.scan_view.io_stats_label.text()
         assert window.scan_view.rescan_btn.text() == "Rescan"
         assert window.scan_view.pause_btn.text() == "Pause Scan"
         assert window.scan_view.resume_btn.text() == "Resume Scan"
@@ -1951,4 +1993,42 @@ def test_scan_view_lane_state_background_colors(tmp_path: Path) -> None:
             window.scan_view.lane_table.item(5, 0).background().color().name().lower()
             == "#ffe4e1"
         )
+        window.close()
+
+
+def test_scan_view_progress_rows_distinguish_resume_work_kinds(tmp_path: Path) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        for stage, work_kind, message in [
+            ("cache", "cache_hit", "Reused cached analysis a.mp4"),
+            ("fingerprint", "fingerprint_only", "Reused probe, fingerprinted b.mp4"),
+            ("probe", "probe_and_fingerprint", "Probed and fingerprinted c.mp4"),
+        ]:
+            window.scan_view.update_progress(
+                ScanProgress(
+                    stage=stage,
+                    current=1,
+                    total=3,
+                    completed_files=1,
+                    total_work_files=3,
+                    work_kind=work_kind,
+                    message=message,
+                )
+            )
+        app.processEvents()
+
+        rows = [
+            window.scan_view.progress_list.item(index).text()
+            for index in range(window.scan_view.progress_list.count())
+        ]
+        assert any("Reused cached analysis a.mp4" in row for row in rows)
+        assert any("Reused probe, fingerprinted b.mp4" in row for row in rows)
+        assert any("Probed and fingerprinted c.mp4" in row for row in rows)
         window.close()

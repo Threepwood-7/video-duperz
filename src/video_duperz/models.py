@@ -12,6 +12,7 @@ KeepRule = Literal["best_quality"]
 ProbeWorkerMode = Literal["balanced", "burst"]
 ProbeBackendId = Literal["ffprobe", "pyav"]
 FrameDecodeBackendId = Literal["opencv", "pyav", "ffmpeg"]
+ScanWorkKind = Literal["cache_hit", "fingerprint_only", "probe_and_fingerprint"]
 THUMBNAIL_SIZE_CHOICES = ("80x45", "96x54", "128x72", "160x90")
 DEFAULT_THUMBNAIL_SIZE = "96x54"
 
@@ -143,6 +144,7 @@ class ScanProgress:
     total: int
     message: str = ""
     subject_path: str = ""
+    work_kind: ScanWorkKind | None = None
     active_workers: int | None = None
     worker_limit: int | None = None
     enumerated_roots: int | None = None
@@ -160,6 +162,10 @@ class ScanProgress:
     cache_hit_ratio: float | None = None
     elapsed_s: float | None = None
     total_analyze_files: int | None = None
+    completed_files: int | None = None
+    total_work_files: int | None = None
+    fingerprint_only_files: int | None = None
+    probe_and_fingerprint_files: int | None = None
     lane_snapshots: list[ScanLaneSnapshot] | None = None
 
 
@@ -176,6 +182,10 @@ class ScanLaneSnapshot:
     analyzed: int = 0
     analyzed_bytes: int = 0
     completed: int = 0
+    discovery_complete: bool = False
+    cache_hits: int = 0
+    fingerprint_only: int = 0
+    probe_and_fingerprint: int = 0
     discovered_files_per_s: float = 0.0
     discovered_mib_per_s: float = 0.0
     analyzed_files_per_s: float = 0.0

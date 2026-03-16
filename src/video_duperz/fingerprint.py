@@ -11,7 +11,6 @@ import traceback
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from fractions import Fraction
-from pathlib import PurePath
 from statistics import median
 from typing import Literal, Protocol, cast
 
@@ -23,6 +22,7 @@ from threep_commons.subprocess_helpers import (
 )
 
 from .executable_paths import resolve_executable_path
+from .media_format_policy import is_problematic_media_path
 from .models import FingerprintRecord, FrameDecodeBackendId, utc_now_iso
 
 try:
@@ -32,6 +32,7 @@ except ImportError:
 
 ALGO_VERSION = 1
 FINGERPRINT_DECODER_TIMEOUT_S = 15.0
+_PROBLEMATIC_FORMAT_TIMEOUT_MULTIPLIER = 4.0
 SAMPLE_PERCENTS = [
     0.05,
     0.13,
@@ -49,7 +50,6 @@ SAMPLE_PERCENTS = [
 _FFMPEG_GRAY_WIDTH = 32
 _FFMPEG_GRAY_HEIGHT = 32
 _FFMPEG_GRAY_BYTES = _FFMPEG_GRAY_WIDTH * _FFMPEG_GRAY_HEIGHT
-_RISKY_FINGERPRINT_SUFFIXES = frozenset({".wmv", ".asf"})
 
 
 class FingerprintError(RuntimeError):
@@ -487,7 +487,17 @@ def compute_video_hashes(path: str, duration_s: float) -> list[int]:
 
 def _is_risky_fingerprint_format(path: str) -> bool:
     """Return whether the file should bypass OpenCV for fingerprinting."""
-    return PurePath(path).suffix.lower() in _RISKY_FINGERPRINT_SUFFIXES
+    return is_problematic_media_path(path)
+
+
+def _decoder_timeout_for_path(path: str, timeout_s: float) -> float:
+    """Return the effective decoder timeout for one media path."""
+    multiplier = (
+        _PROBLEMATIC_FORMAT_TIMEOUT_MULTIPLIER
+        if is_problematic_media_path(path)
+        else 1.0
+    )
+    return max(0.1, float(timeout_s) * multiplier)
 
 
 def _decoder_sequence_for_path(path: str) -> list[FrameDecodeBackendId]:
@@ -731,8 +741,14 @@ def build_fingerprint_record_with_fallback(
     decoder_sequence = _decoder_sequence_for_path(path)
     risky_format_bypass = decoder_sequence[0] != "opencv"
     active_attempt_runner = attempt_runner or _default_attempt_runner
+    effective_timeout_s = _decoder_timeout_for_path(path, timeout_s)
     for index, decoder_backend in enumerate(decoder_sequence):
-        attempt = active_attempt_runner(path, duration_s, decoder_backend, timeout_s)
+        attempt = active_attempt_runner(
+            path,
+            duration_s,
+            decoder_backend,
+            effective_timeout_s,
+        )
         attempts.append(
             FingerprintDecoderAttempt(
                 decoder_backend=decoder_backend,

@@ -21,6 +21,7 @@ from .models import (
     ScanIssue,
     ScanProgress,
     ScanResult,
+    ScanWorkKind,
     VideoMeta,
     VideoRecord,
 )
@@ -109,6 +110,37 @@ def _prepare_total_locked(ctx: _ScanContext) -> int:
     if ctx.enum_finished and ctx.enum_files:
         return len(ctx.enum_files)
     return max(1, ctx.prepared_files)
+
+
+def _completed_total_locked(ctx: _ScanContext) -> tuple[int, int]:
+    """Return the overall completed-work counter and total visible work."""
+    completed_files = int(ctx.cached_files + ctx.analyzed_files)
+    total_work_files = (
+        len(ctx.enum_files)
+        if ctx.enum_finished and ctx.enum_files
+        else max(1, ctx.prepared_files)
+    )
+    return (completed_files, total_work_files)
+
+
+def _mark_lane_root_enumerated_locked(
+    ctx: _ScanContext,
+    root_from_message: str,
+) -> None:
+    """Mark one root as enumerated and update the owning lane state."""
+    root_key = path_key(root_from_message)
+    if root_key in ctx.enumerated_root_keys:
+        return
+    ctx.enumerated_root_keys.add(root_key)
+    lane = ctx.root_to_lane.get(root_key)
+    if lane is None:
+        return
+    lane_state = ensure_lane_state_locked(ctx, lane, root_from_message)
+    if lane_state.state == "pending":
+        lane_state.state = "idle"
+    remaining = max(0, int(ctx.lane_pending_roots.get(lane, 0)) - 1)
+    ctx.lane_pending_roots[lane] = remaining
+    lane_state.discovery_complete = remaining == 0
 
 
 def _record_db_write(ctx: _ScanContext, elapsed_s: float, row_count: int) -> None:
@@ -250,11 +282,7 @@ def _on_enumerate_progress(
         ctx.enumerated_roots = current
         ctx.total_roots = max(1, total)
         if root_from_message:
-            lane = ctx.root_to_lane.get(path_key(root_from_message))
-            if lane is not None:
-                lane_state = ensure_lane_state_locked(ctx, lane, root_from_message)
-                if lane_state.state == "pending":
-                    lane_state.state = "idle"
+            _mark_lane_root_enumerated_locked(ctx, root_from_message)
         discovered_now = ctx.discovered_files
     emit_progress(
         ctx,
@@ -307,6 +335,8 @@ def _run_enumeration(ctx: _ScanContext) -> None:
             ctx.stage_seconds["enumerate"] += elapsed
             ctx.enum_finished = True
             for lane_id in list(ctx.lane_states):
+                ctx.lane_states[lane_id].discovery_complete = True
+                ctx.lane_pending_roots[lane_id] = 0
                 refresh_lane_state_locked(ctx, lane_id)
         _queue_enum_item(ctx, ctx.enum_sentinel)
 
@@ -407,12 +437,25 @@ def _process_discovered_batch(ctx: _ScanContext, batch: list[VideoRecord]) -> No
         cache_decision = _decide_cached_analysis(cache)
         if cache_decision.skip_analysis:
             with ctx.state_lock:
+                lane_state = ensure_lane_state_locked(ctx, lane, source_root)
                 ctx.cached_files += 1
+                lane_state.cache_hits += 1
+                lane_state.completed += 1
                 if ctx.resume_scan_id is not None:
                     ctx.resume_cache_hits += 1
-                lane_state = ensure_lane_state_locked(ctx, lane, source_root)
-                lane_state.completed += 1
+                completed_now, completed_total = _completed_total_locked(ctx)
                 refresh_lane_state_locked(ctx, lane)
+            stage, message, work_kind = _cache_hit_progress_details(path)
+            emit_progress(
+                ctx,
+                stage,
+                completed_now,
+                completed_total,
+                message,
+                file_counter=completed_now,
+                subject_path=path,
+                work_kind=work_kind,
+            )
             continue
 
         task = _AnalyzeTask(
@@ -424,6 +467,11 @@ def _process_discovered_batch(ctx: _ScanContext, batch: list[VideoRecord]) -> No
             path=path,
             size=file_size,
             mtime_ns=int(getattr(file, "mtime_ns", 0)),
+            work_kind=(
+                "fingerprint_only"
+                if cache_decision.cached_meta is not None
+                else "probe_and_fingerprint"
+            ),
         )
         with ctx.state_lock:
             if ctx.resume_scan_id is not None:
@@ -483,8 +531,68 @@ def _record_future_success(
     )
     ctx.fingerprinted_files += 1
     with ctx.state_lock:
+        lane_state = ensure_lane_state_locked(ctx, task.lane, task.source_root)
+        if task.work_kind == "fingerprint_only":
+            ctx.fingerprint_only_files += 1
+            lane_state.fingerprint_only += 1
+        else:
+            ctx.probe_and_fingerprint_files += 1
+            lane_state.probe_and_fingerprint += 1
         ctx.stage_seconds["probe"] += max(0.0, float(output.probe_s))
         ctx.stage_seconds["fingerprint"] += max(0.0, float(output.fingerprint_s))
+
+
+def _cache_hit_progress_details(path: str) -> tuple[str, str, ScanWorkKind]:
+    """Return the visible progress payload for one cache-hit decision."""
+    return ("cache", f"Reused cached analysis {path}", "cache_hit")
+
+
+def _task_progress_details(task: _AnalyzeTask) -> tuple[str, str, ScanWorkKind]:
+    """Return the visible progress payload for one completed analysis task."""
+    if task.work_kind == "fingerprint_only":
+        return (
+            "fingerprint",
+            f"Reused probe, fingerprinted {task.path}",
+            "fingerprint_only",
+        )
+    return (
+        "probe",
+        f"Probed and fingerprinted {task.path}",
+        "probe_and_fingerprint",
+    )
+
+
+def _task_started_progress_details(task: _AnalyzeTask) -> tuple[str, str, ScanWorkKind]:
+    """Return the visible progress payload for one dispatched analysis task."""
+    if task.work_kind == "fingerprint_only":
+        return (
+            "running",
+            f"Reused probe, fingerprinting {task.path}",
+            "fingerprint_only",
+        )
+    return (
+        "running",
+        f"Probing and fingerprinting {task.path}",
+        "probe_and_fingerprint",
+    )
+
+
+def _emit_task_started_progress(ctx: _ScanContext, task: _AnalyzeTask) -> None:
+    """Emit one immediate progress frame while a lane has an active file."""
+    with ctx.state_lock:
+        completed_now, completed_total = _completed_total_locked(ctx)
+    stage, message, work_kind = _task_started_progress_details(task)
+    emit_progress(
+        ctx,
+        stage,
+        completed_now,
+        completed_total,
+        message,
+        force=True,
+        file_counter=completed_now,
+        subject_path=task.path,
+        work_kind=work_kind,
+    )
 
 
 def _process_done_futures(ctx: _ScanContext) -> int:
@@ -503,18 +611,30 @@ def _process_done_futures(ctx: _ScanContext) -> int:
             output = future.result()
         except Exception as exc:
             _record_future_error(ctx, task, exc)
+            completed_now, completed_total = finalize_task(ctx, task)
+            emit_progress(
+                ctx,
+                "error",
+                completed_now,
+                completed_total,
+                f"Failed {task.path}",
+                file_counter=completed_now,
+                subject_path=task.path,
+            )
         else:
             _record_future_success(ctx, task, output)
-        probe_done, probe_total = finalize_task(ctx, task)
-        emit_progress(
-            ctx,
-            "probe",
-            probe_done,
-            probe_total,
-            f"Analyzed {task.path}",
-            file_counter=probe_done,
-            subject_path=task.path,
-        )
+            completed_now, completed_total = finalize_task(ctx, task)
+            stage, message, work_kind = _task_progress_details(task)
+            emit_progress(
+                ctx,
+                stage,
+                completed_now,
+                completed_total,
+                message,
+                file_counter=completed_now,
+                subject_path=task.path,
+                work_kind=work_kind,
+            )
 
 
 def _process_queued_issues(ctx: _ScanContext) -> int:
@@ -608,6 +728,7 @@ def _run_pipeline_loop(ctx: _ScanContext, executor: ThreadPoolExecutor) -> None:
                 ctx,
                 executor,
                 lambda done: _on_future_done(ctx, done),
+                lambda task: _emit_task_started_progress(ctx, task),
             )
             > 0
         ):

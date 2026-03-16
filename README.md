@@ -14,6 +14,8 @@ A Windows-first PySide6 app for finding perceptual duplicate videos using dhash 
 - [Menus](#menus)
 - [Project Structure](#project-structure)
 - [Architecture](#architecture)
+- [Duplicate Detection Flow](#duplicate-detection-flow)
+- [Backend Behavior and Result Quality](#backend-behavior-and-result-quality)
 - [Development](#development)
 - [Troubleshooting](#troubleshooting)
 - [Legal Disclaimer](#legal-disclaimer)
@@ -23,7 +25,7 @@ A Windows-first PySide6 app for finding perceptual duplicate videos using dhash 
 - **Perceptual duplicate detection** - dhash (difference hash) algorithm with 12 frame samples across video duration
 - **Three similarity profiles** - Conservative (0.12), Balanced (0.18, default), Aggressive (0.24) thresholds
 - **Physical drive-aware scanning** - maps root folders to physical drives and allocates worker threads per drive for optimal I/O
-- **Intelligent pre-filtering** - candidates filtered by duration (+-2s), resolution aspect ratio, and frame rate before full distance computation
+- **Intelligent pre-filtering** - candidates filtered by duration (+-3s and 0.96 ratio minimum), aspect ratio, and hash prefilter before full distance computation
 - **Quality-based keep decisions** - scores files by resolution (65%), bitrate (25%), and codec quality (10%) to determine which duplicate to keep
 - **Exact match detection** - byte-level identical file detection using configurable block sampling
 - **Live scan monitoring** - real-time progress per lane showing discovered/analyzed files, I/O throughput, cache hit ratios, and active file
@@ -225,8 +227,8 @@ video-duperz/
 |       |-- db.py                    # SQLite database layer
 |       |-- scanner.py               # File enumeration and physical drive detection
 |       |-- pipeline.py              # Scan orchestration (enumerate/probe/fingerprint/match)
-|       |-- probe.py                 # ffprobe wrapper for video metadata
-|       |-- fingerprint.py           # dhash computation and hamming distance
+|       |-- probe.py                 # Probe backends for video metadata
+|       |-- fingerprint.py           # dhash computation and decoder fallbacks
 |       |-- matcher.py               # Duplicate edge detection and grouping
 |       |-- quality.py               # Quality scoring for keep decisions
 |       |-- exact_match.py           # Byte-level identical file detection
@@ -264,16 +266,204 @@ video-duperz/
 
 - `src/` layout with `video_duperz` package.
 - CLI entry point (`__main__.py`) dispatches to `gui`, `scan`, `export`, or `clean` commands.
-- **Scan pipeline** (`pipeline.py`) orchestrates five stages:
-  1. **Enumerate** - discover video files with physical drive-aware lane distribution
-  2. **Probe** - extract metadata (duration, resolution, fps, codec, bitrate, HDR, audio) via ffprobe
-  3. **Fingerprint** - compute 12 dhash values per video using OpenCV frame sampling
-  4. **Match** - bucket files by characteristics, find duplicate pairs, compute similarity scores
-  5. **Results** - group duplicates and determine default keep file by quality score
+- **Scan pipeline** (`pipeline.py` + `pipeline_runtime.py`) orchestrates:
+  1. **Enumerate** - discover video files, assign them to physical-drive lanes, and sort work per lane by path
+  2. **Prepare / cache lookup** - upsert file rows, load cached probe/fingerprint artifacts, and skip unchanged files when possible
+  3. **Analyze** - for uncached files, run probe plus fingerprint or fingerprint-only reuse work
+  4. **Match** - bucket files by metadata, compare perceptual hashes, and accept duplicate edges under the selected profile
+  5. **Results** - build duplicate groups and choose a default keep candidate by quality score
 - **Physical drive mapping** (`scanner.py`) uses Windows kernel32 APIs to map volumes to physical drives and allocate I/O workers per drive.
 - **Database** (`db.py`) uses SQLite with WAL mode, aggressive PRAGMAs (mmap, cache_size, synchronous=NORMAL), and batch transaction flushing.
 - **GUI threading** uses `QThreadPool` with `QRunnable`-based workers (`ScanWorker`, `ThumbnailPairWorker`, `ExactMatchGroupWorker`) communicating via Qt signals.
 - **Quality scoring** (`quality.py`) combines resolution (65%), bitrate (25%), and codec quality (10%) weights.
+
+## Duplicate Detection Flow
+
+The app does not compare raw files directly. It builds a normalized analysis record for each video, then compares only plausible candidates.
+
+### End-to-end flow
+
+```mermaid
+flowchart TD
+    A[Scan roots] --> B[Enumerate video files]
+    B --> C[Assign each file to physical-drive lane]
+    C --> D[Sort work by path within each lane]
+    D --> E[Upsert file rows in SQLite]
+    E --> F{Cached artifacts valid?}
+    F -- yes: meta + fingerprint --> G[Cache hit<br/>skip analyze]
+    F -- partial: meta only --> H[Fingerprint only]
+    F -- no --> I[Probe + fingerprint]
+    H --> J[Persist fingerprint + decoder provenance]
+    I --> K[Persist probe metadata]
+    K --> J
+    G --> L[Load match inputs]
+    J --> L
+    L --> M[Bucket by duration + aspect ratio]
+    M --> N[Candidate gate<br/>duration/aspect checks]
+    N --> O[Fast prefilter on 3 hash positions]
+    O --> P[Full normalized median hash distance]
+    P --> Q{Distance <= profile threshold?}
+    Q -- yes --> R[Create duplicate edge]
+    Q -- no --> S[Discard pair]
+    R --> T[Union connected files into groups]
+    T --> U[Choose default keep file by quality]
+```
+
+### What each stage actually does
+
+| Stage | What it does | Persisted output |
+|---|---|---|
+| Enumerate | Walks source roots, filters by configured extensions, records file path, size, mtime, ctime, source root, and physical-drive lane. | `files` rows are upserted later during prepare. |
+| Prepare | Writes/updates `files`, checks existing cached artifacts by `path + size + mtime_ns + probe_backend`, and decides between cache hit, fingerprint-only, or full analyze. | Updated `files` rows and in-memory scheduling decisions. |
+| Probe | Extracts `VideoMeta`: duration, width, height, fps, codec, bitrate, audio flags/codecs/bitrates/languages, subtitle languages, and HDR flag. | `video_meta` row with `probed_at`, source file stats, and optional probe error. |
+| Fingerprint | Samples 12 timestamps across the duration, decodes frames, converts them to grayscale, downsizes to `9x8` comparisons via a `32x32` intermediate, and stores 12 dhash values. | `fingerprints` row plus `fingerprint_decoder_provenance`. |
+| Match | Loads persisted `MatchItem` records, buckets by coarse duration/aspect, filters candidates, then compares hash distance under the chosen profile threshold. | Duplicate edges and grouped duplicate sets. |
+| Group / keep choice | Turns accepted edges into connected components and picks a default keep candidate. | `duplicate_groups` and `duplicate_items` rows. |
+
+### What "analyze" means
+
+In the runtime, **analyze** is the expensive per-file phase that produces the material needed for matching.
+
+- `cache_hit`: both probe metadata and fingerprint are already valid in the database, so no worker is launched.
+- `fingerprint_only`: probe metadata is already valid, so the worker reuses cached `VideoMeta` and only rebuilds the fingerprint.
+- `probe_and_fingerprint`: the worker probes the file first, then fingerprints it.
+
+This is why resumed scans can be much faster than fresh scans when files are unchanged: unchanged files are either skipped entirely or avoid re-probing.
+
+### Resume and cache reuse flow
+
+```mermaid
+flowchart TD
+    A[Resumed scan starts] --> B[Re-enumerate current files]
+    B --> C[Load cached artifacts by<br/>path + size + mtime_ns + probe_backend]
+    C --> D{Cached probe metadata?}
+    D -- no --> E[Queue full analyze<br/>probe + fingerprint]
+    D -- yes --> F{Cached fingerprint present<br/>and algo version matches?}
+    F -- yes --> G[Cache hit<br/>skip worker entirely]
+    F -- no --> H[Queue fingerprint-only work<br/>reuse cached VideoMeta]
+    E --> I[Persist new metadata + fingerprint]
+    H --> J[Persist new fingerprint only]
+    G --> K[Use persisted match input]
+    I --> K
+    J --> K
+```
+
+### What "probe" means
+
+Probe is the metadata extraction step. It does not compare duplicates by itself; it shapes the later candidate search.
+
+Probe data is used for:
+
+- bucket construction: duration bucket and aspect-ratio bucket
+- candidate rejection: duration difference, duration ratio, and aspect-ratio delta
+- UI / export columns: resolution, codec, bitrate, HDR, audio/subtitle metadata
+- default keep scoring: quality scoring uses some of the same media facts
+
+If probe fails for a file, the runtime records a probe error and that file does not participate in matching.
+
+### What "fingerprint" means
+
+Fingerprint is the perceptual signature used for actual duplicate similarity.
+
+- The app samples 12 timestamps across the video duration.
+- For each sample it decodes a frame to grayscale.
+- It computes a 64-bit dhash per sample.
+- The matcher first does a quick median check on 3 positions.
+- If that survives, it computes the normalized median Hamming distance across all 12 hashes.
+
+Two files are considered duplicates only if that final normalized distance is at or below the active profile threshold:
+
+| Profile | Threshold |
+|---|---|
+| conservative | `0.12` |
+| balanced | `0.18` |
+| aggressive | `0.24` |
+
+Lower thresholds are stricter.
+
+## Backend Behavior and Result Quality
+
+There are two separate backend choices in the current implementation:
+
+1. **Probe backend**: user-selectable per scan
+2. **Fingerprint decoder backend**: chosen automatically per file through fallback logic
+
+They affect different parts of the pipeline.
+
+### Probe backends
+
+| Probe backend | Used for | Notes |
+|---|---|---|
+| `pyav` | Metadata extraction only | Reads container/stream info through PyAV. |
+| `ffprobe` | Metadata extraction only | Shells out to `ffprobe` and parses JSON output. |
+
+The selected probe backend is persisted with the scan and is part of cache validity. Cached probe/fingerprint data for `pyav` does not satisfy an `ffprobe` scan, and vice versa.
+
+### Fingerprint decoder backends
+
+Fingerprinting always ends at the same hash representation, but the frame decoder used to obtain those frames can differ:
+
+| Decoder backend | Used for | Notes |
+|---|---|---|
+| `opencv` | Fingerprint frame decode | Preferred first for normal formats. |
+| `pyav` | Fingerprint frame decode fallback | Used when OpenCV is unavailable or unsuitable. |
+| `ffmpeg` | Fingerprint frame decode fallback or first choice for problematic formats | Also gets a longer guarded timeout for problematic formats. |
+
+For problematic formats (`.wmv`, `.asf`, `.avi`, `.mov`, `.mpg`, `.mpeg`, `.flv`), fingerprinting now starts with `ffmpeg` instead of `opencv`, and each decoder attempt gets a `4x` timeout.
+
+### How backend choices affect comparison results
+
+#### Probe backend impact
+
+Changing the probe backend can change:
+
+- exact duration value
+- fps value
+- width/height interpretation in odd containers
+- bitrate and language metadata completeness
+- HDR detection fields
+
+Those differences matter because matching uses probe metadata to decide which pairs are even worth comparing. If two files end up in different duration/aspect neighborhoods, they may never reach the hash-comparison step.
+
+So:
+
+- the probe backend mainly affects **candidate generation and filtering**
+- it can change recall/false positives indirectly
+- it does **not** change the dhash algorithm itself
+
+#### Fingerprint decoder impact
+
+Changing the fingerprint decoder path can change:
+
+- which exact frame is decoded near a timestamp
+- how corrupted or awkward containers are tolerated
+- whether a frame sample is missing or substituted
+
+That means decoder choice can change the actual hash values, even though the final hash algorithm is still the same dhash implementation. In practice:
+
+- stable decodes across backends usually produce very similar results
+- awkward formats can produce meaningfully different hashes depending on decoder
+- this is why decoder provenance is stored, and why problematic formats prefer `ffmpeg` first
+
+### Important implementation details
+
+- A scan compares files only within the same scan and same selected probe backend.
+- Cache reuse requires matching `path`, `size`, `mtime_ns`, probe backend, and fingerprint algorithm version.
+- Resume never means "freeze worker threads and continue later." It means re-enumerate, reload persisted artifacts, skip unchanged fully processed files, and continue on the same `scan_id`.
+- Progress rows distinguish:
+  - `cache` -> reused probe + fingerprint
+  - `fingerprint` -> reused probe, rebuilt fingerprint
+  - `probe` -> rebuilt metadata + fingerprint
+
+### Why the app can report duplicates across different containers/codecs
+
+The final duplicate decision is perceptual, not container-based.
+
+- Probe metadata only narrows candidate pairs.
+- Fingerprints compare sampled visual content.
+- Grouping is based on accepted perceptual duplicate edges.
+
+That is why files such as `.mkv` and `.mp4`, or remuxed/re-encoded copies, can still be grouped together when their sampled visual content stays close enough.
 
 ## Development
 

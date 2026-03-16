@@ -472,6 +472,11 @@ def test_run_scan_probe_parallel_lanes_and_telemetry(monkeypatch) -> None:
         )
         for step in telemetry_frames
     )
+    assert any(
+        any(snapshot.active_file for snapshot in (step.lane_snapshots or []))
+        for step in progress
+        if step.stage in {"running", "fingerprint", "probe"}
+    )
 
 
 def test_run_scan_burst_mode_allows_multiple_workers_per_lane_up_to_caps(
@@ -1063,6 +1068,7 @@ def test_resume_skips_unchanged_files_and_preserves_analysis_timestamps(
     enumerate_round = 0
     pause_event = Event()
     analyze_calls: list[tuple[str, bool]] = []
+    resumed_progress: list[ScanProgress] = []
 
     monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
     monkeypatch.setattr(
@@ -1136,6 +1142,7 @@ def test_resume_skips_unchanged_files_and_preserves_analysis_timestamps(
             progress_emit_interval_ms=50,
             progress_emit_every_files=1,
             resume_scan_id=paused.scan_id,
+            progress_cb=resumed_progress.append,
         )
 
         assert resumed.scan_id == paused.scan_id
@@ -1143,6 +1150,20 @@ def test_resume_skips_unchanged_files_and_preserves_analysis_timestamps(
         assert resumed.metrics["resume_cache_hits"] == 1
         assert resumed.metrics["resume_reprocessed_files"] == 1
         assert _analysis_timestamps(db, first.path) == first_timestamps_before
+        assert any(
+            step.stage == "cache"
+            and step.work_kind == "cache_hit"
+            and step.subject_path == first.path
+            and step.completed_files == 1
+            for step in resumed_progress
+        )
+        assert any(
+            step.stage == "probe"
+            and step.work_kind == "probe_and_fingerprint"
+            and step.subject_path == second.path
+            and step.completed_files == 2
+            for step in resumed_progress
+        )
 
 
 def test_resume_dispatch_order_remains_lane_local_alpha(monkeypatch, tmp_path) -> None:
@@ -1532,6 +1553,7 @@ def test_resume_reprocesses_partial_cached_state_without_reprobing(
 
     monkeypatch.setattr(pipeline, "enumerate_video_files", _fake_enumerate)
     monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)
+    progress_steps: list[ScanProgress] = []
 
     with Database(tmp_path / "resume-partial.db") as db:
         scan_id = db.create_scan(
@@ -1573,6 +1595,7 @@ def test_resume_reprocesses_partial_cached_state_without_reprobing(
             progress_emit_interval_ms=50,
             progress_emit_every_files=1,
             resume_scan_id=scan_id,
+            progress_cb=progress_steps.append,
         )
 
         probe_timestamp_after = db.conn.execute(
@@ -1599,6 +1622,16 @@ def test_resume_reprocesses_partial_cached_state_without_reprobing(
         assert fingerprint_row is not None
         assert str(probe_timestamp_before["probed_at"]) == str(
             probe_timestamp_after["probed_at"]
+        )
+        assert any(
+            step.stage == "fingerprint"
+            and step.work_kind == "fingerprint_only"
+            and step.subject_path == file_path
+            for step in progress_steps
+        )
+        assert not any(
+            step.stage == "probe" and step.subject_path == file_path
+            for step in progress_steps
         )
 
 
@@ -1682,6 +1715,35 @@ def test_resume_reprocesses_when_fingerprint_algo_version_changes(
         assert analyze_calls == [(file_path, True)]
         assert resumed.metrics["resume_cache_hits"] == 0
         assert resumed.metrics["resume_reprocessed_files"] == 1
+
+
+def test_runtime_analyze_reuses_cached_meta_without_calling_probe(monkeypatch) -> None:
+    probe_calls: list[str] = []
+
+    def _fake_probe_video(path: str, **kwargs: object) -> VideoMeta:
+        _ = kwargs
+        probe_calls.append(path)
+        return _analysis_meta()
+
+    monkeypatch.setattr(pipeline, "probe_video", _fake_probe_video)
+    monkeypatch.setattr(
+        pipeline,
+        "build_fingerprint_record_with_fallback",
+        lambda **kwargs: SimpleNamespace(
+            record=SimpleNamespace(hashes=[1, 2, 3]),
+            decoder_backend="opencv",
+            provenance_json="{}",
+        ),
+    )
+
+    analyze = pipeline._build_runtime_analyze_file("ffprobe")
+    cached_meta = _analysis_meta()
+    output = analyze("cached.mp4", cached_meta)
+
+    assert output.meta == cached_meta
+    assert output.probe_s == 0.0
+    assert output.fingerprint_s >= 0.0
+    assert probe_calls == []
 
 
 def test_resume_keeps_duplicate_groups_correct_after_pause(

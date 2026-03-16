@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from .models import ScanLaneSnapshot, ScanProgress
+from .models import ScanLaneSnapshot, ScanProgress, ScanWorkKind
 
 if TYPE_CHECKING:
     from .pipeline_runtime_context import ScanContext as _ScanContext
@@ -81,6 +81,10 @@ def _clone_lane_snapshots_locked(
                 analyzed=lane.analyzed,
                 analyzed_bytes=lane.analyzed_bytes,
                 completed=lane.completed,
+                discovery_complete=lane.discovery_complete,
+                cache_hits=lane.cache_hits,
+                fingerprint_only=lane.fingerprint_only,
+                probe_and_fingerprint=lane.probe_and_fingerprint,
                 discovered_files_per_s=_rate(lane.discovered, elapsed_s),
                 discovered_mib_per_s=_mib_per_s(lane.discovered_bytes, elapsed_s),
                 analyzed_files_per_s=_rate(lane.analyzed, elapsed_s),
@@ -102,11 +106,18 @@ def emit_progress(
     force: bool = False,
     file_counter: int | None = None,
     subject_path: str = "",
+    work_kind: ScanWorkKind | None = None,
 ) -> None:
     """Emit a progress frame when stage or throughput thresholds require it."""
     elapsed_s = max(0.0, time.perf_counter() - ctx.scan_started_at)
     with ctx.state_lock:
         snapshots = _clone_lane_snapshots_locked(ctx, elapsed_s)
+        completed_files = int(ctx.cached_files + ctx.analyzed_files)
+        total_work_files = (
+            len(ctx.enum_files)
+            if ctx.enum_finished and ctx.enum_files
+            else max(1, ctx.prepared_files)
+        )
         counter = int(
             file_counter
             if file_counter is not None
@@ -140,6 +151,7 @@ def emit_progress(
                 total=total,
                 message=message,
                 subject_path=subject_path,
+                work_kind=work_kind,
                 active_workers=ctx.active_workers,
                 worker_limit=effective_worker_limit_locked(ctx),
                 enumerated_roots=ctx.enumerated_roots,
@@ -157,6 +169,10 @@ def emit_progress(
                 cache_hit_ratio=cache_ratio,
                 elapsed_s=elapsed_s,
                 total_analyze_files=ctx.total_analyze_files,
+                completed_files=completed_files,
+                total_work_files=total_work_files,
+                fingerprint_only_files=ctx.fingerprint_only_files,
+                probe_and_fingerprint_files=ctx.probe_and_fingerprint_files,
                 lane_snapshots=snapshots,
             )
         )

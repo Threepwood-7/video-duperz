@@ -20,6 +20,7 @@ from .models import (
     ScanIssue,
     ScanLaneSnapshot,
     ScanProgress,
+    ScanWorkKind,
     VideoMeta,
     VideoRecord,
 )
@@ -56,6 +57,7 @@ class AnalyzeTask:
     path: str
     size: int
     mtime_ns: int
+    work_kind: ScanWorkKind
 
 
 @dataclass(slots=True)
@@ -93,6 +95,8 @@ class ScanContext:
     lane_states: dict[int, ScanLaneSnapshot]
     lane_queues: dict[int, deque[AnalyzeTask]]
     root_to_lane: dict[str, int]
+    lane_pending_roots: dict[int, int]
+    enumerated_root_keys: set[str]
     dispatch_lane_cursor: int
     active_by_lane: dict[int, int]
     futures: dict[Any, AnalyzeTask]
@@ -120,6 +124,8 @@ class ScanContext:
     cached_files: int
     resume_cache_hits: int
     resume_reprocessed_files: int
+    fingerprint_only_files: int
+    probe_and_fingerprint_files: int
     fingerprinted_files: int
     prepared_files: int
     discovered_files: int
@@ -227,10 +233,15 @@ def _build_lane_runtime_caps(
 
 def _build_lane_runtime_state(
     scan_plan: Any,
-) -> tuple[dict[int, ScanLaneSnapshot], dict[int, deque[AnalyzeTask]]]:
+) -> tuple[
+    dict[int, ScanLaneSnapshot],
+    dict[int, deque[AnalyzeTask]],
+    dict[int, int],
+]:
     """Initialize per-lane telemetry snapshots and pending task queues."""
     lane_states: dict[int, ScanLaneSnapshot] = {}
     lane_queues: dict[int, deque[AnalyzeTask]] = {}
+    lane_pending_roots: dict[int, int] = {}
     for lane_idx, group in enumerate(scan_plan.root_groups):
         lane_states[lane_idx] = ScanLaneSnapshot(
             lane=lane_idx,
@@ -238,7 +249,8 @@ def _build_lane_runtime_state(
             state="pending",
         )
         lane_queues[lane_idx] = deque()
-    return lane_states, lane_queues
+        lane_pending_roots[lane_idx] = len(group)
+    return lane_states, lane_queues, lane_pending_roots
 
 
 def _build_root_to_lane(scan_plan: Any) -> dict[str, int]:
@@ -323,7 +335,7 @@ def create_context(
         scan_plan,
         runtime_settings.probe_worker_mode,
     )
-    lane_states, lane_queues = _build_lane_runtime_state(scan_plan)
+    lane_states, lane_queues, lane_pending_roots = _build_lane_runtime_state(scan_plan)
     started_at = time.perf_counter()
     return ScanContext(
         db=db,
@@ -357,6 +369,8 @@ def create_context(
         lane_states=lane_states,
         lane_queues=lane_queues,
         root_to_lane=_build_root_to_lane(scan_plan),
+        lane_pending_roots=lane_pending_roots,
+        enumerated_root_keys=set(),
         dispatch_lane_cursor=0,
         active_by_lane=dict.fromkeys(lane_states, 0),
         futures={},
@@ -384,6 +398,8 @@ def create_context(
         cached_files=0,
         resume_cache_hits=0,
         resume_reprocessed_files=0,
+        fingerprint_only_files=0,
+        probe_and_fingerprint_files=0,
         fingerprinted_files=0,
         prepared_files=0,
         discovered_files=0,

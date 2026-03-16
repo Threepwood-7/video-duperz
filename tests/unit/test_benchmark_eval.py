@@ -98,6 +98,11 @@ def test_build_benchmark_sample_plan_mixed_240_prefers_risky_then_normal(
         "S:/02.mp4",
         "S:/03.mkv",
     ]
+    risky_by_path = {item.path: item.is_risky for item in plan.files}
+    assert risky_by_path["R:/01.avi"] is True
+    assert risky_by_path["R:/02.wmv"] is True
+    assert risky_by_path["S:/01.mov"] is True
+    assert risky_by_path["R:/03.mp4"] is False
 
 
 def test_build_benchmark_sample_plan_incomplete_prioritizes_incomplete_paths(
