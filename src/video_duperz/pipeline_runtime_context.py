@@ -92,10 +92,8 @@ class ScanContext:
     lane_runtime_caps: dict[int, int]
     lane_states: dict[int, ScanLaneSnapshot]
     lane_queues: dict[int, deque[AnalyzeTask]]
-    pending_tasks: deque[AnalyzeTask]
     root_to_lane: dict[str, int]
-    ready_lanes: deque[int]
-    ready_set: set[int]
+    dispatch_lane_cursor: int
     active_by_lane: dict[int, int]
     futures: dict[Any, AnalyzeTask]
     done_futures: deque[Any]
@@ -358,10 +356,8 @@ def create_context(
         lane_runtime_caps=lane_runtime_caps,
         lane_states=lane_states,
         lane_queues=lane_queues,
-        pending_tasks=deque(),
         root_to_lane=_build_root_to_lane(scan_plan),
-        ready_lanes=deque(),
-        ready_set=set(),
+        dispatch_lane_cursor=0,
         active_by_lane=dict.fromkeys(lane_states, 0),
         futures={},
         done_futures=deque(),

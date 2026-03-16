@@ -326,11 +326,17 @@ def _drain_enum_queue(ctx: _ScanContext) -> list[VideoRecord | object]:
 def _process_discovered_batch(ctx: _ScanContext, batch: list[VideoRecord]) -> None:
     if not batch:
         return
-    ordered_batch = sorted(batch, key=_video_record_sort_key)
+    lane_sorted_batch = sorted(
+        batch,
+        key=lambda record: (
+            int(getattr(record, "parallel_lane", 0)),
+            *_video_record_sort_key(record),
+        ),
+    )
     upsert_payload: list[dict[str, object]] = []
     cache_payload: list[dict[str, object]] = []
     valid: list[tuple[VideoRecord, int, str, int, str]] = []
-    for file in ordered_batch:
+    for file in lane_sorted_batch:
         lane = int(getattr(file, "parallel_lane", 0))
         source_root = str(getattr(file, "source_root", ""))
         path = str(getattr(file, "path", ""))
@@ -389,6 +395,9 @@ def _process_discovered_batch(ctx: _ScanContext, batch: list[VideoRecord]) -> No
         cache_payload,
         probe_backend=ctx.probe_backend,
     )
+    valid.sort(
+        key=lambda item: (item[1], *_video_record_sort_key(item[0])),
+    )
     for file, lane, source_root, file_size, path in valid:
         file_id = int(by_path.get(path, 0))
         if file_id <= 0:
@@ -419,7 +428,6 @@ def _process_discovered_batch(ctx: _ScanContext, batch: list[VideoRecord]) -> No
         with ctx.state_lock:
             if ctx.resume_scan_id is not None:
                 ctx.resume_reprocessed_files += 1
-            ctx.pending_tasks.append(task)
             ctx.lane_queues.setdefault(lane, deque()).append(task)
             lane_state = ensure_lane_state_locked(ctx, lane, source_root)
             lane_state.queued += 1

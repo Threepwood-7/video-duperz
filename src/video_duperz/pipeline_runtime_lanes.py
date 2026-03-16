@@ -67,14 +67,35 @@ def refresh_lane_state_locked(ctx: _ScanContext, lane: int) -> None:
         state.state = "idle"
 
 
-def queue_lane_if_ready_locked(ctx: _ScanContext, lane: int) -> None:
-    """Queue a lane for scheduling when capacity and pending work allow it.
+def _ordered_lane_ids_locked(ctx: _ScanContext) -> list[int]:
+    """Return the stable lane ordering used by the round-robin dispatcher."""
+    return sorted(int(lane) for lane in ctx.lane_queues)
 
-    Args:
-        ctx: Shared scan runtime context.
-        lane: Lane identifier that may be ready for worker submission.
-    """
-    _ = ctx, lane
+
+def _next_ready_lane_locked(ctx: _ScanContext) -> int | None:
+    """Return the next lane that can submit work under the current caps."""
+    lane_ids = _ordered_lane_ids_locked(ctx)
+    if not lane_ids:
+        return None
+    start = int(ctx.dispatch_lane_cursor) % len(lane_ids)
+    ordered = lane_ids[start:] + lane_ids[:start]
+    for lane in ordered:
+        if not ctx.lane_queues.get(lane):
+            continue
+        if int(ctx.active_by_lane.get(lane, 0)) >= lane_runtime_cap_locked(ctx, lane):
+            continue
+        return lane
+    return None
+
+
+def _advance_lane_cursor_locked(ctx: _ScanContext, lane: int) -> None:
+    """Advance the scheduler cursor after dispatching one lane task."""
+    lane_ids = _ordered_lane_ids_locked(ctx)
+    if not lane_ids:
+        ctx.dispatch_lane_cursor = 0
+        return
+    lane_index = lane_ids.index(int(lane))
+    ctx.dispatch_lane_cursor = (lane_index + 1) % len(lane_ids)
 
 
 def submit_ready_lanes(
@@ -97,21 +118,20 @@ def submit_ready_lanes(
         with ctx.state_lock:
             if len(ctx.futures) >= effective_worker_limit_locked(ctx):
                 return submitted
-            if not ctx.pending_tasks:
+            lane = _next_ready_lane_locked(ctx)
+            if lane is None:
                 return submitted
-            task = ctx.pending_tasks[0]
+            lane_queue = ctx.lane_queues.get(lane)
+            if not lane_queue:
+                return submitted
+            task = lane_queue.popleft()
             lane_active_count = int(ctx.active_by_lane.get(task.lane, 0))
-            if lane_active_count >= lane_runtime_cap_locked(ctx, task.lane):
-                return submitted
-            ctx.pending_tasks.popleft()
-            lane_queue = ctx.lane_queues.get(task.lane)
-            if lane_queue:
-                lane_queue.popleft()
             lane_state = ensure_lane_state_locked(ctx, task.lane, task.source_root)
             lane_state.queued = max(0, lane_state.queued - 1)
             lane_state.active_file = task.path
             ctx.active_by_lane[task.lane] = lane_active_count + 1
             ctx.active_workers += 1
+            _advance_lane_cursor_locked(ctx, lane)
             refresh_lane_state_locked(ctx, task.lane)
         future = executor.submit(ctx.analyze_file, task.path, task.cached_meta)
         future.add_done_callback(on_future_done)
@@ -141,7 +161,6 @@ def finalize_task(ctx: _ScanContext, task: _AnalyzeTask) -> tuple[int, int]:
         lane_state.analyzed_bytes += task.size
         lane_state.completed += 1
         lane_state.active_file = ""
-        queue_lane_if_ready_locked(ctx, task.lane)
         refresh_lane_state_locked(ctx, task.lane)
         return ctx.analyzed_files, max(1, ctx.total_analyze_files)
 
@@ -153,9 +172,6 @@ def apply_cancel_state(ctx: _ScanContext) -> None:
         ctx: Shared scan runtime context.
     """
     with ctx.state_lock:
-        ctx.ready_lanes.clear()
-        ctx.ready_set.clear()
-        ctx.pending_tasks.clear()
         for lane_id, queue in ctx.lane_queues.items():
             queue.clear()
             refresh_lane_state_locked(ctx, lane_id)

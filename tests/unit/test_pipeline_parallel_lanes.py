@@ -690,12 +690,14 @@ def test_run_scan_waits_for_enumeration_before_analysis_to_preserve_order(
     assert min(analyze_starts) >= timeline["enum_end"]
 
 
-def test_run_scan_dispatches_in_global_alpha_order_across_roots(monkeypatch) -> None:
+def test_run_scan_dispatches_in_lane_local_alpha_order_across_roots(
+    monkeypatch,
+) -> None:
     files = [
-        _video("z-root/zeta.mp4", lane=1),
+        _video("z-root/zeta.mp4", lane=2),
         _video("a-root/alpha.mp4", lane=0),
         _video("a-root/bravo.mp4", lane=0),
-        _video("m-root/mike.mp4", lane=2),
+        _video("m-root/mike.mp4", lane=1),
     ]
     analyze_calls: list[str] = []
 
@@ -748,9 +750,9 @@ def test_run_scan_dispatches_in_global_alpha_order_across_roots(monkeypatch) -> 
 
     expected_order = [
         "a-root/alpha.mp4",
-        "a-root/bravo.mp4",
         "m-root/mike.mp4",
         "z-root/zeta.mp4",
+        "a-root/bravo.mp4",
     ]
     assert result.fingerprinted_files == 4
     assert analyze_calls == expected_order
@@ -819,6 +821,71 @@ def test_run_scan_completion_can_finish_out_of_order_while_dispatch_stays_sorted
 
     assert analyze_calls == ["a-root/alpha.mp4", "b-root/bravo.mp4"]
     assert completed_paths == ["b-root/bravo.mp4", "a-root/alpha.mp4"]
+
+
+def test_run_scan_burst_mode_preserves_lane_fifo_order(monkeypatch) -> None:
+    files = [
+        _video("lane0/charlie.mp4", lane=0),
+        _video("lane1/delta.mp4", lane=1),
+        _video("lane0/alpha.mp4", lane=0),
+        _video("lane0/bravo.mp4", lane=0),
+    ]
+    analyze_calls: list[str] = []
+
+    monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
+    monkeypatch.setattr(
+        pipeline, "ensure_fingerprint_fallback_chain_available", lambda: None
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_physical_drive_scan_plan",
+        lambda roots, max_workers, drive_worker_overrides=None: _lane_plan_for_roots(
+            roots,
+            lane_worker_limits={0: 2, 1: 1},
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline, "enumerate_video_files", lambda **kwargs: (list(reversed(files)), [])
+    )
+    monkeypatch.setattr(
+        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
+    )
+    monkeypatch.setattr(
+        pipeline, "build_duplicate_groups", lambda items, edges, profile: []
+    )
+
+    def _fake_analyze(path: str, cached_meta: object | None) -> pipeline._AnalyzeOutput:
+        analyze_calls.append(path)
+        time.sleep(0.01)
+        return pipeline._AnalyzeOutput(
+            meta=SimpleNamespace(duration_s=1.0),
+            hashes=[11, 22, 33],
+        )
+
+    monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)
+
+    db = _FakeDb()
+    result = pipeline.run_scan(
+        db=db,  # type: ignore[arg-type]
+        roots=["L:/lane0", "M:/lane1"],
+        extensions=["mp4"],
+        max_workers=1,
+        probe_backend="ffprobe",
+        probe_worker_mode="burst",
+        db_batch_size=64,
+        db_flush_interval_ms=200,
+        enum_queue_max=512,
+        progress_emit_interval_ms=50,
+        progress_emit_every_files=1,
+    )
+
+    assert result.fingerprinted_files == len(files)
+    assert analyze_calls == [
+        "lane0/alpha.mp4",
+        "lane1/delta.mp4",
+        "lane0/bravo.mp4",
+        "lane0/charlie.mp4",
+    ]
 
 
 def test_run_scan_cancellation_during_streaming_overlap(monkeypatch) -> None:
@@ -1078,7 +1145,7 @@ def test_resume_skips_unchanged_files_and_preserves_analysis_timestamps(
         assert _analysis_timestamps(db, first.path) == first_timestamps_before
 
 
-def test_resume_dispatch_order_remains_global_alpha(monkeypatch, tmp_path) -> None:
+def test_resume_dispatch_order_remains_lane_local_alpha(monkeypatch, tmp_path) -> None:
     alpha = _video_with_stats(str(tmp_path / "alpha.mp4"), lane=0, mtime_ns=11)
     bravo = _video_with_stats(str(tmp_path / "bravo.mp4"), lane=0, mtime_ns=22)
     zulu = _video_with_stats(str(tmp_path / "zulu.mp4"), lane=0, mtime_ns=33)
@@ -1164,7 +1231,7 @@ def test_resume_dispatch_order_remains_global_alpha(monkeypatch, tmp_path) -> No
         ]
 
 
-def test_resume_with_additive_roots_merges_new_files_into_global_alpha_order(
+def test_resume_with_additive_roots_merges_new_files_into_lane_local_alpha_order(
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -1256,9 +1323,9 @@ def test_resume_with_additive_roots_merges_new_files_into_global_alpha_order(
 
         assert resumed.scan_id == paused.scan_id
         assert analyze_calls == [
+            str(original_root / "delta.mp4"),
             str(added_root / "alpha.mp4"),
             str(added_root / "bravo.mp4"),
-            str(original_root / "delta.mp4"),
         ]
 
 
