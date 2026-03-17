@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from time import monotonic
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -16,12 +17,20 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
+    QDoubleSpinBox,
+    QGroupBox,
+    QLabel,
     QMessageBox,
     QProgressBar,
     QPushButton,
     QSpinBox,
+    QToolButton,
     QWidget,
 )
+
+if TYPE_CHECKING:
+    from PySide6.QtGui import QAction
 
 from video_duperz.models import (
     DuplicateGroup,
@@ -52,6 +61,9 @@ def _dup_item(
     sim: float,
     *,
     size: int = 100,
+    duration_s: float = 1.0,
+    codec: str = "h264",
+    is_hdr: bool = False,
 ) -> DuplicateItem:
     return DuplicateItem(
         file_id=file_id,
@@ -59,20 +71,194 @@ def _dup_item(
         size=size,
         mtime_ns=1_700_000_000_000_000_000 + file_id,
         ctime_ns=1_700_000_000_000_000_000 + file_id,
-        duration_s=1.0,
+        duration_s=duration_s,
         width=width,
         height=height,
         bitrate=bitrate,
-        codec="h264",
+        codec=codec,
         audio_codec="aac",
         audio_bitrate=128000,
         audio_languages="eng",
         subtitle_languages="eng",
-        is_hdr=False,
+        is_hdr=is_hdr,
         similarity_score=sim,
         keep_default=file_id % 2 == 1,
         selected_action="keep",
     )
+
+
+def _build_results_filter_groups(tmp_path: Path) -> list[DuplicateGroup]:
+    """Return sample duplicate groups used by results filter tests."""
+    return [
+        DuplicateGroup(
+            scan_id=1,
+            profile="balanced",
+            created_at="now",
+            items=[
+                _dup_item(
+                    11,
+                    str(tmp_path / "alpha" / "alpha_keep_big.mp4"),
+                    320,
+                    240,
+                    1000,
+                    1.0,
+                    size=220,
+                ),
+                _dup_item(
+                    12,
+                    str(tmp_path / "alpha" / "alpha_skip_small.mp4"),
+                    320,
+                    240,
+                    900,
+                    0.98,
+                    size=40,
+                ),
+            ],
+            total_size_bytes=260,
+            group_id=42,
+        ),
+        DuplicateGroup(
+            scan_id=1,
+            profile="balanced",
+            created_at="now",
+            items=[
+                _dup_item(
+                    13,
+                    str(tmp_path / "beta" / "beta_keep_1.mp4"),
+                    640,
+                    360,
+                    1200,
+                    0.97,
+                    size=90,
+                ),
+                _dup_item(
+                    14,
+                    str(tmp_path / "beta" / "beta_keep_2.mp4"),
+                    640,
+                    360,
+                    1100,
+                    0.96,
+                    size=80,
+                ),
+                _dup_item(
+                    15,
+                    str(tmp_path / "beta" / "beta_skip_3.mp4"),
+                    640,
+                    360,
+                    1000,
+                    0.95,
+                    size=70,
+                ),
+            ],
+            total_size_bytes=240,
+            group_id=43,
+        ),
+        DuplicateGroup(
+            scan_id=1,
+            profile="balanced",
+            created_at="now",
+            items=[
+                _dup_item(
+                    16,
+                    str(tmp_path / "gamma" / "gamma_skip_huge.mp4"),
+                    800,
+                    450,
+                    1500,
+                    0.94,
+                    size=300,
+                ),
+                _dup_item(
+                    17,
+                    str(tmp_path / "gamma" / "gamma_keep_tiny.mp4"),
+                    800,
+                    450,
+                    1400,
+                    0.93,
+                    size=20,
+                ),
+            ],
+            total_size_bytes=320,
+            group_id=44,
+        ),
+    ]
+
+
+def _build_results_structured_filter_groups(tmp_path: Path) -> list[DuplicateGroup]:
+    """Return duplicate groups with varied metadata for structured filters."""
+    return [
+        DuplicateGroup(
+            scan_id=1,
+            profile="balanced",
+            created_at="now",
+            items=[
+                _dup_item(
+                    31,
+                    str(tmp_path / "core" / "feature_cut_h264.mp4"),
+                    1920,
+                    1080,
+                    4_500_000,
+                    0.991,
+                    size=25 * 1024 * 1024,
+                    duration_s=180.0,
+                    codec="h264",
+                    is_hdr=False,
+                ),
+                _dup_item(
+                    32,
+                    str(tmp_path / "core" / "feature_cut_hevc_hdr.mp4"),
+                    3840,
+                    2160,
+                    8_200_000,
+                    0.997,
+                    size=80 * 1024 * 1024,
+                    duration_s=240.0,
+                    codec="hevc",
+                    is_hdr=True,
+                ),
+            ],
+            total_size_bytes=(25 + 80) * 1024 * 1024,
+            group_id=61,
+        ),
+        DuplicateGroup(
+            scan_id=1,
+            profile="balanced",
+            created_at="now",
+            items=[
+                _dup_item(
+                    33,
+                    str(tmp_path / "extras" / "extras_vp9_low.mp4"),
+                    1280,
+                    720,
+                    1_700_000,
+                    0.945,
+                    size=12 * 1024 * 1024,
+                    duration_s=95.0,
+                    codec="vp9",
+                    is_hdr=False,
+                ),
+                _dup_item(
+                    34,
+                    str(tmp_path / "extras" / "extras_h264_short.mp4"),
+                    854,
+                    480,
+                    900_000,
+                    0.905,
+                    size=6 * 1024 * 1024,
+                    duration_s=40.0,
+                    codec="h264",
+                    is_hdr=False,
+                ),
+            ],
+            total_size_bytes=(12 + 6) * 1024 * 1024,
+            group_id=62,
+        ),
+    ]
+
+
+def _results_menu_actions(window: MainWindow) -> list[QAction]:
+    """Return the actions currently exposed by the top-level Actions menu."""
+    assert window.actions_menu is not None
+    return list(window.actions_menu.actions())
 
 
 def _wait_until_table_text(
@@ -429,6 +615,7 @@ def test_results_identical_column_lazy_compare_and_cache(tmp_path: Path) -> None
         assert group_b_symbol != ""
 
         window.results_view.filter_include_path_edit.setText("g2_")
+        window.results_view._apply_filter_inputs()
         for _ in range(50):
             app.processEvents()
         assert table.rowCount() == 2
@@ -498,99 +685,7 @@ def test_view_sort_menu_and_results_filters(tmp_path: Path) -> None:
         settings.scan_roots = [str(tmp_path)]
         window = MainWindow(db=db, settings=settings)
         window.show()
-
-        group_a = DuplicateGroup(
-            scan_id=1,
-            profile="balanced",
-            created_at="now",
-            items=[
-                _dup_item(
-                    11,
-                    str(tmp_path / "alpha" / "alpha_keep_big.mp4"),
-                    320,
-                    240,
-                    1000,
-                    1.0,
-                    size=220,
-                ),
-                _dup_item(
-                    12,
-                    str(tmp_path / "alpha" / "alpha_skip_small.mp4"),
-                    320,
-                    240,
-                    900,
-                    0.98,
-                    size=40,
-                ),
-            ],
-            total_size_bytes=260,
-            group_id=42,
-        )
-        group_b = DuplicateGroup(
-            scan_id=1,
-            profile="balanced",
-            created_at="now",
-            items=[
-                _dup_item(
-                    13,
-                    str(tmp_path / "beta" / "beta_keep_1.mp4"),
-                    640,
-                    360,
-                    1200,
-                    0.97,
-                    size=90,
-                ),
-                _dup_item(
-                    14,
-                    str(tmp_path / "beta" / "beta_keep_2.mp4"),
-                    640,
-                    360,
-                    1100,
-                    0.96,
-                    size=80,
-                ),
-                _dup_item(
-                    15,
-                    str(tmp_path / "beta" / "beta_skip_3.mp4"),
-                    640,
-                    360,
-                    1000,
-                    0.95,
-                    size=70,
-                ),
-            ],
-            total_size_bytes=240,
-            group_id=43,
-        )
-        group_c = DuplicateGroup(
-            scan_id=1,
-            profile="balanced",
-            created_at="now",
-            items=[
-                _dup_item(
-                    16,
-                    str(tmp_path / "gamma" / "gamma_skip_huge.mp4"),
-                    800,
-                    450,
-                    1500,
-                    0.94,
-                    size=300,
-                ),
-                _dup_item(
-                    17,
-                    str(tmp_path / "gamma" / "gamma_keep_tiny.mp4"),
-                    800,
-                    450,
-                    1400,
-                    0.93,
-                    size=20,
-                ),
-            ],
-            total_size_bytes=320,
-            group_id=44,
-        )
-
-        window.results_view.load_groups([group_a, group_b, group_c])
+        window.results_view.load_groups(_build_results_filter_groups(tmp_path))
         app.processEvents()
 
         assert len(window._sort_actions) == 8
@@ -622,6 +717,7 @@ def test_view_sort_menu_and_results_filters(tmp_path: Path) -> None:
         assert first_group_sizes == sorted(first_group_sizes, reverse=True)
 
         window.results_view.filter_include_name_edit.setText("KEEP")
+        window.results_view._apply_filter_inputs()
         app.processEvents()
         assert window.results_view.results_table.rowCount() == 4
         assert all(
@@ -631,6 +727,7 @@ def test_view_sort_menu_and_results_filters(tmp_path: Path) -> None:
         )
 
         window.results_view.filter_exclude_path_edit.setText("gamma")
+        window.results_view._apply_filter_inputs()
         app.processEvents()
         assert window.results_view.results_table.rowCount() == 3
         assert all(
@@ -640,12 +737,485 @@ def test_view_sort_menu_and_results_filters(tmp_path: Path) -> None:
         )
 
         window.results_view.filter_include_path_edit.setText("beta")
+        window.results_view._apply_filter_inputs()
         app.processEvents()
         assert window.results_view.results_table.rowCount() == 2
         assert all(
             "beta" in window.results_view.results_table.item(row, 18).text().lower()
             for row in range(window.results_view.results_table.rowCount())
         )
+        window.close()
+
+
+def test_results_filters_debounce_multi_value_and_enter_apply(tmp_path: Path) -> None:
+    """Apply results filters after debounce or Enter using OR-matching terms."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        window.results_view.load_groups(_build_results_filter_groups(tmp_path))
+        app.processEvents()
+
+        assert window.results_view.results_table.rowCount() == 7
+
+        window.results_view.filter_include_name_edit.setText("KEEP|tiny")
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 7
+
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 4
+        assert all(
+            any(
+                token
+                in Path(
+                    window.results_view.results_table.item(row, 18).text()
+                ).name.lower()
+                for token in ("keep", "tiny")
+            )
+            for row in range(window.results_view.results_table.rowCount())
+        )
+
+        window.results_view.filter_exclude_path_edit.setText("gamma|beta")
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 4
+
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 1
+        assert "alpha" in window.results_view.results_table.item(0, 18).text().lower()
+
+        window.results_view.filter_include_name_edit.setText("")
+        window.results_view.filter_exclude_path_edit.setText("")
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 7
+
+        window.results_view.filter_include_path_edit.setFocus()
+        window.results_view.filter_include_path_edit.setText("BETA")
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 7
+
+        QTest.keyClick(window.results_view.filter_include_path_edit, Qt.Key.Key_Return)
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 3
+        assert all(
+            "beta" in window.results_view.results_table.item(row, 18).text().lower()
+            for row in range(window.results_view.results_table.rowCount())
+        )
+        window.close()
+
+
+def test_results_structured_filters_and_clear_button(tmp_path: Path) -> None:
+    """Debounce structured filters and reset them with one button."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        window.results_view.load_groups(
+            _build_results_structured_filter_groups(tmp_path)
+        )
+        window.tabs.setCurrentWidget(window.results_view)
+        app.processEvents()
+
+        assert isinstance(window.results_view.filter_toolbar, QWidget)
+        assert (
+            window.results_view.filter_toolbar.property("widget_alias")
+            == "Results Filters"
+        )
+        basic_card = window.results_view.filter_toolbar.findChild(
+            QGroupBox,
+            "results_filter_basic_card",
+        )
+        advanced_toggle = window.results_view.filter_toolbar.findChild(
+            QToolButton,
+            "results_filter_advanced_toggle",
+        )
+        advanced_container = window.results_view.filter_toolbar.findChild(
+            QWidget,
+            "results_filter_advanced_container",
+        )
+        ranges_card = window.results_view.filter_toolbar.findChild(
+            QGroupBox,
+            "results_filter_ranges_card",
+        )
+        attributes_card = window.results_view.filter_toolbar.findChild(
+            QGroupBox,
+            "results_filter_attributes_card",
+        )
+        assert basic_card is not None
+        assert advanced_toggle is not None
+        assert advanced_container is not None
+        assert ranges_card is not None
+        assert attributes_card is not None
+        assert basic_card.isVisible()
+        assert advanced_toggle.isVisible()
+        assert advanced_toggle.text() == "Advanced Filters"
+        assert advanced_toggle.isCheckable()
+        assert advanced_toggle.isChecked() is False
+        assert advanced_container.isVisible() is False
+        assert isinstance(window.results_view.filter_text_hint_label, QLabel)
+        assert window.results_view.filter_text_hint_label.text() == (
+            "Case-insensitive, | means OR."
+        )
+        assert isinstance(window.results_view.filter_min_size_spin, QDoubleSpinBox)
+        assert isinstance(window.results_view.filter_max_duration_spin, QDoubleSpinBox)
+        assert isinstance(window.results_view.filter_min_width_spin, QSpinBox)
+        assert isinstance(window.results_view.filter_video_codec_combo, QComboBox)
+        assert isinstance(window.results_view.clear_filters_button, QPushButton)
+        assert (
+            window.results_view.filter_min_size_spin.objectName()
+            == "results_filter_min_size_spin"
+        )
+        assert (
+            window.results_view.filter_video_codec_combo.property("widget_alias")
+            == "Video Codec Filter"
+        )
+        assert window.results_view.results_table.rowCount() == 4
+        assert window.results_view.clear_filters_button.isVisible()
+
+        window.results_view.filter_include_name_edit.setText("feature")
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 4
+        window.results_view.clear_filters_button.click()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 4
+        assert window.results_view.filter_include_name_edit.text() == ""
+
+        advanced_toggle.click()
+        app.processEvents()
+        assert advanced_toggle.isChecked()
+        assert advanced_container.isVisible()
+
+        window.results_view.filter_min_size_spin.setValue(20.0)
+        app.processEvents()
+        assert window.results_view._filter_apply_timer.isActive()
+        assert window.results_view.results_table.rowCount() == 4
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 2
+
+        window.results_view.clear_filters_button.click()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 4
+
+        window.results_view.filter_min_duration_spin.setValue(100.0)
+        app.processEvents()
+        assert window.results_view._filter_apply_timer.isActive()
+        assert window.results_view.results_table.rowCount() == 4
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 2
+
+        window.results_view.clear_filters_button.click()
+        app.processEvents()
+        window.results_view.filter_min_similarity_spin.setValue(0.95)
+        app.processEvents()
+        assert window.results_view._filter_apply_timer.isActive()
+        assert window.results_view.results_table.rowCount() == 4
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 2
+
+        window.results_view.clear_filters_button.click()
+        app.processEvents()
+        window.results_view.filter_min_width_spin.setValue(1900)
+        app.processEvents()
+        assert window.results_view._filter_apply_timer.isActive()
+        assert window.results_view.results_table.rowCount() == 4
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 2
+
+        window.results_view.filter_min_height_spin.setValue(2000)
+        app.processEvents()
+        assert window.results_view._filter_apply_timer.isActive()
+        assert window.results_view.results_table.rowCount() == 2
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 1
+
+        window.results_view.clear_filters_button.click()
+        app.processEvents()
+        window.results_view.filter_include_path_edit.setText("core")
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 2
+
+        window.results_view.filter_video_codec_combo.setCurrentText("h264")
+        app.processEvents()
+        assert window.results_view._filter_apply_timer.isActive()
+        assert window.results_view.results_table.rowCount() == 2
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 1
+
+        window.results_view.clear_filters_button.click()
+        app.processEvents()
+        window.results_view.filter_hdr_combo.setCurrentText("HDR only")
+        app.processEvents()
+        assert window.results_view._filter_apply_timer.isActive()
+        assert window.results_view.results_table.rowCount() == 4
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 1
+
+        window.results_view.clear_filters_button.click()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 4
+        assert window.results_view.filter_include_name_edit.text() == ""
+        assert window.results_view.filter_include_path_edit.text() == ""
+        assert window.results_view.filter_exclude_name_edit.text() == ""
+        assert window.results_view.filter_exclude_path_edit.text() == ""
+        assert (
+            window.results_view.filter_min_size_spin.value()
+            == window.results_view.filter_min_size_spin.minimum()
+        )
+        assert (
+            window.results_view.filter_min_width_spin.value()
+            == window.results_view.filter_min_width_spin.minimum()
+        )
+        assert window.results_view.filter_video_codec_combo.currentText() == "Any"
+        assert window.results_view.filter_hdr_combo.currentText() == "Any"
+        advanced_toggle.click()
+        app.processEvents()
+        assert advanced_toggle.isChecked() is False
+        assert advanced_container.isVisible() is False
+        window.close()
+
+
+def test_results_filter_codec_options_refresh_and_fallback(tmp_path: Path) -> None:
+    """Refresh codec options from loaded results and reset stale selections."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        window.results_view.load_groups(
+            _build_results_structured_filter_groups(tmp_path)
+        )
+        app.processEvents()
+
+        codec_items = [
+            window.results_view.filter_video_codec_combo.itemText(index)
+            for index in range(window.results_view.filter_video_codec_combo.count())
+        ]
+        assert codec_items == ["Any", "h264", "hevc", "vp9"]
+
+        window.results_view.filter_video_codec_combo.setCurrentText("hevc")
+        app.processEvents()
+        assert window.results_view._filter_apply_timer.isActive()
+        assert window.results_view.results_table.rowCount() == 4
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 1
+
+        replacement_groups = [
+            DuplicateGroup(
+                scan_id=1,
+                profile="balanced",
+                created_at="now",
+                items=[
+                    _dup_item(
+                        41,
+                        str(tmp_path / "refresh" / "refresh_av1.mp4"),
+                        1920,
+                        1080,
+                        2_500_000,
+                        0.97,
+                        size=18 * 1024 * 1024,
+                        duration_s=120.0,
+                        codec="av1",
+                    ),
+                    _dup_item(
+                        42,
+                        str(tmp_path / "refresh" / "refresh_av1_copy.mp4"),
+                        1920,
+                        1080,
+                        2_400_000,
+                        0.965,
+                        size=17 * 1024 * 1024,
+                        duration_s=118.0,
+                        codec="av1",
+                    ),
+                ],
+                total_size_bytes=(18 + 17) * 1024 * 1024,
+                group_id=63,
+            )
+        ]
+        window.results_view.load_groups(replacement_groups)
+        app.processEvents()
+
+        refreshed_codec_items = [
+            window.results_view.filter_video_codec_combo.itemText(index)
+            for index in range(window.results_view.filter_video_codec_combo.count())
+        ]
+        assert refreshed_codec_items == ["Any", "av1"]
+        assert window.results_view.filter_video_codec_combo.currentText() == "Any"
+        assert window.results_view.results_table.rowCount() == 2
+        window.close()
+
+
+def test_results_summary_tooltip_reports_visible_and_loaded_stats(
+    tmp_path: Path,
+) -> None:
+    """Show detailed duplicate stats for both visible and loaded results."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        window.results_view.load_groups(_build_results_filter_groups(tmp_path))
+        app.processEvents()
+
+        tooltip = window.results_view.info_label.toolTip()
+        assert "Visible\nGroups: 3\nFiles: 7" in tooltip
+        assert "Total size: 820.0 B" in tooltip
+        assert "Potential save (max): 690.0 B" in tooltip
+        assert "Potential save (min): 210.0 B" in tooltip
+        assert "Largest group: 3 files" in tooltip
+        assert "Average files/group: 2.33" in tooltip
+        assert "Median files/group: 2" in tooltip
+        assert tooltip.count("Extra duplicates: 4") == 2
+
+        window.results_view.filter_include_path_edit.setText("beta")
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+
+        filtered_tooltip = window.results_view.info_label.toolTip()
+        assert window.results_view.info_label.text() == "Loaded 1 groups / 3 files"
+        assert "Visible\nGroups: 1\nFiles: 3" in filtered_tooltip
+        assert "Total size: 240.0 B" in filtered_tooltip
+        assert "Potential save (max): 170.0 B" in filtered_tooltip
+        assert "Potential save (min): 150.0 B" in filtered_tooltip
+        assert "Average files/group: 3" in filtered_tooltip
+        assert "Median files/group: 3" in filtered_tooltip
+        assert "Extra duplicates: 2" in filtered_tooltip
+        assert "Loaded\nGroups: 3\nFiles: 7" in filtered_tooltip
+        assert "Total size: 820.0 B" in filtered_tooltip
+
+        window.results_view.filter_include_path_edit.setText("zzz")
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+
+        empty_visible_tooltip = window.results_view.info_label.toolTip()
+        assert (
+            window.results_view.info_label.text() == "No duplicate groups for this scan"
+        )
+        assert "Visible\nGroups: 0\nFiles: 0" in empty_visible_tooltip
+        assert "Total size: 0.0 B" in empty_visible_tooltip
+        assert "Potential save (max): 0.0 B" in empty_visible_tooltip
+        assert "Potential save (min): 0.0 B" in empty_visible_tooltip
+        assert "Largest group: 0 files" in empty_visible_tooltip
+        assert "Average files/group: 0" in empty_visible_tooltip
+        assert "Median files/group: 0" in empty_visible_tooltip
+        assert "Extra duplicates: 0" in empty_visible_tooltip
+        assert "Loaded\nGroups: 3\nFiles: 7" in empty_visible_tooltip
+        window.close()
+
+
+def test_results_summary_tooltip_empty_state(tmp_path: Path) -> None:
+    """Expose a fallback tooltip when no duplicate stats exist yet."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        assert (
+            window.results_view.info_label.toolTip() == "No duplicate stats available."
+        )
+
+        window.results_view.load_groups([])
+        app.processEvents()
+
+        assert (
+            window.results_view.info_label.toolTip() == "No duplicate stats available."
+        )
+        window.close()
+
+
+def test_results_actions_menu_shortcuts_and_row_double_click(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Expose row actions in the menu and open rows on double click."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    target = tmp_path / "alpha.mp4"
+    target.write_bytes(b"")
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        group = DuplicateGroup(
+            scan_id=1,
+            profile="balanced",
+            created_at="now",
+            items=[_dup_item(21, str(target), 320, 240, 1000, 1.0)],
+            total_size_bytes=100,
+            group_id=55,
+        )
+        window.results_view.load_groups([group])
+        window.results_view.results_table.setCurrentCell(0, 0)
+        app.processEvents()
+
+        actions_menu = _results_menu_actions(window)
+        menu_actions = [action for action in actions_menu if not action.isSeparator()]
+        assert window.open_current_file_action in menu_actions
+        assert window.explore_current_file_action in menu_actions
+        assert window.launch_mediainfo_action in menu_actions
+        assert window.delete_selected_action in menu_actions
+        assert window.delete_selected_permanent_action in menu_actions
+
+        assert {
+            sequence.toString()
+            for sequence in window.open_current_file_action.shortcuts()
+        } == {"Return", "Enter"}
+        assert {
+            sequence.toString()
+            for sequence in window.explore_current_file_action.shortcuts()
+        } == {"E"}
+        assert {
+            sequence.toString()
+            for sequence in window.launch_mediainfo_action.shortcuts()
+        } == {"M"}
+        assert {
+            sequence.toString()
+            for sequence in window.delete_selected_action.shortcuts()
+        } == {"Del"}
+        assert {
+            sequence.toString()
+            for sequence in window.delete_selected_permanent_action.shortcuts()
+        } == {"Shift+Del"}
+
+        opened: list[Path] = []
+        monkeypatch.setattr(
+            "video_duperz.ui.results_view_actions.open_path_in_default_app",
+            lambda path: opened.append(Path(path)) or True,
+        )
+
+        window.results_view.results_table.itemDoubleClicked.emit(
+            window.results_view.results_table.item(0, 0)
+        )
+        app.processEvents()
+
+        assert opened == [target]
         window.close()
 
 

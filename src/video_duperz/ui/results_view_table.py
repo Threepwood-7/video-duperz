@@ -30,6 +30,8 @@ from .results_view_shared import (
     COL_SUB_LANGS,
     COL_THUMB,
     COL_VIDEO_CODEC,
+    HDR_FILTER_EXCLUDE,
+    HDR_FILTER_ONLY,
     META_ROLE,
     SORT_GROUP_COUNT_ASC,
     SORT_GROUP_COUNT_DESC,
@@ -314,15 +316,69 @@ class ResultsViewTableMixin(ResultsViewBase):
         file_name = Path(item.path).name.casefold()
         full_path = item.path.casefold()
 
-        if self._filter_include_name and self._filter_include_name not in file_name:
+        return self._matches_text_filters(
+            file_name=file_name,
+            full_path=full_path,
+        ) and self._matches_structured_filters(item)
+
+    def _matches_text_filters(self, *, file_name: str, full_path: str) -> bool:
+        """Return whether name/path text filters accept one result item."""
+        filter_state = self._filter_state
+        if filter_state.include_name_terms and not any(
+            term in file_name for term in filter_state.include_name_terms
+        ):
             return False
-        if self._filter_include_path and self._filter_include_path not in full_path:
+        if filter_state.include_path_terms and not any(
+            term in full_path for term in filter_state.include_path_terms
+        ):
             return False
-        if self._filter_exclude_name and self._filter_exclude_name in file_name:
+        if filter_state.exclude_name_terms and any(
+            term in file_name for term in filter_state.exclude_name_terms
+        ):
             return False
-        return not (
-            self._filter_exclude_path and self._filter_exclude_path in full_path
-        )
+        return not any(term in full_path for term in filter_state.exclude_path_terms)
+
+    def _matches_structured_filters(self, item: DuplicateItem) -> bool:
+        """Return whether structured metadata filters accept one result item."""
+        filter_state = self._filter_state
+        if filter_state.min_size_mib is not None and (
+            item.size < int(filter_state.min_size_mib * 1024.0 * 1024.0)
+        ):
+            return False
+        if filter_state.max_size_mib is not None and (
+            item.size > int(filter_state.max_size_mib * 1024.0 * 1024.0)
+        ):
+            return False
+        if (
+            filter_state.min_duration_s is not None
+            and item.duration_s < filter_state.min_duration_s
+        ):
+            return False
+        if (
+            filter_state.max_duration_s is not None
+            and item.duration_s > filter_state.max_duration_s
+        ):
+            return False
+        if (
+            filter_state.min_similarity is not None
+            and item.similarity_score < filter_state.min_similarity
+        ):
+            return False
+        if filter_state.min_width is not None and item.width < filter_state.min_width:
+            return False
+        if (
+            filter_state.min_height is not None
+            and item.height < filter_state.min_height
+        ):
+            return False
+        if (
+            filter_state.video_codec
+            and item.codec.casefold() != filter_state.video_codec
+        ):
+            return False
+        if filter_state.hdr_mode == HDR_FILTER_ONLY and not item.is_hdr:
+            return False
+        return not (filter_state.hdr_mode == HDR_FILTER_EXCLUDE and item.is_hdr)
 
     def _sorted_group_items(
         self,

@@ -157,6 +157,7 @@ class MainWindowBase(QMainWindow):
         self._sort_action_group: QActionGroup | None = None
         self._sort_actions: dict[str, QAction] = {}
         self._saved_scans_menu: QMenu | None = None
+        self.actions_menu: QMenu | None = None
         self._drive_worker_overrides: dict[str, int] = {
             str(key): max(1, int(value))
             for key, value in settings.drive_worker_overrides.items()
@@ -356,6 +357,17 @@ class MainWindowMenuMixin(MainWindowBase):
 
     def _build_actions_menu(self) -> None:
         actions_menu = self.menuBar().addMenu("&Actions")
+        self.actions_menu = actions_menu
+        self.open_current_file_action = self.results_view.open_current_file_action
+        actions_menu.addAction(self.open_current_file_action)
+
+        self.explore_current_file_action = self.results_view.explore_current_file_action
+        actions_menu.addAction(self.explore_current_file_action)
+
+        self.launch_mediainfo_action = self.results_view.launch_mediainfo_action
+        actions_menu.addAction(self.launch_mediainfo_action)
+
+        actions_menu.addSeparator()
         self.keep_best_action = QAction("&Select all, keep best", self)
         self.keep_best_action.triggered.connect(
             lambda: self.results_view.apply_keep_strategy("best")
@@ -393,18 +405,11 @@ class MainWindowMenuMixin(MainWindowBase):
         actions_menu.addAction(self.keep_older_action)
 
         actions_menu.addSeparator()
-        self.delete_selected_action = QAction("&Delete Selected", self)
-        self.delete_selected_action.triggered.connect(
-            self.results_view.request_soft_delete_selected
-        )
+        self.delete_selected_action = self.results_view.delete_selected_action
         actions_menu.addAction(self.delete_selected_action)
 
-        self.delete_selected_permanent_action = QAction(
-            "&Permanently Delete Selected",
-            self,
-        )
-        self.delete_selected_permanent_action.triggered.connect(
-            self.results_view.request_permanent_delete_selected
+        self.delete_selected_permanent_action = (
+            self.results_view.delete_selected_permanent_action
         )
         actions_menu.addAction(self.delete_selected_permanent_action)
 

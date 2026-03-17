@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import subprocess
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
+from statistics import median
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
@@ -19,6 +20,21 @@ from .results_view_thumbnail import ResultsViewThumbnailMixin
 
 if TYPE_CHECKING:
     from ..models import DuplicateGroup, DuplicateItem
+
+
+@dataclass(slots=True)
+class DuplicateStatsSummary:
+    """Aggregated duplicate statistics for one results-view section."""
+
+    group_count: int = 0
+    file_count: int = 0
+    total_size_bytes: int = 0
+    max_potential_save_bytes: int = 0
+    min_potential_save_bytes: int = 0
+    max_group_size: int = 0
+    average_group_size: float = 0.0
+    median_group_size: float = 0.0
+    total_extra_duplicates: int = 0
 
 
 class ResultsViewActionMixin(ResultsViewThumbnailMixin):
@@ -306,9 +322,11 @@ class ResultsViewActionMixin(ResultsViewThumbnailMixin):
 
     def _update_info_label(self) -> None:
         """Refresh the summary label above the results table."""
-        grouped = self._group_rows()
-        group_count = len(grouped)
-        row_count = self.results_table.rowCount()
+        visible_groups = self._filtered_groups(self._groups)
+        visible_stats = self._summarize_duplicate_groups(visible_groups)
+        loaded_stats = self._summarize_duplicate_groups(self._groups)
+        group_count = visible_stats.group_count
+        row_count = visible_stats.file_count
         if row_count == 0:
             base = "No duplicate groups for this scan"
         else:
@@ -316,6 +334,118 @@ class ResultsViewActionMixin(ResultsViewThumbnailMixin):
         if self._scan_context_note:
             base = f"{base} | {self._scan_context_note}"
         self.info_label.setText(base)
+        self.info_label.setToolTip(
+            self._build_duplicate_stats_tooltip(
+                visible_stats=visible_stats,
+                loaded_stats=loaded_stats,
+            )
+        )
+
+    @staticmethod
+    def _group_total_size_bytes(group: DuplicateGroup) -> int:
+        """Return the exact visible size for one duplicate group."""
+        return sum(item.size for item in group.items)
+
+    @staticmethod
+    def _format_byte_count(value: int) -> str:
+        """Format one byte count using the app's existing KB/MB/GB style."""
+        units = ["B", "KB", "MB", "GB", "TB", "PB"]
+        size = float(max(0, value))
+        unit_idx = 0
+        while size >= 1024.0 and unit_idx < len(units) - 1:
+            size /= 1024.0
+            unit_idx += 1
+        return f"{size:.1f} {units[unit_idx]}"
+
+    @staticmethod
+    def _format_group_metric(value: float) -> str:
+        """Format group-count metrics without trailing zero noise."""
+        return f"{value:.2f}".rstrip("0").rstrip(".")
+
+    def _summarize_duplicate_groups(
+        self,
+        groups: list[DuplicateGroup],
+    ) -> DuplicateStatsSummary:
+        """Aggregate duplicate metrics for loaded or filtered groups."""
+        if not groups:
+            return DuplicateStatsSummary()
+        group_sizes = [len(group.items) for group in groups]
+        total_size_bytes = sum(self._group_total_size_bytes(group) for group in groups)
+        max_potential_save_bytes = sum(
+            max(
+                0,
+                self._group_total_size_bytes(group)
+                - min(item.size for item in group.items),
+            )
+            for group in groups
+        )
+        min_potential_save_bytes = sum(
+            max(
+                0,
+                self._group_total_size_bytes(group)
+                - max(item.size for item in group.items),
+            )
+            for group in groups
+        )
+        return DuplicateStatsSummary(
+            group_count=len(groups),
+            file_count=sum(group_sizes),
+            total_size_bytes=total_size_bytes,
+            max_potential_save_bytes=max_potential_save_bytes,
+            min_potential_save_bytes=min_potential_save_bytes,
+            max_group_size=max(group_sizes, default=0),
+            average_group_size=sum(group_sizes) / len(group_sizes),
+            median_group_size=float(median(group_sizes)),
+            total_extra_duplicates=sum(max(0, size - 1) for size in group_sizes),
+        )
+
+    def _format_duplicate_stats_section(
+        self,
+        title: str,
+        stats: DuplicateStatsSummary,
+    ) -> list[str]:
+        """Return one tooltip section for duplicate summary metrics."""
+        return [
+            title,
+            f"Groups: {stats.group_count}",
+            f"Files: {stats.file_count}",
+            f"Total size: {self._format_byte_count(stats.total_size_bytes)}",
+            (
+                "Potential save (max): "
+                f"{self._format_byte_count(stats.max_potential_save_bytes)}"
+            ),
+            (
+                "Potential save (min): "
+                f"{self._format_byte_count(stats.min_potential_save_bytes)}"
+            ),
+            f"Largest group: {stats.max_group_size} files",
+            (
+                "Average files/group: "
+                f"{self._format_group_metric(stats.average_group_size)}"
+            ),
+            (
+                "Median files/group: "
+                f"{self._format_group_metric(stats.median_group_size)}"
+            ),
+            f"Extra duplicates: {stats.total_extra_duplicates}",
+        ]
+
+    def _build_duplicate_stats_tooltip(
+        self,
+        *,
+        visible_stats: DuplicateStatsSummary,
+        loaded_stats: DuplicateStatsSummary,
+    ) -> str:
+        """Build the info-label tooltip for visible and loaded duplicates."""
+        if loaded_stats.group_count <= 0:
+            return "No duplicate stats available."
+        return "\n".join(
+            [
+                *self._format_duplicate_stats_section("Visible", visible_stats),
+                "",
+                *self._format_duplicate_stats_section("Loaded", loaded_stats),
+            ]
+        )
 
     def _on_column_resized(self, _section: int, _old_size: int, _new_size: int) -> None:
         """Persist live column widths when the user resizes the table."""

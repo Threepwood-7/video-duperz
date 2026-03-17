@@ -109,6 +109,33 @@ VALID_SORT_MODES = {
     SORT_GROUP_SPREAD_DESC,
     SORT_GROUP_SPREAD_ASC,
 }
+HDR_FILTER_ANY = "any"
+HDR_FILTER_ONLY = "hdr_only"
+HDR_FILTER_EXCLUDE = "sdr_only"
+HDR_FILTER_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("Any", HDR_FILTER_ANY),
+    ("HDR only", HDR_FILTER_ONLY),
+    ("SDR only", HDR_FILTER_EXCLUDE),
+)
+
+
+@dataclass(slots=True)
+class ResultsFilterState:
+    """Normalized active filter state for the results table."""
+
+    include_name_terms: tuple[str, ...] = ()
+    include_path_terms: tuple[str, ...] = ()
+    exclude_name_terms: tuple[str, ...] = ()
+    exclude_path_terms: tuple[str, ...] = ()
+    min_size_mib: float | None = None
+    max_size_mib: float | None = None
+    min_duration_s: float | None = None
+    max_duration_s: float | None = None
+    min_similarity: float | None = None
+    min_width: int | None = None
+    min_height: int | None = None
+    video_codec: str = ""
+    hdr_mode: str = HDR_FILTER_ANY
 
 
 @dataclass(slots=True)

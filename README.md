@@ -31,6 +31,7 @@ A Windows-first PySide6 app for finding perceptual duplicate videos using dhash 
 - **Live scan monitoring** - real-time progress per lane showing discovered/analyzed files, I/O throughput, cache hit ratios, and active file
 - **Thumbnail pair caching** - extracts and caches video thumbnails at configurable frame positions
 - **Duplicate group management** - decision-focused UI for bulk actions (keep best, worst, larger, smaller, newer, older)
+- **Structured results filtering** - combine case-insensitive text filters with metadata filters for size, duration, similarity, resolution, codec, and HDR
 - **Export to CSV/JSON** - scan results exportable for external analysis
 - **Saved scan profiles** - save and restore source configurations and scan parameters
 - **Saved column views** - preserve result table column layouts and visibility
@@ -134,6 +135,29 @@ Global runtime overrides are available for all commands:
 
 - `--config-dir <path>` - override QSettings INI root
 - `--data-dir <path>` - override runtime data root (DB/cache/thumbnails)
+
+### Results Filtering
+
+The Results tab exposes a grouped filter panel above the duplicate table with an always-visible `Basic Filters` section and a collapsible `Advanced Filters` section.
+
+- `Basic Filters`:
+  - `Include Name`, `Include Path`, `Exclude Name`, `Exclude Path`
+  - `Clear Filters`
+  - case-insensitive matching
+  - use `|` inside one text box for OR matching, for example `sample|trailer`
+  - typing waits 5 seconds before applying
+  - pressing `Enter` in a text box applies immediately
+- `Advanced Filters`:
+  - collapsed by default each time the Results view opens
+  - `Size MiB Min/Max`
+  - `Duration s Min/Max`
+  - `Similarity Min`
+  - `Width Min`
+  - `Height Min`
+  - `Video Codec`
+  - `HDR` with `Any`, `HDR only`, and `SDR only`
+
+`Clear Filters` resets every basic and advanced filter at once. All filter controls share the same debounce delay when changed normally. All active filter families combine with AND semantics. Inside a single text box, `|` terms combine with OR semantics.
 
 ## Configuration
 
