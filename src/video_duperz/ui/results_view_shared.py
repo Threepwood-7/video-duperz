@@ -127,6 +127,7 @@ class ResultsFilterState:
     include_path_terms: tuple[str, ...] = ()
     exclude_name_terms: tuple[str, ...] = ()
     exclude_path_terms: tuple[str, ...] = ()
+    include_match_all: bool = False
     min_size_mib: float | None = None
     max_size_mib: float | None = None
     min_duration_s: float | None = None
@@ -134,8 +135,26 @@ class ResultsFilterState:
     min_similarity: float | None = None
     min_width: int | None = None
     min_height: int | None = None
+    extension: str = ""
     video_codec: str = ""
     hdr_mode: str = HDR_FILTER_ANY
+
+    def has_include_filters(self) -> bool:
+        """Return whether any include-style filter is currently active."""
+        return bool(
+            self.include_name_terms
+            or self.include_path_terms
+            or self.min_size_mib is not None
+            or self.max_size_mib is not None
+            or self.min_duration_s is not None
+            or self.max_duration_s is not None
+            or self.min_similarity is not None
+            or self.min_width is not None
+            or self.min_height is not None
+            or self.extension
+            or self.video_codec
+            or self.hdr_mode != HDR_FILTER_ANY
+        )
 
 
 @dataclass(slots=True)

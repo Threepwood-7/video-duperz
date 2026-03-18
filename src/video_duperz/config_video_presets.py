@@ -5,7 +5,7 @@ from __future__ import annotations
 from .scan_sets import normalize_extensions
 
 VIDEO_EXTENSION_PRESET_NAMES: tuple[str, str, str] = ("basic", "medium", "broad")
-DEFAULT_VIDEO_EXTENSION_PRESET = "medium"
+DEFAULT_VIDEO_EXTENSION_PRESET = "broad"
 VIDEO_EXTENSION_PRESETS: dict[str, tuple[str, ...]] = {
     "basic": ("mp4", "mkv", "mov"),
     "medium": (

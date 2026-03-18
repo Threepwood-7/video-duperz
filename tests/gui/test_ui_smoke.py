@@ -17,6 +17,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QGroupBox,
@@ -25,13 +26,13 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSpinBox,
-    QToolButton,
     QWidget,
 )
 
 if TYPE_CHECKING:
     from PySide6.QtGui import QAction
 
+from video_duperz.config_video_presets import video_extensions_csv_for_preset
 from video_duperz.models import (
     DuplicateGroup,
     DuplicateItem,
@@ -205,7 +206,7 @@ def _build_results_structured_filter_groups(tmp_path: Path) -> list[DuplicateGro
                 ),
                 _dup_item(
                     32,
-                    str(tmp_path / "core" / "feature_cut_hevc_hdr.mp4"),
+                    str(tmp_path / "core" / "feature_cut_hevc_hdr.mkv"),
                     3840,
                     2160,
                     8_200_000,
@@ -226,7 +227,7 @@ def _build_results_structured_filter_groups(tmp_path: Path) -> list[DuplicateGro
             items=[
                 _dup_item(
                     33,
-                    str(tmp_path / "extras" / "extras_vp9_low.mp4"),
+                    str(tmp_path / "extras" / "extras_vp9_low.webm"),
                     1280,
                     720,
                     1_700_000,
@@ -318,8 +319,18 @@ def test_main_window_launches_with_new_results_table(tmp_path: Path) -> None:
             scan_id=1,
             profile="balanced",
             created_at="now",
-            items=[_dup_item(11, str(tmp_path / "missing.mp4"), 320, 240, 1000, 1.0)],
-            total_size_bytes=100,
+            items=[
+                _dup_item(11, str(tmp_path / "missing.mp4"), 320, 240, 1000, 1.0),
+                _dup_item(
+                    12,
+                    str(tmp_path / "missing_copy.mp4"),
+                    320,
+                    240,
+                    900,
+                    0.98,
+                ),
+            ],
+            total_size_bytes=200,
             group_id=42,
         )
         window.results_view.load_groups([group])
@@ -432,6 +443,27 @@ def test_recent_folder_history_button_and_persistence(
         str(Path("D:/Videos")),
         str(Path("E:/Archive")),
     ]
+
+
+def test_sources_tab_defaults_to_broad_extensions_preset(
+    tmp_path: Path, monkeypatch
+) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        window = MainWindow(db=db, settings=default_settings())
+        window.show()
+        app.processEvents()
+
+        assert window.extensions_preset_combo.currentText() == "broad"
+        assert (
+            window.extensions_edit.text()
+            == video_extensions_csv_for_preset("broad")
+        )
+
+        window.close()
 
 
 def test_results_column_widths_persist(tmp_path: Path, monkeypatch) -> None:
@@ -719,9 +751,9 @@ def test_view_sort_menu_and_results_filters(tmp_path: Path) -> None:
         window.results_view.filter_include_name_edit.setText("KEEP")
         window.results_view._apply_filter_inputs()
         app.processEvents()
-        assert window.results_view.results_table.rowCount() == 4
-        assert all(
-            "keep"
+        assert window.results_view.results_table.rowCount() == 7
+        assert any(
+            "skip"
             in Path(window.results_view.results_table.item(row, 18).text()).name.lower()
             for row in range(window.results_view.results_table.rowCount())
         )
@@ -729,7 +761,7 @@ def test_view_sort_menu_and_results_filters(tmp_path: Path) -> None:
         window.results_view.filter_exclude_path_edit.setText("gamma")
         window.results_view._apply_filter_inputs()
         app.processEvents()
-        assert window.results_view.results_table.rowCount() == 3
+        assert window.results_view.results_table.rowCount() == 5
         assert all(
             "gamma"
             not in window.results_view.results_table.item(row, 18).text().lower()
@@ -739,7 +771,7 @@ def test_view_sort_menu_and_results_filters(tmp_path: Path) -> None:
         window.results_view.filter_include_path_edit.setText("beta")
         window.results_view._apply_filter_inputs()
         app.processEvents()
-        assert window.results_view.results_table.rowCount() == 2
+        assert window.results_view.results_table.rowCount() == 3
         assert all(
             "beta" in window.results_view.results_table.item(row, 18).text().lower()
             for row in range(window.results_view.results_table.rowCount())
@@ -767,26 +799,19 @@ def test_results_filters_debounce_multi_value_and_enter_apply(tmp_path: Path) ->
 
         window.results_view._apply_filter_inputs()
         app.processEvents()
-        assert window.results_view.results_table.rowCount() == 4
-        assert all(
-            any(
-                token
-                in Path(
-                    window.results_view.results_table.item(row, 18).text()
-                ).name.lower()
-                for token in ("keep", "tiny")
-            )
-            for row in range(window.results_view.results_table.rowCount())
-        )
+        assert window.results_view.results_table.rowCount() == 7
 
         window.results_view.filter_exclude_path_edit.setText("gamma|beta")
         app.processEvents()
-        assert window.results_view.results_table.rowCount() == 4
+        assert window.results_view.results_table.rowCount() == 7
 
         window.results_view._apply_filter_inputs()
         app.processEvents()
-        assert window.results_view.results_table.rowCount() == 1
-        assert "alpha" in window.results_view.results_table.item(0, 18).text().lower()
+        assert window.results_view.results_table.rowCount() == 2
+        assert all(
+            "alpha" in window.results_view.results_table.item(row, 18).text().lower()
+            for row in range(window.results_view.results_table.rowCount())
+        )
 
         window.results_view.filter_include_name_edit.setText("")
         window.results_view.filter_exclude_path_edit.setText("")
@@ -834,7 +859,7 @@ def test_results_structured_filters_and_clear_button(tmp_path: Path) -> None:
             "results_filter_basic_card",
         )
         advanced_toggle = window.results_view.filter_toolbar.findChild(
-            QToolButton,
+            QCheckBox,
             "results_filter_advanced_toggle",
         )
         advanced_container = window.results_view.filter_toolbar.findChild(
@@ -864,14 +889,23 @@ def test_results_structured_filters_and_clear_button(tmp_path: Path) -> None:
         assert window.results_view.filter_text_hint_label.text() == (
             "Case-insensitive, | means OR."
         )
+        assert isinstance(
+            window.results_view.filter_include_match_all_checkbox,
+            QCheckBox,
+        )
         assert isinstance(window.results_view.filter_min_size_spin, QDoubleSpinBox)
         assert isinstance(window.results_view.filter_max_duration_spin, QDoubleSpinBox)
         assert isinstance(window.results_view.filter_min_width_spin, QSpinBox)
+        assert isinstance(window.results_view.filter_extension_combo, QComboBox)
         assert isinstance(window.results_view.filter_video_codec_combo, QComboBox)
         assert isinstance(window.results_view.clear_filters_button, QPushButton)
         assert (
             window.results_view.filter_min_size_spin.objectName()
             == "results_filter_min_size_spin"
+        )
+        assert (
+            window.results_view.filter_extension_combo.property("widget_alias")
+            == "Extension Filter"
         )
         assert (
             window.results_view.filter_video_codec_combo.property("widget_alias")
@@ -939,7 +973,7 @@ def test_results_structured_filters_and_clear_button(tmp_path: Path) -> None:
         assert window.results_view.results_table.rowCount() == 2
         window.results_view._apply_filter_inputs()
         app.processEvents()
-        assert window.results_view.results_table.rowCount() == 1
+        assert window.results_view.results_table.rowCount() == 2
 
         window.results_view.clear_filters_button.click()
         app.processEvents()
@@ -954,7 +988,7 @@ def test_results_structured_filters_and_clear_button(tmp_path: Path) -> None:
         assert window.results_view.results_table.rowCount() == 2
         window.results_view._apply_filter_inputs()
         app.processEvents()
-        assert window.results_view.results_table.rowCount() == 1
+        assert window.results_view.results_table.rowCount() == 2
 
         window.results_view.clear_filters_button.click()
         app.processEvents()
@@ -964,7 +998,14 @@ def test_results_structured_filters_and_clear_button(tmp_path: Path) -> None:
         assert window.results_view.results_table.rowCount() == 4
         window.results_view._apply_filter_inputs()
         app.processEvents()
-        assert window.results_view.results_table.rowCount() == 1
+        assert window.results_view.results_table.rowCount() == 2
+
+        window.results_view.filter_include_match_all_checkbox.setChecked(True)
+        app.processEvents()
+        assert window.results_view._filter_apply_timer.isActive()
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 0
 
         window.results_view.clear_filters_button.click()
         app.processEvents()
@@ -973,6 +1014,7 @@ def test_results_structured_filters_and_clear_button(tmp_path: Path) -> None:
         assert window.results_view.filter_include_path_edit.text() == ""
         assert window.results_view.filter_exclude_name_edit.text() == ""
         assert window.results_view.filter_exclude_path_edit.text() == ""
+        assert not window.results_view.filter_include_match_all_checkbox.isChecked()
         assert (
             window.results_view.filter_min_size_spin.value()
             == window.results_view.filter_min_size_spin.minimum()
@@ -981,6 +1023,7 @@ def test_results_structured_filters_and_clear_button(tmp_path: Path) -> None:
             window.results_view.filter_min_width_spin.value()
             == window.results_view.filter_min_width_spin.minimum()
         )
+        assert window.results_view.filter_extension_combo.currentText() == "Any"
         assert window.results_view.filter_video_codec_combo.currentText() == "Any"
         assert window.results_view.filter_hdr_combo.currentText() == "Any"
         advanced_toggle.click()
@@ -990,8 +1033,8 @@ def test_results_structured_filters_and_clear_button(tmp_path: Path) -> None:
         window.close()
 
 
-def test_results_filter_codec_options_refresh_and_fallback(tmp_path: Path) -> None:
-    """Refresh codec options from loaded results and reset stale selections."""
+def test_results_filter_attribute_options_refresh_and_fallback(tmp_path: Path) -> None:
+    """Refresh codec and extension options from loaded results."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QApplication.instance() or QApplication([])
     with Database(tmp_path / "app.db") as db:
@@ -1009,14 +1052,20 @@ def test_results_filter_codec_options_refresh_and_fallback(tmp_path: Path) -> No
             for index in range(window.results_view.filter_video_codec_combo.count())
         ]
         assert codec_items == ["Any", "h264", "hevc", "vp9"]
+        extension_items = [
+            window.results_view.filter_extension_combo.itemText(index)
+            for index in range(window.results_view.filter_extension_combo.count())
+        ]
+        assert extension_items == ["Any", "mkv", "mp4", "webm"]
 
         window.results_view.filter_video_codec_combo.setCurrentText("hevc")
+        window.results_view.filter_extension_combo.setCurrentText("webm")
         app.processEvents()
         assert window.results_view._filter_apply_timer.isActive()
         assert window.results_view.results_table.rowCount() == 4
         window.results_view._apply_filter_inputs()
         app.processEvents()
-        assert window.results_view.results_table.rowCount() == 1
+        assert window.results_view.results_table.rowCount() == 0
 
         replacement_groups = [
             DuplicateGroup(
@@ -1058,9 +1107,51 @@ def test_results_filter_codec_options_refresh_and_fallback(tmp_path: Path) -> No
             window.results_view.filter_video_codec_combo.itemText(index)
             for index in range(window.results_view.filter_video_codec_combo.count())
         ]
+        refreshed_extension_items = [
+            window.results_view.filter_extension_combo.itemText(index)
+            for index in range(window.results_view.filter_extension_combo.count())
+        ]
         assert refreshed_codec_items == ["Any", "av1"]
+        assert refreshed_extension_items == ["Any", "mp4"]
         assert window.results_view.filter_video_codec_combo.currentText() == "Any"
+        assert window.results_view.filter_extension_combo.currentText() == "Any"
         assert window.results_view.results_table.rowCount() == 2
+        window.close()
+
+
+def test_results_filters_must_match_all_and_hide_singletons(tmp_path: Path) -> None:
+    """Hide groups that do not keep at least two visible files after filtering."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        window.results_view.load_groups(_build_results_filter_groups(tmp_path))
+        app.processEvents()
+
+        window.results_view.filter_include_path_edit.setText("alpha_keep_big")
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 2
+
+        window.results_view.filter_include_match_all_checkbox.setChecked(True)
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 0
+
+        window.results_view.clear_filters_button.click()
+        app.processEvents()
+        window.results_view.filter_include_path_edit.setText("beta")
+        window.results_view.filter_include_match_all_checkbox.setChecked(True)
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 3
+        assert all(
+            "beta" in window.results_view.results_table.item(row, 18).text().lower()
+            for row in range(window.results_view.results_table.rowCount())
+        )
         window.close()
 
 
@@ -1167,8 +1258,11 @@ def test_results_actions_menu_shortcuts_and_row_double_click(
             scan_id=1,
             profile="balanced",
             created_at="now",
-            items=[_dup_item(21, str(target), 320, 240, 1000, 1.0)],
-            total_size_bytes=100,
+            items=[
+                _dup_item(21, str(target), 320, 240, 1000, 1.0),
+                _dup_item(22, str(tmp_path / "alpha_copy.mp4"), 320, 240, 900, 0.98),
+            ],
+            total_size_bytes=200,
             group_id=55,
         )
         window.results_view.load_groups([group])
@@ -2000,8 +2094,11 @@ def test_results_view_launch_mediainfo_uses_configured_override(tmp_path: Path) 
             scan_id=1,
             profile="balanced",
             created_at="now",
-            items=[_dup_item(11, str(tmp_path / "a.mp4"), 320, 240, 1000, 1.0)],
-            total_size_bytes=100,
+            items=[
+                _dup_item(11, str(tmp_path / "a.mp4"), 320, 240, 1000, 1.0),
+                _dup_item(12, str(tmp_path / "a_copy.mp4"), 320, 240, 900, 0.98),
+            ],
+            total_size_bytes=200,
             group_id=42,
         )
         window.results_view.load_groups([group])
@@ -2044,8 +2141,11 @@ def test_results_view_launch_mediainfo_blank_override_falls_back_to_path(
             scan_id=1,
             profile="balanced",
             created_at="now",
-            items=[_dup_item(12, str(tmp_path / "b.mp4"), 320, 240, 900, 0.98)],
-            total_size_bytes=100,
+            items=[
+                _dup_item(12, str(tmp_path / "b.mp4"), 320, 240, 900, 0.98),
+                _dup_item(13, str(tmp_path / "b_copy.mp4"), 320, 240, 880, 0.97),
+            ],
+            total_size_bytes=200,
             group_id=43,
         )
         window.results_view.load_groups([group])
@@ -2087,8 +2187,11 @@ def test_results_view_launch_mediainfo_invalid_override_warns(
             scan_id=1,
             profile="balanced",
             created_at="now",
-            items=[_dup_item(13, str(tmp_path / "c.mp4"), 320, 240, 800, 0.97)],
-            total_size_bytes=100,
+            items=[
+                _dup_item(13, str(tmp_path / "c.mp4"), 320, 240, 800, 0.97),
+                _dup_item(14, str(tmp_path / "c_copy.mp4"), 320, 240, 780, 0.96),
+            ],
+            total_size_bytes=200,
             group_id=44,
         )
         window.results_view.load_groups([group])

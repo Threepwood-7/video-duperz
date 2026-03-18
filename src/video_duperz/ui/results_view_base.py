@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QSignalBlocker, QSize, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QAction, QKeySequence, QShowEvent
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
@@ -19,11 +20,11 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
+from ..media_format_policy import normalize_media_suffix
 from .results_view_shared import (
     HDR_FILTER_ANY,
     HDR_FILTER_OPTIONS,
@@ -196,6 +197,16 @@ class ResultsViewBase(QWidget):
         basic_layout.addLayout(text_include_form, 0, 0)
         basic_layout.addLayout(text_exclude_form, 0, 1)
 
+        self.filter_include_match_all_checkbox = QCheckBox(
+            "Must match all",
+            basic_card,
+        )
+        self._configure_filter_widget(
+            self.filter_include_match_all_checkbox,
+            object_name="results_filter_include_match_all_checkbox",
+            widget_alias="Must Match All",
+        )
+
         ranges_card = self._create_filter_card(
             title="Ranges",
             object_name="results_filter_ranges_card",
@@ -301,6 +312,15 @@ class ResultsViewBase(QWidget):
         attributes_form.setHorizontalSpacing(10)
         attributes_form.setVerticalSpacing(8)
 
+        self.filter_extension_combo = QComboBox(attributes_card)
+        self._configure_filter_widget(
+            self.filter_extension_combo,
+            object_name="results_filter_extension_combo",
+            widget_alias="Extension Filter",
+        )
+        self.filter_extension_combo.setMinimumWidth(160)
+        attributes_form.addRow("Extension", self.filter_extension_combo)
+
         self.filter_video_codec_combo = QComboBox(attributes_card)
         self._configure_filter_widget(
             self.filter_video_codec_combo,
@@ -328,21 +348,23 @@ class ResultsViewBase(QWidget):
             widget_alias="Clear Filters",
         )
         self.clear_filters_button.setMinimumWidth(140)
-        basic_layout.addWidget(self.filter_text_hint_label, 1, 0)
+        basic_layout.addWidget(self.filter_include_match_all_checkbox, 1, 0)
+        basic_layout.addWidget(self.filter_text_hint_label, 2, 0)
         basic_layout.addWidget(
             self.clear_filters_button,
             1,
             1,
+            2,
+            1,
             alignment=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop,
         )
 
-        self.advanced_filters_toggle = QToolButton(self.filter_toolbar)
-        self.advanced_filters_toggle.setText("Advanced Filters")
-        self.advanced_filters_toggle.setCheckable(True)
-        self.advanced_filters_toggle.setChecked(False)
-        self.advanced_filters_toggle.setToolButtonStyle(
-            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        self.advanced_filters_toggle = QCheckBox(
+            "Advanced Filters",
+            self.filter_toolbar,
         )
+        self.advanced_filters_toggle.setText("Advanced Filters")
+        self.advanced_filters_toggle.setChecked(False)
         self._configure_filter_widget(
             self.advanced_filters_toggle,
             object_name="results_filter_advanced_toggle",
@@ -411,6 +433,12 @@ class ResultsViewBase(QWidget):
         )
         self.filter_min_width_spin.valueChanged.connect(self._schedule_filter_apply)
         self.filter_min_height_spin.valueChanged.connect(self._schedule_filter_apply)
+        self.filter_include_match_all_checkbox.toggled.connect(
+            self._schedule_filter_apply
+        )
+        self.filter_extension_combo.currentIndexChanged.connect(
+            self._schedule_filter_apply
+        )
         self.filter_video_codec_combo.currentIndexChanged.connect(
             self._schedule_filter_apply
         )
@@ -514,13 +542,10 @@ class ResultsViewBase(QWidget):
         return card
 
     def _set_advanced_filters_visible(self, visible: bool) -> None:
-        """Show or hide the advanced filter section and sync the arrow state."""
+        """Show or hide the advanced filter section and sync the checkbox state."""
         self.advanced_filters_toggle.blockSignals(True)
         self.advanced_filters_toggle.setChecked(visible)
         self.advanced_filters_toggle.blockSignals(False)
-        self.advanced_filters_toggle.setArrowType(
-            Qt.ArrowType.DownArrow if visible else Qt.ArrowType.RightArrow
-        )
         self.advanced_filters_container.setVisible(visible)
 
     def _create_optional_double_spinbox(
@@ -759,6 +784,7 @@ class ResultsViewBase(QWidget):
         self._checked_file_ids = set()
         self._invalidate_group_compare_dataset()
         self._group_compare_payloads = self._build_group_compare_payloads(self._groups)
+        self._refresh_extension_filter_options()
         self._refresh_video_codec_filter_options()
         self._apply_filter_inputs()
         self._rebuild_results_table()
@@ -791,6 +817,7 @@ class ResultsViewBase(QWidget):
 
     def _current_filter_state(self) -> ResultsFilterState:
         """Read the live filter widgets into a normalized filter state."""
+        extension_text = self.filter_extension_combo.currentText().strip().casefold()
         codec_text = self.filter_video_codec_combo.currentText().strip().casefold()
         hdr_mode = str(self.filter_hdr_combo.currentData() or HDR_FILTER_ANY)
         return ResultsFilterState(
@@ -806,6 +833,7 @@ class ResultsViewBase(QWidget):
             exclude_path_terms=self._parse_filter_terms(
                 self.filter_exclude_path_edit.text()
             ),
+            include_match_all=self.filter_include_match_all_checkbox.isChecked(),
             min_size_mib=self._optional_double_value(self.filter_min_size_spin),
             max_size_mib=self._optional_double_value(self.filter_max_size_spin),
             min_duration_s=self._optional_double_value(self.filter_min_duration_spin),
@@ -813,6 +841,7 @@ class ResultsViewBase(QWidget):
             min_similarity=self._optional_double_value(self.filter_min_similarity_spin),
             min_width=self._optional_int_value(self.filter_min_width_spin),
             min_height=self._optional_int_value(self.filter_min_height_spin),
+            extension="" if extension_text == "any" else extension_text,
             video_codec="" if codec_text == "any" else codec_text,
             hdr_mode=hdr_mode,
         )
@@ -850,6 +879,8 @@ class ResultsViewBase(QWidget):
             QSignalBlocker(self.filter_min_similarity_spin),
             QSignalBlocker(self.filter_min_width_spin),
             QSignalBlocker(self.filter_min_height_spin),
+            QSignalBlocker(self.filter_include_match_all_checkbox),
+            QSignalBlocker(self.filter_extension_combo),
             QSignalBlocker(self.filter_video_codec_combo),
             QSignalBlocker(self.filter_hdr_combo),
         ]
@@ -857,6 +888,7 @@ class ResultsViewBase(QWidget):
         self.filter_include_path_edit.clear()
         self.filter_exclude_name_edit.clear()
         self.filter_exclude_path_edit.clear()
+        self.filter_include_match_all_checkbox.setChecked(False)
         self.filter_min_size_spin.setValue(self.filter_min_size_spin.minimum())
         self.filter_max_size_spin.setValue(self.filter_max_size_spin.minimum())
         self.filter_min_duration_spin.setValue(self.filter_min_duration_spin.minimum())
@@ -866,14 +898,54 @@ class ResultsViewBase(QWidget):
         )
         self.filter_min_width_spin.setValue(self.filter_min_width_spin.minimum())
         self.filter_min_height_spin.setValue(self.filter_min_height_spin.minimum())
+        self.filter_extension_combo.setCurrentText("Any")
         self.filter_video_codec_combo.setCurrentText("Any")
         self.filter_hdr_combo.setCurrentIndex(0)
         del blockers
         self._apply_filter_inputs()
 
+    @staticmethod
+    def _normalized_extension_value(path: str) -> str:
+        """Return one normalized lowercase extension without a leading dot."""
+        return normalize_media_suffix(path).lstrip(".")
+
+    def _refresh_attribute_filter_options(
+        self,
+        combo: QComboBox,
+        values: list[str],
+    ) -> None:
+        """Refresh one attribute combo and preserve its current valid choice."""
+        current_text = combo.currentText().strip().casefold()
+        blocker = QSignalBlocker(combo)
+        try:
+            combo.clear()
+            combo.addItem("Any")
+            for value in values:
+                combo.addItem(value)
+            if current_text and current_text != "any":
+                for index in range(combo.count()):
+                    if combo.itemText(index).strip().casefold() == current_text:
+                        combo.setCurrentIndex(index)
+                        return
+            combo.setCurrentIndex(0)
+        finally:
+            del blocker
+
+    def _refresh_extension_filter_options(self) -> None:
+        """Refresh extension filter choices from the currently loaded duplicate set."""
+        extensions = sorted(
+            {
+                self._normalized_extension_value(item.path)
+                for group in self._groups
+                for item in group.items
+                if self._normalized_extension_value(item.path)
+            },
+            key=str.casefold,
+        )
+        self._refresh_attribute_filter_options(self.filter_extension_combo, extensions)
+
     def _refresh_video_codec_filter_options(self) -> None:
         """Refresh codec filter choices from the currently loaded duplicate set."""
-        current_text = self.filter_video_codec_combo.currentText().strip().casefold()
         codecs = sorted(
             {
                 str(item.codec or "").strip()
@@ -883,20 +955,4 @@ class ResultsViewBase(QWidget):
             },
             key=str.casefold,
         )
-        blocker = QSignalBlocker(self.filter_video_codec_combo)
-        try:
-            self.filter_video_codec_combo.clear()
-            self.filter_video_codec_combo.addItem("Any")
-            for codec in codecs:
-                self.filter_video_codec_combo.addItem(codec)
-            if current_text and current_text != "any":
-                for index in range(self.filter_video_codec_combo.count()):
-                    if (
-                        self.filter_video_codec_combo.itemText(index).strip().casefold()
-                        == current_text
-                    ):
-                        self.filter_video_codec_combo.setCurrentIndex(index)
-                        return
-            self.filter_video_codec_combo.setCurrentIndex(0)
-        finally:
-            del blocker
+        self._refresh_attribute_filter_options(self.filter_video_codec_combo, codecs)

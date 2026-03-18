@@ -302,44 +302,81 @@ class ResultsViewTableMixin(ResultsViewBase):
         return filtered
 
     def _filtered_groups(self, groups: list[DuplicateGroup]) -> list[DuplicateGroup]:
-        """Apply name/path include-exclude filters to duplicate groups."""
+        """Return visible groups after applying group-aware filter semantics."""
         filtered_groups: list[DuplicateGroup] = []
         for group in groups:
-            items = [item for item in group.items if self._item_matches_filters(item)]
-            if not items:
+            items = self._visible_group_items(group)
+            if len(items) < 2:
                 continue
             filtered_groups.append(replace(group, items=items))
         return filtered_groups
 
-    def _item_matches_filters(self, item: DuplicateItem) -> bool:
-        """Return whether one duplicate item matches the active text filters."""
+    def _visible_group_items(self, group: DuplicateGroup) -> list[DuplicateItem]:
+        """Return the visible items for one group under the active filter state."""
+        candidate_items = [
+            item for item in group.items if self._item_matches_exclude_filters(item)
+        ]
+        if len(candidate_items) < 2:
+            return []
+        filter_state = self._filter_state
+        if not filter_state.has_include_filters():
+            return candidate_items
+        include_matches = [
+            item for item in candidate_items if self._item_matches_include_filters(item)
+        ]
+        if filter_state.include_match_all:
+            if len(include_matches) != len(candidate_items):
+                return []
+            return candidate_items
+        return candidate_items if include_matches else []
+
+    def _item_matches_include_filters(self, item: DuplicateItem) -> bool:
+        """Return whether one duplicate item satisfies all include-style filters."""
         file_name = Path(item.path).name.casefold()
         full_path = item.path.casefold()
-
-        return self._matches_text_filters(
+        return self._matches_include_text_filters(
             file_name=file_name,
             full_path=full_path,
-        ) and self._matches_structured_filters(item)
+        ) and self._matches_include_structured_filters(item)
 
-    def _matches_text_filters(self, *, file_name: str, full_path: str) -> bool:
-        """Return whether name/path text filters accept one result item."""
+    def _item_matches_exclude_filters(self, item: DuplicateItem) -> bool:
+        """Return whether one duplicate item survives the exclude-only filters."""
+        file_name = Path(item.path).name.casefold()
+        full_path = item.path.casefold()
+        return self._matches_exclude_text_filters(
+            file_name=file_name,
+            full_path=full_path,
+        )
+
+    def _matches_include_text_filters(self, *, file_name: str, full_path: str) -> bool:
+        """Return whether include text filters accept one result item."""
         filter_state = self._filter_state
-        if filter_state.include_name_terms and not any(
-            term in file_name for term in filter_state.include_name_terms
-        ):
-            return False
-        if filter_state.include_path_terms and not any(
-            term in full_path for term in filter_state.include_path_terms
-        ):
-            return False
+        return not (
+            (
+                filter_state.include_name_terms
+                and not any(
+                    term in file_name for term in filter_state.include_name_terms
+                )
+            )
+            or (
+                filter_state.include_path_terms
+                and not any(
+                    term in full_path for term in filter_state.include_path_terms
+                )
+            )
+        )
+
+    def _matches_exclude_text_filters(self, *, file_name: str, full_path: str) -> bool:
+        """Return whether exclude text filters keep one result item visible."""
+        filter_state = self._filter_state
         if filter_state.exclude_name_terms and any(
             term in file_name for term in filter_state.exclude_name_terms
         ):
             return False
         return not any(term in full_path for term in filter_state.exclude_path_terms)
 
-    def _matches_structured_filters(self, item: DuplicateItem) -> bool:
-        """Return whether structured metadata filters accept one result item."""
+    def _matches_include_structured_filters(self, item: DuplicateItem) -> bool:
+        """Return whether include-style structured filters accept one result item."""
         filter_state = self._filter_state
         if filter_state.min_size_mib is not None and (
             item.size < int(filter_state.min_size_mib * 1024.0 * 1024.0)
@@ -369,6 +406,11 @@ class ResultsViewTableMixin(ResultsViewBase):
         if (
             filter_state.min_height is not None
             and item.height < filter_state.min_height
+        ):
+            return False
+        if (
+            filter_state.extension
+            and self._normalized_extension_value(item.path) != filter_state.extension
         ):
             return False
         if (
