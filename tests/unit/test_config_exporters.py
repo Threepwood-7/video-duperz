@@ -9,6 +9,8 @@ from video_duperz.config import (
     MAX_DRIVE_WORKERS,
     RESULTS_TABLE_COLUMN_COUNT,
     SCAN_LANE_TABLE_COLUMN_COUNT,
+    SCAN_LOG_TABLE_COLUMN_COUNT,
+    SOURCES_DRIVE_TABLE_COLUMN_COUNT,
     default_settings,
     load_settings,
     save_settings,
@@ -17,7 +19,12 @@ from video_duperz.config import (
 from video_duperz.constants import SETTINGS_APP_NAME, SETTINGS_ORG_NAME
 from video_duperz.db import Database
 from video_duperz.exporters import export_scan
-from video_duperz.models import DuplicateItem, SavedScanProfilePayload, VideoMeta
+from video_duperz.models import (
+    DuplicateItem,
+    SavedScanProfilePayload,
+    ScanLinkRecord,
+    VideoMeta,
+)
 
 
 def _set_qsettings_value(path: Path, key: str, value: object) -> None:
@@ -36,12 +43,18 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     settings.scan_roots = ["D:/Videos"]
     settings.recent_scan_roots = ["D:/Videos", "E:/Archive"]
     settings.thumbnail_size = "128x72"
+    settings.scan_size_mib_min = 75
+    settings.scan_size_mib_max = 640
     settings.thumbnail_frame_a_pct = 25
     settings.thumbnail_frame_b_pct = 75
     settings.identical_block_mib = 4
     settings.identical_sample_a_pct = 12
     settings.identical_sample_b_pct = 91
+    settings.sources_drive_table_column_widths = [
+        110
+    ] * SOURCES_DRIVE_TABLE_COLUMN_COUNT
     settings.scan_lane_table_column_widths = [90] * SCAN_LANE_TABLE_COLUMN_COUNT
+    settings.scan_log_table_column_widths = [120] * SCAN_LOG_TABLE_COLUMN_COUNT
     settings.results_table_column_widths = [80] * RESULTS_TABLE_COLUMN_COUNT
     settings.drive_worker_overrides = {"volume:a": 3}
     settings.probe_backend = "pyav"
@@ -77,12 +90,19 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     assert loaded.recent_scan_roots == ["D:/Videos", "E:/Archive"]
     assert "mp4" in loaded.extensions
     assert loaded.thumbnail_size == "128x72"
+    assert loaded.scan_size_mib_min == 75
+    assert loaded.scan_size_mib_max == 640
     assert loaded.thumbnail_frame_a_pct == 25
     assert loaded.thumbnail_frame_b_pct == 75
     assert loaded.identical_block_mib == 4
     assert loaded.identical_sample_a_pct == 12
     assert loaded.identical_sample_b_pct == 91
+    assert (
+        loaded.sources_drive_table_column_widths
+        == [110] * SOURCES_DRIVE_TABLE_COLUMN_COUNT
+    )
     assert loaded.scan_lane_table_column_widths == [90] * SCAN_LANE_TABLE_COLUMN_COUNT
+    assert loaded.scan_log_table_column_widths == [120] * SCAN_LOG_TABLE_COLUMN_COUNT
     assert loaded.results_table_column_widths == [80] * RESULTS_TABLE_COLUMN_COUNT
     assert loaded.drive_worker_overrides == {"volume:a": 3}
     assert loaded.probe_backend == "pyav"
@@ -132,6 +152,24 @@ def test_settings_invalid_thumbnail_size_falls_back_to_default(
     assert loaded.thumbnail_size == "96x54"
 
 
+def test_settings_invalid_scan_size_filters_fall_back_to_defaults(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    settings = default_settings()
+    save_settings(settings)
+
+    path = settings_path()
+    _set_qsettings_value(path, "scan_size_mib_min", "bogus")
+    _set_qsettings_value(path, "scan_size_mib_max", "bogus")
+
+    loaded = load_settings()
+    assert loaded.scan_size_mib_min == 50
+    assert loaded.scan_size_mib_max == 0
+
+
 def test_settings_recent_roots_are_normalized(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setenv("APPDATA", str(tmp_path))
@@ -177,6 +215,36 @@ def test_settings_invalid_scan_lane_column_widths_fall_back_to_empty(
 
     loaded = load_settings()
     assert loaded.scan_lane_table_column_widths == []
+
+
+def test_settings_invalid_scan_log_column_widths_fall_back_to_empty(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    settings = default_settings()
+    save_settings(settings)
+
+    path = settings_path()
+    _set_qsettings_value(path, "scan_log_table_column_widths", [100, -2, 80])
+
+    loaded = load_settings()
+    assert loaded.scan_log_table_column_widths == []
+
+
+def test_settings_invalid_sources_drive_column_widths_fall_back_to_empty(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    settings = default_settings()
+    save_settings(settings)
+
+    path = settings_path()
+    _set_qsettings_value(path, "sources_drive_table_column_widths", [100, -2, 80])
+
+    loaded = load_settings()
+    assert loaded.sources_drive_table_column_widths == []
 
 
 def test_settings_thumbnail_frame_pair_normalization(
@@ -411,7 +479,38 @@ def test_settings_scan_tuning_normalization(tmp_path: Path, monkeypatch) -> None
     )
 
 
-def test_export_scan_outputs_csv_and_json(tmp_path: Path) -> None:
+def test_scan_links_roundtrip(tmp_path: Path) -> None:
+    db_file = tmp_path / "app.db"
+    with Database(db_file) as db:
+        scan_id = db.create_scan(profile="balanced", roots=[str(tmp_path)])
+        db.upsert_scan_links_batch(
+            [
+                ScanLinkRecord(
+                    scan_id=scan_id,
+                    link_kind="symlink",
+                    link_path=str(tmp_path / "shortcut.mp4"),
+                    target_original_path=str(tmp_path / "real.mp4"),
+                    target_exists=True,
+                    source_root=str(tmp_path),
+                ),
+                ScanLinkRecord(
+                    scan_id=scan_id,
+                    link_kind="hardlink",
+                    link_path=str(tmp_path / "copy.mp4"),
+                    target_original_path=str(tmp_path / "real.mp4"),
+                    target_exists=True,
+                    source_root=str(tmp_path),
+                ),
+            ]
+        )
+
+        links = db.load_scan_links(scan_id)
+
+    assert [link.link_kind for link in links] == ["hardlink", "symlink"]
+    assert links[0].target_original_path == str(tmp_path / "real.mp4")
+
+
+def test_export_scan_outputs_duplicates_and_links(tmp_path: Path) -> None:
     db_file = tmp_path / "app.db"
     with Database(db_file) as db:
         scan_id = db.create_scan(profile="balanced", roots=[str(tmp_path)])
@@ -517,13 +616,32 @@ def test_export_scan_outputs_csv_and_json(tmp_path: Path) -> None:
                 selected_action="rename",
             ),
         )
+        db.upsert_scan_links_batch(
+            [
+                ScanLinkRecord(
+                    scan_id=scan_id,
+                    link_kind="symlink",
+                    link_path=str(tmp_path / "symlink-a.mp4"),
+                    target_original_path=str(tmp_path / "a.mp4"),
+                    target_exists=True,
+                    source_root=str(tmp_path),
+                )
+            ]
+        )
 
         out_dir = tmp_path / "out"
-        csv_path, json_path = export_scan(db, scan_id=scan_id, out_dir=out_dir)
-        assert csv_path.exists()
-        assert json_path.exists()
+        export_paths = export_scan(db, scan_id=scan_id, out_dir=out_dir)
+        assert export_paths.duplicates_csv.exists()
+        assert export_paths.duplicates_json.exists()
+        assert export_paths.links_csv.exists()
+        assert export_paths.links_json.exists()
 
-        data = json.loads(json_path.read_text(encoding="utf-8"))
+        data = json.loads(export_paths.duplicates_json.read_text(encoding="utf-8"))
         assert data["scan_id"] == scan_id
         assert data["profile"] == "balanced"
         assert len(data["groups"]) == 1
+        links_data = json.loads(export_paths.links_json.read_text(encoding="utf-8"))
+        assert links_data["scan_id"] == scan_id
+        assert len(links_data["links"]) == 1
+        assert links_data["links"][0]["link_kind"] == "symlink"
+        assert Path(links_data["links"][0]["target_original_path"]).name == "a.mp4"

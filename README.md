@@ -33,7 +33,7 @@ A Windows-first PySide6 app for finding perceptual duplicate videos using dhash 
 - **Duplicate group management** - decision-focused UI for bulk actions (keep best, worst, larger, smaller, newer, older)
 - **Structured results filtering** - combine case-insensitive text filters with metadata filters for size, duration, similarity, resolution, codec, and HDR
 - **Scan-time process priority controls** - configure parent-process CPU/background I/O mode and scan-child priority policy for probe and fingerprint subprocesses
-- **Export to CSV/JSON** - scan results exportable for external analysis
+- **Export to CSV/JSON** - duplicate groups plus tracked symlink/hardlink rows exportable for external analysis
 - **Saved scan profiles** - save and restore source configurations and scan parameters
 - **Saved column views** - preserve result table column layouts and visibility
 
@@ -192,6 +192,17 @@ Runtime settings are stored via QSettings:
 | Everything path override | Optional `Everything.exe` override used by the Results shortcut |
 | Custom Results commands | INI-only `custom_command_F2/F3/F4` entries that receive the current file path and parent dir |
 
+### Export Outputs
+
+One scan export now writes four files:
+
+- `duplicates.csv`
+- `duplicates.json`
+- `links.csv`
+- `links.json`
+
+`links.csv` and `links.json` contain tracked filesystem links that were excluded from duplicate matching. Each link row includes the link kind, the link path, the target original path, whether that target existed at scan time, and the source root.
+
 ### Scan Priority Settings
 
 The Sources tab exposes four persisted scan-time priority controls:
@@ -315,7 +326,7 @@ video-duperz/
 |       |-- quality.py               # Quality scoring for keep decisions
 |       |-- exact_match.py           # Byte-level identical file detection
 |       |-- scan_sets.py             # Scan configuration normalization
-|       |-- exporters.py             # CSV/JSON export
+|       |-- exporters.py             # Duplicate/link CSV/JSON export
 |       |-- cleaner.py               # Full reset utility
 |       `-- ui/
 |           |-- main_window.py       # Main application window with menus and tabs

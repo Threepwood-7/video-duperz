@@ -59,6 +59,7 @@ THUMBNAIL_SIZE_OPTIONS: tuple[tuple[str, str], ...] = (
     ("Large (160x90)", "160x90"),
 )
 MAX_DRIVE_WORKERS = 64
+SOURCES_DRIVE_DEFAULT_WIDTHS: list[int] = [240, 220, 160, 96, 96, 76, 96, 76, 240]
 
 
 class PersistentCheckMenu(QMenu):
@@ -202,6 +203,8 @@ class MainWindowBase(QMainWindow):
         self._drive_workers_editing = False
         self._full_reset_requested = False
         self._scan_priority_state: CurrentProcessPriorityState | None = None
+        self._sources_drive_table_column_widths: list[int] = []
+        self._applying_sources_drive_table_column_widths = False
 
         self.tabs = QTabWidget(self)
         self.setCentralWidget(self.tabs)
@@ -342,22 +345,21 @@ class MainWindowMenuMixin(MainWindowBase):
         file_menu.addAction(self.exit_action)
 
     def _build_view_menu(self) -> None:
-        view_menu = self.menuBar().addMenu("&View")
-        columns_menu = PersistentCheckMenu("&Columns", view_menu)
-        view_menu.addMenu(columns_menu)
-        self._columns_menu = columns_menu
+        view_menu = PersistentCheckMenu("&View", self)
+        self.menuBar().addMenu(view_menu)
+        self._columns_menu = view_menu
 
         self.fit_columns_action = QAction("&Fit Columns", self)
         self.fit_columns_action.triggered.connect(self._fit_columns)
-        columns_menu.addAction(self.fit_columns_action)
+        view_menu.addAction(self.fit_columns_action)
 
         self.save_current_view_action = QAction("&Save Current View", self)
         self.save_current_view_action.triggered.connect(self._save_current_view)
-        columns_menu.addAction(self.save_current_view_action)
+        view_menu.addAction(self.save_current_view_action)
 
-        self._saved_views_menu = columns_menu.addMenu("Sa&ved Views")
+        self._saved_views_menu = view_menu.addMenu("Sa&ved Views")
         self._refresh_saved_views_menu()
-        columns_menu.addSeparator()
+        view_menu.addSeparator()
 
         self._column_toggle_actions = []
         for index, label in enumerate(self.results_view.column_labels()):
@@ -365,7 +367,7 @@ class MainWindowMenuMixin(MainWindowBase):
             action.setCheckable(True)
             action.setChecked(True)
             action.toggled.connect(self._column_toggle_slot(index))
-            columns_menu.addAction(action)
+            view_menu.addAction(action)
             self._column_toggle_actions.append(action)
 
     def _build_sort_menu(self) -> None:
@@ -683,6 +685,24 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             object_name="sources_extensions_edit",
             widget_alias="Extensions",
         )
+        self.scan_size_mib_min_spin = QSpinBox(self.sources_tab)
+        self.scan_size_mib_min_spin.setRange(0, 1024 * 1024)
+        self.scan_size_mib_min_spin.setSpecialValueText("Any")
+        self.scan_size_mib_min_spin.setSuffix(" MiB")
+        self._configure_named_widget(
+            self.scan_size_mib_min_spin,
+            object_name="sources_scan_size_mib_min_spin",
+            widget_alias="Scan Size MiB Min",
+        )
+        self.scan_size_mib_max_spin = QSpinBox(self.sources_tab)
+        self.scan_size_mib_max_spin.setRange(0, 1024 * 1024)
+        self.scan_size_mib_max_spin.setSpecialValueText("Any")
+        self.scan_size_mib_max_spin.setSuffix(" MiB")
+        self._configure_named_widget(
+            self.scan_size_mib_max_spin,
+            object_name="sources_scan_size_mib_max_spin",
+            widget_alias="Scan Size MiB Max",
+        )
         self.profile_combo = QComboBox(self.sources_tab)
         self.profile_combo.addItems(["balanced", "conservative", "aggressive"])
         self._configure_named_widget(
@@ -831,6 +851,22 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
                 "Enter the video file extensions that should be scanned.\n\n"
                 "Use commas, and dots are optional. Only files whose suffix matches "
                 "this list are enumerated."
+            ),
+        )
+        self._set_sources_tooltip(
+            self.scan_size_mib_min_spin,
+            (
+                "Exclude files smaller than this size from scan discovery.\n\n"
+                "This filter is applied during enumeration, so files below the "
+                "threshold never enter duplicate analysis. Set 0 for Any."
+            ),
+        )
+        self._set_sources_tooltip(
+            self.scan_size_mib_max_spin,
+            (
+                "Exclude files larger than this size from scan discovery.\n\n"
+                "Use this to cap very large files during enumeration. Set 0 for Any, "
+                "which means no upper size limit is enforced."
             ),
         )
         self._set_sources_tooltip(
@@ -1076,15 +1112,16 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         self.sources_drive_table.setMinimumHeight(280)
         self.sources_drive_table.verticalHeader().setVisible(False)
         drives_header = self.sources_drive_table.horizontalHeader()
-        drives_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        drives_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        drives_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        drives_header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        drives_header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        drives_header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
-        drives_header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
-        drives_header.setSectionResizeMode(7, QHeaderView.ResizeMode.ResizeToContents)
-        drives_header.setSectionResizeMode(8, QHeaderView.ResizeMode.Stretch)
+        drives_header.setStretchLastSection(False)
+        drives_header.sectionResized.connect(
+            self._on_sources_drive_table_column_resized
+        )
+        for index, width in enumerate(SOURCES_DRIVE_DEFAULT_WIDTHS):
+            drives_header.setSectionResizeMode(
+                index,
+                QHeaderView.ResizeMode.Interactive,
+            )
+            self.sources_drive_table.setColumnWidth(index, width)
         header_tooltips = [
             (
                 "The scan root or local-drive row this entry represents.\n\n"
@@ -1117,6 +1154,54 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             header_item = self.sources_drive_table.horizontalHeaderItem(index)
             if header_item is not None:
                 header_item.setToolTip(tooltip)
+
+    def _on_sources_drive_table_column_resized(
+        self,
+        _section: int,
+        _old_size: int,
+        _new_size: int,
+    ) -> None:
+        """Persist live Sources drive-table widths when the user resizes them."""
+        if self._applying_sources_drive_table_column_widths:
+            return
+        self._sources_drive_table_column_widths = (
+            self._capture_sources_drive_table_column_widths()
+        )
+
+    def _capture_sources_drive_table_column_widths(self) -> list[int]:
+        """Capture the current live Sources drive-table widths."""
+        return [
+            self.sources_drive_table.columnWidth(index)
+            for index in range(self.sources_drive_table.columnCount())
+        ]
+
+    def _set_sources_drive_table_column_widths(self, widths: list[int]) -> None:
+        """Apply one complete width payload to the Sources drive table."""
+        if len(widths) != self.sources_drive_table.columnCount():
+            return
+        self._applying_sources_drive_table_column_widths = True
+        try:
+            for index, width in enumerate(widths):
+                self.sources_drive_table.setColumnWidth(index, int(width))
+        finally:
+            self._applying_sources_drive_table_column_widths = False
+        self._sources_drive_table_column_widths = (
+            self._capture_sources_drive_table_column_widths()
+        )
+
+    def _fit_sources_drive_table_columns(self) -> None:
+        """Auto-fit the Sources drive-table columns and keep the result."""
+        self.sources_drive_table.resizeColumnsToContents()
+        fitted = self._capture_sources_drive_table_column_widths()
+        widened = [
+            max(width, default_width)
+            for width, default_width in zip(
+                fitted,
+                SOURCES_DRIVE_DEFAULT_WIDTHS,
+                strict=True,
+            )
+        ]
+        self._set_sources_drive_table_column_widths(widened)
 
     def _build_sources_layout(self, roots_actions: QHBoxLayout) -> None:
         scan_folders_group, scan_folders_layout = self._create_sources_group_box(
@@ -1168,6 +1253,20 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
                 "Extensions (comma-separated, no dots required)",
                 self.extensions_edit,
                 tooltip=self.extensions_edit.toolTip(),
+            )
+        )
+        scan_content_layout.addWidget(
+            self._build_labeled_control_block(
+                "Size MiB Min",
+                self.scan_size_mib_min_spin,
+                tooltip=self.scan_size_mib_min_spin.toolTip(),
+            )
+        )
+        scan_content_layout.addWidget(
+            self._build_labeled_control_block(
+                "Size MiB Max",
+                self.scan_size_mib_max_spin,
+                tooltip=self.scan_size_mib_max_spin.toolTip(),
             )
         )
         scan_content_layout.addWidget(

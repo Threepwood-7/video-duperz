@@ -109,7 +109,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     scan.set_defaults(func=_cmd_scan)
 
-    export = sub.add_parser("export", help="Export duplicate groups to CSV and JSON")
+    export = sub.add_parser(
+        "export",
+        help="Export duplicate groups and tracked links to CSV and JSON",
+    )
     export.add_argument(
         "--scan-id", type=int, default=None, help="Scan id (latest if omitted)"
     )
@@ -262,6 +265,8 @@ def _cmd_scan(args: argparse.Namespace) -> int:
                 db=db,
                 roots=[str(Path(p)) for p in args.roots],
                 extensions=extensions,
+                scan_size_mib_min=settings.scan_size_mib_min,
+                scan_size_mib_max=settings.scan_size_mib_max,
                 profile=args.profile,
                 max_workers=settings.max_workers,
                 drive_worker_overrides=settings.drive_worker_overrides,
@@ -326,17 +331,19 @@ def _cmd_benchmark_eval(args: argparse.Namespace) -> int:
 
 
 def _cmd_export(args: argparse.Namespace) -> int:
-    """Export one persisted scan to CSV and JSON files."""
+    """Export one persisted scan to duplicate and link CSV/JSON files."""
     out = Path(args.out)
     with Database() as db:
         scan_id = args.scan_id if args.scan_id is not None else db.latest_scan_id()
         if scan_id is None:
             print("ERROR: no scans available", file=sys.stderr)
             return 2
-        csv_path, json_path = export_scan(db, scan_id=scan_id, out_dir=out)
+        export_paths = export_scan(db, scan_id=scan_id, out_dir=out)
         print(f"scan_id={scan_id}")
-        print(f"csv={csv_path}")
-        print(f"json={json_path}")
+        print(f"duplicates_csv={export_paths.duplicates_csv}")
+        print(f"duplicates_json={export_paths.duplicates_json}")
+        print(f"links_csv={export_paths.links_csv}")
+        print(f"links_json={export_paths.links_json}")
     return 0
 
 

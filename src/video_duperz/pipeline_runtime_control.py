@@ -121,7 +121,9 @@ def pipeline_should_stop(
         waiting_items = any(bool(queue) for queue in ctx.lane_queues.values())
         active_count = len(ctx.futures)
     pending_writes = bool(
-        ctx.pending_meta_rows
+        ctx.pending_scan_links
+        or ctx.pending_discovered
+        or ctx.pending_meta_rows
         or ctx.pending_fp_rows
         or ctx.pending_probe_error_rows
         or ctx.queued_issues
@@ -139,6 +141,7 @@ def pipeline_should_stop(
         and active_count == 0
         and not waiting_items
         and not ctx.pending_discovered
+        and not ctx.pending_scan_links
         and not pending_writes
         and ctx.enum_queue.empty()
     ):
@@ -155,7 +158,8 @@ def wait_for_pipeline_event(ctx: _ScanContext) -> None:
         ctx: Shared scan runtime context.
     """
     pending_writes = bool(
-        ctx.pending_discovered
+        ctx.pending_scan_links
+        or ctx.pending_discovered
         or ctx.pending_meta_rows
         or ctx.pending_fp_rows
         or ctx.pending_probe_error_rows

@@ -27,13 +27,26 @@ from threep_commons.platform.windows.volumes import (
     get_volume_mount_point as _get_volume_mount_point,
 )
 
-from .models import ScanIssue, VideoRecord
+from .models import (
+    ScanEnumerationResult,
+    ScanIssue,
+    ScanLinkRecord,
+    VideoRecord,
+)
 
 ProgressFn = Callable[[int, int, str], None]
 FileDiscoveredFn = Callable[[VideoRecord], None]
 IssueFn = Callable[[ScanIssue], None]
 DiskToken = str
 RootTokens = tuple[str, set[DiskToken]]
+
+
+@dataclass(slots=True)
+class _EnumeratedFileCandidate:
+    """One regular discovered file plus its hardlink-identity metadata."""
+
+    record: VideoRecord
+    identity: tuple[int, int] | None
 
 
 def _normalized_path_sort_key(path: str) -> tuple[str, str]:
@@ -63,6 +76,171 @@ def _record_enum_issue(
     issues.append(issue)
     if issue_cb is not None:
         issue_cb(issue)
+
+
+def _file_identity_from_stat(stat_result: os.stat_result) -> tuple[int, int] | None:
+    """Return the hardlink identity tuple for one stat result when usable."""
+    inode = int(getattr(stat_result, "st_ino", 0) or 0)
+    device = int(getattr(stat_result, "st_dev", 0) or 0)
+    if inode <= 0:
+        return None
+    return (device, inode)
+
+
+def _resolve_link_target_path(path: str) -> tuple[str, bool]:
+    """Resolve one symlink target path best-effort without requiring existence."""
+    link_path = Path(path)
+    target_path = ""
+    try:
+        raw_target = os.readlink(path)
+    except OSError:
+        raw_target = ""
+    if raw_target:
+        candidate = Path(raw_target)
+        if not candidate.is_absolute():
+            candidate = link_path.parent / candidate
+        try:
+            target_path = str(candidate.resolve(strict=False))
+        except OSError:
+            target_path = str(candidate)
+    else:
+        try:
+            target_path = str(link_path.resolve(strict=False))
+        except OSError:
+            target_path = ""
+    target_exists = bool(target_path) and Path(target_path).exists()
+    return (target_path, target_exists)
+
+
+def _classify_link_candidates(
+    candidates: list[_EnumeratedFileCandidate],
+) -> tuple[list[VideoRecord], list[ScanLinkRecord]]:
+    """Split regular candidates into real files and exported hardlink rows."""
+    kept_files: list[VideoRecord] = []
+    hardlink_rows: list[ScanLinkRecord] = []
+    by_identity: dict[tuple[int, int], list[_EnumeratedFileCandidate]] = {}
+
+    for candidate in candidates:
+        if candidate.identity is None:
+            kept_files.append(candidate.record)
+            continue
+        by_identity.setdefault(candidate.identity, []).append(candidate)
+
+    for grouped in by_identity.values():
+        ordered = sorted(grouped, key=lambda item: _video_record_sort_key(item.record))
+        canonical = ordered[0].record
+        kept_files.append(canonical)
+        for linked in ordered[1:]:
+            hardlink_rows.append(
+                ScanLinkRecord(
+                    scan_id=linked.record.scan_id,
+                    link_kind="hardlink",
+                    link_path=linked.record.path,
+                    target_original_path=canonical.path,
+                    target_exists=True,
+                    source_root=linked.record.source_root,
+                )
+            )
+
+    kept_files.sort(key=_video_record_sort_key)
+    hardlink_rows.sort(key=lambda link: _normalized_path_sort_key(link.link_path))
+    return (kept_files, hardlink_rows)
+
+
+def _validate_root_for_enumeration(root: str) -> str | None:
+    """Return a validation error for one root path, or ``None`` when usable."""
+    if not is_local_windows_path(root):
+        return "Network paths are not supported in v1"
+    if not os.path.exists(root):
+        return "Path does not exist"
+    if not os.path.isdir(root):
+        return "Path is not a directory"
+    return None
+
+
+def _handle_root_entry(
+    entry: os.DirEntry[str],
+    *,
+    scan_id: int,
+    ext_set: set[str],
+    min_size_bytes: int,
+    max_size_bytes: int,
+    source_root: str,
+    parallel_lane: int,
+    stack: list[str],
+    found: list[_EnumeratedFileCandidate],
+    links: list[ScanLinkRecord],
+    issues: list[ScanIssue],
+    on_file_discovered: FileDiscoveredFn | None,
+    issue_cb: IssueFn | None,
+) -> None:
+    """Handle one directory entry during scan enumeration."""
+    try:
+        if entry.is_symlink():
+            ext = Path(entry.name).suffix.lower().lstrip(".")
+            if ext not in ext_set:
+                return
+            target_path, target_exists = _resolve_link_target_path(entry.path)
+            links.append(
+                ScanLinkRecord(
+                    scan_id=scan_id,
+                    link_kind="symlink",
+                    link_path=entry.path,
+                    target_original_path=target_path,
+                    target_exists=target_exists,
+                    source_root=source_root,
+                )
+            )
+            return
+        if entry.is_dir(follow_symlinks=False):
+            stack.append(entry.path)
+            return
+        if not entry.is_file(follow_symlinks=False):
+            return
+    except OSError as exc:
+        _record_enum_issue(
+            issues,
+            path=entry.path,
+            message=f"Unreadable entry: {exc}",
+            issue_cb=issue_cb,
+        )
+        return
+
+    ext = Path(entry.name).suffix.lower().lstrip(".")
+    if ext not in ext_set:
+        return
+    try:
+        stat_result = os.stat(entry.path, follow_symlinks=False)
+    except OSError as exc:
+        _record_enum_issue(
+            issues,
+            path=entry.path,
+            message=f"Unreadable file: {exc}",
+            issue_cb=issue_cb,
+        )
+        return
+    record = VideoRecord(
+        path=entry.path,
+        size=int(stat_result.st_size),
+        mtime_ns=int(stat_result.st_mtime_ns),
+        ctime_ns=int(stat_result.st_ctime_ns),
+        ext=ext,
+        scan_id=scan_id,
+        source_root=source_root,
+        parallel_lane=parallel_lane,
+    )
+    if record.size < min_size_bytes:
+        return
+    if max_size_bytes > 0 and record.size > max_size_bytes:
+        return
+    found.append(
+        _EnumeratedFileCandidate(
+            record=record,
+            identity=_file_identity_from_stat(stat_result),
+        )
+    )
+    if on_file_discovered is not None:
+        on_file_discovered(record)
 
 
 @dataclass(slots=True)
@@ -321,38 +499,26 @@ def _enumerate_root(
     scan_id: int,
     root: str,
     ext_set: set[str],
+    min_size_bytes: int,
+    max_size_bytes: int,
     cancel_event: Event | None,
     source_root: str,
     parallel_lane: int,
     on_file_discovered: FileDiscoveredFn | None = None,
     issue_cb: IssueFn | None = None,
-) -> tuple[list[VideoRecord], list[ScanIssue]]:
-    found: list[VideoRecord] = []
+) -> tuple[list[_EnumeratedFileCandidate], list[ScanLinkRecord], list[ScanIssue]]:
+    found: list[_EnumeratedFileCandidate] = []
+    links: list[ScanLinkRecord] = []
     issues: list[ScanIssue] = []
-    if not is_local_windows_path(root):
+    validation_error = _validate_root_for_enumeration(root)
+    if validation_error is not None:
         _record_enum_issue(
             issues,
             path=root,
-            message="Network paths are not supported in v1",
+            message=validation_error,
             issue_cb=issue_cb,
         )
-        return found, issues
-    if not os.path.exists(root):
-        _record_enum_issue(
-            issues,
-            path=root,
-            message="Path does not exist",
-            issue_cb=issue_cb,
-        )
-        return found, issues
-    if not os.path.isdir(root):
-        _record_enum_issue(
-            issues,
-            path=root,
-            message="Path is not a directory",
-            issue_cb=issue_cb,
-        )
-        return found, issues
+        return found, links, issues
 
     stack: list[str] = [root]
     while stack:
@@ -368,48 +534,21 @@ def _enumerate_root(
                 for entry in sorted_entries:
                     if cancel_event and cancel_event.is_set():
                         break
-                    try:
-                        if entry.is_dir(follow_symlinks=False):
-                            stack.append(entry.path)
-                            continue
-                        if not entry.is_file(follow_symlinks=False):
-                            continue
-                    except OSError as exc:
-                        _record_enum_issue(
-                            issues,
-                            path=entry.path,
-                            message=f"Unreadable entry: {exc}",
-                            issue_cb=issue_cb,
-                        )
-                        continue
-
-                    ext = Path(entry.name).suffix.lower().lstrip(".")
-                    if ext not in ext_set:
-                        continue
-                    try:
-                        st = entry.stat(follow_symlinks=False)
-                    except OSError as exc:
-                        _record_enum_issue(
-                            issues,
-                            path=entry.path,
-                            message=f"Unreadable file: {exc}",
-                            issue_cb=issue_cb,
-                        )
-                        continue
-                    found.append(
-                        VideoRecord(
-                            path=entry.path,
-                            size=int(st.st_size),
-                            mtime_ns=int(st.st_mtime_ns),
-                            ctime_ns=int(st.st_ctime_ns),
-                            ext=ext,
-                            scan_id=scan_id,
-                            source_root=source_root,
-                            parallel_lane=parallel_lane,
-                        )
+                    _handle_root_entry(
+                        entry,
+                        scan_id=scan_id,
+                        ext_set=ext_set,
+                        min_size_bytes=min_size_bytes,
+                        max_size_bytes=max_size_bytes,
+                        source_root=source_root,
+                        parallel_lane=parallel_lane,
+                        stack=stack,
+                        found=found,
+                        links=links,
+                        issues=issues,
+                        on_file_discovered=on_file_discovered,
+                        issue_cb=issue_cb,
                     )
-                    if on_file_discovered:
-                        on_file_discovered(found[-1])
         except OSError as exc:
             _record_enum_issue(
                 issues,
@@ -417,24 +556,30 @@ def _enumerate_root(
                 message=f"Unreadable directory: {exc}",
                 issue_cb=issue_cb,
             )
-    found.sort(key=_video_record_sort_key)
-    return found, issues
+    found.sort(key=lambda item: _video_record_sort_key(item.record))
+    links.sort(key=lambda link: _normalized_path_sort_key(link.link_path))
+    return found, links, issues
 
 
 def enumerate_video_files(
     scan_id: int,
     roots: list[str],
     extensions: list[str],
+    min_size_mib: int = 0,
+    max_size_mib: int = 0,
     max_workers: int = 1,
     drive_worker_overrides: dict[str, int] | None = None,
     cancel_event: Event | None = None,
     progress_cb: ProgressFn | None = None,
     on_file_discovered: FileDiscoveredFn | None = None,
     issue_cb: IssueFn | None = None,
-) -> tuple[list[VideoRecord], list[ScanIssue]]:
+) -> ScanEnumerationResult:
     """Enumerate matching video files across the planned physical-drive lanes."""
     ext_set = {e.lower().lstrip(".") for e in extensions}
-    found: list[VideoRecord] = []
+    min_size_bytes = max(0, int(min_size_mib)) * 1024 * 1024
+    max_size_bytes = max(0, int(max_size_mib)) * 1024 * 1024
+    found: list[_EnumeratedFileCandidate] = []
+    links: list[ScanLinkRecord] = []
     issues: list[ScanIssue] = []
     normalized_roots = [str(Path(root)) for root in roots]
     root_count = max(1, len(normalized_roots))
@@ -450,7 +595,7 @@ def enumerate_video_files(
 
     groups = plan.root_groups
     if not groups:
-        return found, issues
+        return ScanEnumerationResult(files=[], issues=issues, links=[])
 
     worker_count = min(len(groups), max(1, int(plan.requested_worker_target)))
     progress_lock = Lock()
@@ -477,18 +622,25 @@ def enumerate_video_files(
 
     def _enumerate_group(
         lane_index: int, group_roots: list[str]
-    ) -> tuple[list[VideoRecord], list[ScanIssue]]:
-        group_found: list[VideoRecord] = []
+    ) -> tuple[
+        list[_EnumeratedFileCandidate],
+        list[ScanLinkRecord],
+        list[ScanIssue],
+    ]:
+        group_found: list[_EnumeratedFileCandidate] = []
+        group_links: list[ScanLinkRecord] = []
         group_issues: list[ScanIssue] = []
         _set_worker_delta(1)
         try:
             for root in group_roots:
                 if cancel_event and cancel_event.is_set():
                     break
-                root_found, root_issues = _enumerate_root(
+                root_found, root_links, root_issues = _enumerate_root(
                     scan_id=scan_id,
                     root=root,
                     ext_set=ext_set,
+                    min_size_bytes=min_size_bytes,
+                    max_size_bytes=max_size_bytes,
                     cancel_event=cancel_event,
                     source_root=root,
                     parallel_lane=lane_index,
@@ -496,21 +648,30 @@ def enumerate_video_files(
                     issue_cb=issue_cb,
                 )
                 group_found.extend(root_found)
+                group_links.extend(root_links)
                 group_issues.extend(root_issues)
                 _mark_root_complete(root)
         finally:
             _set_worker_delta(-1)
-        return group_found, group_issues
+        return group_found, group_links, group_issues
 
     if worker_count == 1:
         for lane_idx, group in enumerate(groups):
-            group_found, group_issues = _enumerate_group(lane_idx, group)
+            group_found, group_links, group_issues = _enumerate_group(lane_idx, group)
             found.extend(group_found)
+            links.extend(group_links)
             issues.extend(group_issues)
     else:
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
             futures: dict[
-                Future[tuple[list[VideoRecord], list[ScanIssue]]], tuple[int, list[str]]
+                Future[
+                    tuple[
+                        list[_EnumeratedFileCandidate],
+                        list[ScanLinkRecord],
+                        list[ScanIssue],
+                    ]
+                ],
+                tuple[int, list[str]],
             ] = {
                 executor.submit(_enumerate_group, lane_idx, group): (lane_idx, group)
                 for lane_idx, group in enumerate(groups)
@@ -518,7 +679,7 @@ def enumerate_video_files(
             for future in as_completed(futures):
                 _lane_idx, group = futures[future]
                 try:
-                    group_found, group_issues = future.result()
+                    group_found, group_links, group_issues = future.result()
                 except Exception as exc:
                     group_path = ", ".join(group)
                     _record_enum_issue(
@@ -529,7 +690,10 @@ def enumerate_video_files(
                     )
                     continue
                 found.extend(group_found)
+                links.extend(group_links)
                 issues.extend(group_issues)
 
-    found.sort(key=_video_record_sort_key)
-    return found, issues
+    files, hardlinks = _classify_link_candidates(found)
+    links.extend(hardlinks)
+    links.sort(key=lambda link: _normalized_path_sort_key(link.link_path))
+    return ScanEnumerationResult(files=files, issues=issues, links=links)

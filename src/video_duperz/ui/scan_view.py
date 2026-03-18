@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, Signal
@@ -22,6 +23,8 @@ from PySide6.QtWidgets import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from ..models import ScanIssue, ScanLaneSnapshot, ScanProgress
 
 SCAN_LANE_COL_LANE = 0
@@ -67,16 +70,23 @@ SCAN_LANE_DEFAULT_WIDTHS = [
     86,
     180,
 ]
-SCAN_PROGRESS_COL_STAGE = 0
-SCAN_PROGRESS_COL_PROGRESS = 1
-SCAN_PROGRESS_COL_MESSAGE = 2
-SCAN_PROGRESS_HEADERS = ["Stage", "Progress", "Message"]
-SCAN_PROGRESS_DEFAULT_WIDTHS = [96, 112, 520]
-SCAN_ISSUE_COL_STAGE = 0
-SCAN_ISSUE_COL_PATH = 1
-SCAN_ISSUE_COL_MESSAGE = 2
-SCAN_ISSUE_HEADERS = ["Stage", "Path", "Message"]
-SCAN_ISSUE_DEFAULT_WIDTHS = [96, 280, 480]
+SCAN_LOG_COL_STAGE = 0
+SCAN_LOG_COL_PROGRESS = 1
+SCAN_LOG_COL_FILE = 2
+SCAN_LOG_COL_MESSAGE = 3
+SCAN_LOG_HEADERS = ["Stage", "Progress", "File", "Message"]
+SCAN_LOG_DEFAULT_WIDTHS = [96, 112, 220, 520]
+SCAN_PROGRESS_COL_STAGE = SCAN_LOG_COL_STAGE
+SCAN_PROGRESS_COL_PROGRESS = SCAN_LOG_COL_PROGRESS
+SCAN_PROGRESS_COL_FILE = SCAN_LOG_COL_FILE
+SCAN_PROGRESS_COL_MESSAGE = SCAN_LOG_COL_MESSAGE
+SCAN_PROGRESS_HEADERS = SCAN_LOG_HEADERS
+SCAN_ISSUE_COL_STAGE = SCAN_LOG_COL_STAGE
+SCAN_ISSUE_COL_PROGRESS = SCAN_LOG_COL_PROGRESS
+SCAN_ISSUE_COL_FILE = SCAN_LOG_COL_FILE
+SCAN_ISSUE_COL_PATH = SCAN_LOG_COL_FILE
+SCAN_ISSUE_COL_MESSAGE = SCAN_LOG_COL_MESSAGE
+SCAN_ISSUE_HEADERS = SCAN_LOG_HEADERS
 
 
 class _LaneProgressCell(QWidget):
@@ -113,6 +123,14 @@ class _LaneProgressCell(QWidget):
         layout.addWidget(self.progress_bar)
 
 
+def _filename_only(path: str) -> str:
+    """Return only the terminal file name for one path-like string."""
+    cleaned = str(path or "").strip()
+    if not cleaned:
+        return ""
+    return Path(cleaned).name or cleaned
+
+
 class ScanView(QWidget):
     """UI panel for scan controls, progress events, lane stats, and issues."""
 
@@ -143,8 +161,11 @@ class ScanView(QWidget):
             " | skipped failed 0",
             self,
         )
-        self._column_widths: list[int] = []
-        self._applying_column_widths = False
+        self._lane_column_widths: list[int] = []
+        self._log_column_widths: list[int] = []
+        self._applying_lane_column_widths = False
+        self._applying_log_column_widths = False
+        self._log_table_auto_scroll: dict[int, bool] = {}
         self.lane_table = QTableWidget(0, len(SCAN_LANE_HEADERS), self)
         self.lane_table.setHorizontalHeaderLabels(SCAN_LANE_HEADERS)
         self.lane_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
@@ -156,23 +177,23 @@ class ScanView(QWidget):
         lane_header = self.lane_table.horizontalHeader()
         lane_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         lane_header.setStretchLastSection(False)
-        lane_header.sectionResized.connect(self._on_column_resized)
+        lane_header.sectionResized.connect(self._on_lane_column_resized)
         for index, width in enumerate(SCAN_LANE_DEFAULT_WIDTHS):
             self.lane_table.setColumnWidth(index, width)
         self.progress_table = self._create_log_table(
-            headers=SCAN_PROGRESS_HEADERS,
-            default_widths=SCAN_PROGRESS_DEFAULT_WIDTHS,
-            stretch_column=SCAN_PROGRESS_COL_MESSAGE,
+            headers=SCAN_LOG_HEADERS,
+            default_widths=SCAN_LOG_DEFAULT_WIDTHS,
+            stretch_column=SCAN_LOG_COL_MESSAGE,
             object_name="scan_progress_table",
         )
         self.issues_table = self._create_log_table(
-            headers=SCAN_ISSUE_HEADERS,
-            default_widths=SCAN_ISSUE_DEFAULT_WIDTHS,
-            stretch_column=SCAN_ISSUE_COL_MESSAGE,
+            headers=SCAN_LOG_HEADERS,
+            default_widths=SCAN_LOG_DEFAULT_WIDTHS,
+            stretch_column=SCAN_LOG_COL_MESSAGE,
             object_name="scan_issues_table",
         )
         self._max_progress_rows = 5000
-        self._last_progress_row: tuple[str, str, str] | None = None
+        self._last_progress_row: tuple[str, str, str, str] | None = None
         self._lane_rows: dict[int, int] = {}
         self._worker_limit = 0
         self._paused_loaded = False
@@ -244,8 +265,47 @@ class ScanView(QWidget):
                 else QHeaderView.ResizeMode.Interactive
             )
             header.setSectionResizeMode(index, resize_mode)
+        header.sectionResized.connect(self._build_log_table_resize_handler(table))
+        scroll_bar = table.verticalScrollBar()
+        scroll_bar.valueChanged.connect(self._build_log_table_scroll_handler(table))
+        scroll_bar.rangeChanged.connect(self._build_log_table_range_handler(table))
         table.itemDoubleClicked.connect(self._emit_item_path)
+        self._log_table_auto_scroll[id(table)] = True
         return table
+
+    def _build_log_table_resize_handler(
+        self,
+        table: QTableWidget,
+    ) -> Callable[[int, int, int], None]:
+        """Build one resize handler that keeps the paired scan-log table aligned."""
+
+        def _handle_resize(_section: int, _old_size: int, _new_size: int) -> None:
+            self._on_log_table_column_resized(table)
+
+        return _handle_resize
+
+    def _build_log_table_scroll_handler(
+        self,
+        table: QTableWidget,
+    ) -> Callable[[int], None]:
+        """Build one scroll handler that tracks user opt-in/out of auto-scroll."""
+
+        def _handle_scroll(_value: int) -> None:
+            self._log_table_auto_scroll[id(table)] = self._table_is_at_bottom(table)
+
+        return _handle_scroll
+
+    def _build_log_table_range_handler(
+        self,
+        table: QTableWidget,
+    ) -> Callable[[int, int], None]:
+        """Build one range handler that preserves auto-scroll on content growth."""
+
+        def _handle_range_changed(_minimum: int, _maximum: int) -> None:
+            if self._log_table_auto_scroll.get(id(table), True):
+                self._scroll_table_to_bottom(table)
+
+        return _handle_range_changed
 
     def _apply_mode(self, mode: str) -> None:
         """Apply the scan-action button state for one high-level mode."""
@@ -289,15 +349,25 @@ class ScanView(QWidget):
         done_by = datetime.now() + timedelta(seconds=remaining_s)
         return f"ETA: {remaining_text} | Done by {done_by:%H:%M}"
 
-    def _progress_row_values(self, progress: ScanProgress) -> tuple[str, str, str]:
+    def _progress_row_values(self, progress: ScanProgress) -> tuple[str, str, str, str]:
         """Render one structured detailed-progress row."""
         message = progress.message.strip() or progress.stage
         current, total = self._display_counter_values(progress)
-        return (progress.stage, self._format_counter(current, total), message)
+        return (
+            progress.stage,
+            self._format_counter(current, total),
+            _filename_only(progress.subject_path),
+            message,
+        )
 
-    def _issue_row_values(self, issue: ScanIssue) -> tuple[str, str, str]:
+    def _issue_row_values(self, issue: ScanIssue) -> tuple[str, str, str, str]:
         """Render one structured issue row."""
-        return (issue.stage, issue.path.strip(), issue.message)
+        return (
+            issue.stage,
+            "",
+            _filename_only(issue.path),
+            issue.message,
+        )
 
     @staticmethod
     def _table_is_at_bottom(table: QTableWidget, tolerance: int = 2) -> bool:
@@ -313,6 +383,40 @@ class ScanView(QWidget):
         scroll_bar = table.verticalScrollBar()
         scroll_bar.setValue(scroll_bar.maximum())
 
+    def _log_row_background(
+        self,
+        stage: str,
+        message: str,
+        *,
+        is_issue: bool,
+    ) -> QColor:
+        """Return one light background tint for a scan-log row situation."""
+        stage_key = str(stage or "").strip().lower()
+        message_key = str(message or "").strip().lower()
+        combined = f"{stage_key} {message_key}"
+        if is_issue:
+            if "skip" in combined or "warning" in combined:
+                return QColor("#fff4db")
+            return QColor("#fde7e7")
+        if stage_key in {"cache"} or "reused" in combined or "cache hit" in combined:
+            return QColor("#e9f8ea")
+        if stage_key in {"skip", "warning"} or "skipped" in combined:
+            return QColor("#fff4db")
+        if stage_key in {"error", "failed"} or "failed" in combined:
+            return QColor("#fde7e7")
+        if stage_key in {"done"} or "complete" in combined:
+            return QColor("#edf8ee")
+        if stage_key in {
+            "running",
+            "prepare",
+            "enumerate",
+            "probe",
+            "fingerprint",
+            "matching",
+        }:
+            return QColor("#eaf4ff")
+        return QColor("White")
+
     def _append_table_row(
         self,
         target: QTableWidget,
@@ -320,16 +424,25 @@ class ScanView(QWidget):
         subject_path: str = "",
         *,
         max_rows: int | None = None,
+        tooltips: tuple[str, ...] | None = None,
+        row_background: QColor | None = None,
     ) -> None:
         """Append one table row with its structured path payload."""
-        should_scroll = self._table_is_at_bottom(target)
+        should_scroll = self._log_table_auto_scroll.get(id(target), True)
         row = target.rowCount()
         target.insertRow(row)
         for column, text in enumerate(row_values):
             item = QTableWidgetItem(text)
             item.setData(self._PATH_ROLE, subject_path)
-            if text:
-                item.setToolTip(text)
+            tooltip_text = ""
+            if tooltips is not None and column < len(tooltips):
+                tooltip_text = tooltips[column]
+            elif text:
+                tooltip_text = text
+            if tooltip_text:
+                item.setToolTip(tooltip_text)
+            if row_background is not None:
+                item.setBackground(row_background)
             target.setItem(row, column, item)
         if max_rows is not None and target.rowCount() > max_rows:
             target.removeRow(0)
@@ -357,6 +470,10 @@ class ScanView(QWidget):
         self.issues_table.setRowCount(0)
         self._last_progress_row = None
         self._lane_rows = {}
+        self._log_table_auto_scroll = {
+            id(self.progress_table): True,
+            id(self.issues_table): True,
+        }
         self._worker_limit = 0
         self._paused_loaded = False
         self._set_retry_failed_state(visible=False, count=0, checked=True)
@@ -433,8 +550,8 @@ class ScanView(QWidget):
                 self._create_lane_progress_cell(),
             )
             self._apply_row_background(row, "pending")
-        if self._column_widths:
-            self._set_table_column_widths(self._column_widths)
+        if self._lane_column_widths:
+            self._set_lane_table_column_widths(self._lane_column_widths)
         else:
             self.fit_columns_to_contents()
         self._set_worker_progress(0, worker_limit)
@@ -452,29 +569,68 @@ class ScanView(QWidget):
         self.lane_table.setCellWidget(row, SCAN_LANE_COL_PROGRESS, progress_cell)
         return progress_cell.progress_bar
 
-    def _on_column_resized(self, _section: int, _old_size: int, _new_size: int) -> None:
+    def _on_lane_column_resized(
+        self, _section: int, _old_size: int, _new_size: int
+    ) -> None:
         """Persist live lane-table column widths when the user resizes them."""
-        if self._applying_column_widths:
+        if self._applying_lane_column_widths:
             return
-        self._column_widths = self._capture_column_widths()
+        self._lane_column_widths = self._capture_lane_column_widths()
 
-    def _set_table_column_widths(self, widths: list[int]) -> None:
+    def _capture_table_column_widths(self, table: QTableWidget) -> list[int]:
+        """Capture the current live widths for one table widget."""
+        return [table.columnWidth(index) for index in range(table.columnCount())]
+
+    def _capture_lane_column_widths(self) -> list[int]:
+        """Capture the current live lane-table widths."""
+        return self._capture_table_column_widths(self.lane_table)
+
+    def _capture_log_column_widths(
+        self,
+        table: QTableWidget | None = None,
+    ) -> list[int]:
+        """Capture the current live scan-log widths from one log table."""
+        target = self.progress_table if table is None else table
+        return self._capture_table_column_widths(target)
+
+    def _set_lane_table_column_widths(self, widths: list[int]) -> None:
         """Apply one complete width payload to the lane table."""
         if len(widths) != self.lane_table.columnCount():
             return
-        self._applying_column_widths = True
+        self._applying_lane_column_widths = True
         try:
             for index, width in enumerate(widths):
                 self.lane_table.setColumnWidth(index, width)
         finally:
-            self._applying_column_widths = False
+            self._applying_lane_column_widths = False
 
-    def _capture_column_widths(self) -> list[int]:
-        """Capture the current live lane-table widths."""
-        return [
-            self.lane_table.columnWidth(index)
-            for index in range(self.lane_table.columnCount())
-        ]
+    def _apply_log_table_column_widths(
+        self,
+        widths: list[int],
+        *,
+        source_table: QTableWidget | None = None,
+    ) -> None:
+        """Apply one shared width payload to both scan-log tables."""
+        if len(widths) != self.progress_table.columnCount():
+            return
+        self._applying_log_column_widths = True
+        try:
+            targets = [self.progress_table, self.issues_table]
+            if source_table is not None:
+                targets = [source_table, *[t for t in targets if t is not source_table]]
+            for table in targets:
+                for index, width in enumerate(widths):
+                    table.setColumnWidth(index, width)
+        finally:
+            self._applying_log_column_widths = False
+
+    def _on_log_table_column_resized(self, source_table: QTableWidget) -> None:
+        """Mirror manual scan-log table resizes onto the paired log table."""
+        if self._applying_log_column_widths:
+            return
+        widths = self._capture_log_column_widths(source_table)
+        self._apply_log_table_column_widths(widths, source_table=source_table)
+        self._log_column_widths = self._capture_log_column_widths(source_table)
 
     @staticmethod
     def _normalize_column_widths(widths: list[int], expected_count: int) -> list[int]:
@@ -492,23 +648,44 @@ class ScanView(QWidget):
             normalized.append(width)
         return normalized
 
-    def set_column_widths(self, widths: list[int]) -> None:
+    def set_lane_column_widths(self, widths: list[int]) -> None:
         """Apply persisted lane-table widths when the payload is well formed."""
-        self._column_widths = self._normalize_column_widths(
+        self._lane_column_widths = self._normalize_column_widths(
             widths,
             expected_count=self.lane_table.columnCount(),
         )
-        if self._column_widths:
-            self._set_table_column_widths(self._column_widths)
+        if self._lane_column_widths:
+            self._set_lane_table_column_widths(self._lane_column_widths)
+
+    def lane_column_widths(self) -> list[int]:
+        """Return stored lane-table widths or capture them live from the table."""
+        return self._lane_column_widths or self._capture_lane_column_widths()
+
+    def set_log_column_widths(self, widths: list[int]) -> None:
+        """Apply persisted shared scan-log widths when the payload is valid."""
+        self._log_column_widths = self._normalize_column_widths(
+            widths,
+            expected_count=self.progress_table.columnCount(),
+        )
+        if self._log_column_widths:
+            self._apply_log_table_column_widths(self._log_column_widths)
+
+    def log_column_widths(self) -> list[int]:
+        """Return stored shared scan-log widths or capture them live."""
+        return self._log_column_widths or self._capture_log_column_widths()
+
+    def set_column_widths(self, widths: list[int]) -> None:
+        """Backwards-compatible alias for persisted lane-table widths."""
+        self.set_lane_column_widths(widths)
 
     def column_widths(self) -> list[int]:
-        """Return stored lane-table widths or capture them live from the table."""
-        return self._column_widths or self._capture_column_widths()
+        """Backwards-compatible alias for lane-table widths."""
+        return self.lane_column_widths()
 
     def fit_columns_to_contents(self) -> None:
         """Auto-fit lane columns once, then keep the resulting widths."""
         self.lane_table.resizeColumnsToContents()
-        fitted = self._capture_column_widths()
+        fitted = self._capture_lane_column_widths()
         widened = [
             max(width, default_width)
             for width, default_width in zip(
@@ -517,8 +694,31 @@ class ScanView(QWidget):
                 strict=True,
             )
         ]
-        self._set_table_column_widths(widened)
-        self._column_widths = self._capture_column_widths()
+        self._set_lane_table_column_widths(widened)
+        self._lane_column_widths = self._capture_lane_column_widths()
+
+    def fit_log_columns_to_contents(self) -> None:
+        """Auto-fit scan-log columns and keep both log tables aligned."""
+        self.progress_table.resizeColumnsToContents()
+        self.issues_table.resizeColumnsToContents()
+        fitted_progress = self._capture_log_column_widths(self.progress_table)
+        fitted_issues = self._capture_log_column_widths(self.issues_table)
+        widened = [
+            max(progress_width, issue_width, default_width)
+            for progress_width, issue_width, default_width in zip(
+                fitted_progress,
+                fitted_issues,
+                SCAN_LOG_DEFAULT_WIDTHS,
+                strict=True,
+            )
+        ]
+        self._apply_log_table_column_widths(widened)
+        self._log_column_widths = self._capture_log_column_widths()
+
+    def fit_all_columns_to_contents(self) -> None:
+        """Auto-fit every Scan-tab table that exposes columns."""
+        self.fit_columns_to_contents()
+        self.fit_log_columns_to_contents()
 
     def _set_worker_progress(self, active_workers: int, worker_limit: int) -> None:
         bounded_limit = max(0, int(worker_limit))
@@ -754,15 +954,24 @@ class ScanView(QWidget):
         subject_path: str = "",
     ) -> None:
         """Append one synthetic progress row without requiring a full snapshot."""
+        row_background = self._log_row_background(stage, message, is_issue=False)
         self._append_table_row(
             self.progress_table,
-            (stage, "", message),
+            (stage, "", _filename_only(subject_path), message),
             subject_path,
             max_rows=self._max_progress_rows,
+            tooltips=(
+                stage,
+                "",
+                str(subject_path or ""),
+                message,
+            ),
+            row_background=row_background,
         )
         self._last_progress_row = None
 
     def update_progress(self, progress: ScanProgress) -> None:
+        """Apply one live progress snapshot to the Scan tab widgets."""
         display_current, display_total = self._display_counter_values(progress)
         value = int((display_current / max(1, display_total)) * 100)
         self.stage_progress.setValue(max(0, min(100, value)))
@@ -778,23 +987,48 @@ class ScanView(QWidget):
         self._update_io_stats(progress)
         progress_row = self._progress_row_values(progress)
         if progress_row != self._last_progress_row:
+            row_background = self._log_row_background(
+                progress.stage,
+                progress.message,
+                is_issue=False,
+            )
             self._append_table_row(
                 self.progress_table,
                 progress_row,
                 progress.subject_path,
                 max_rows=self._max_progress_rows,
+                tooltips=(
+                    progress.stage,
+                    progress_row[1],
+                    str(progress.subject_path or ""),
+                    progress_row[3],
+                ),
+                row_background=row_background,
             )
             self._last_progress_row = progress_row
 
     def append_issue(self, issue: ScanIssue) -> None:
         """Append one live issue row."""
+        row_background = self._log_row_background(
+            issue.stage,
+            issue.message,
+            is_issue=True,
+        )
         self._append_table_row(
             self.issues_table,
             self._issue_row_values(issue),
             issue.path,
+            tooltips=(
+                issue.stage,
+                "",
+                str(issue.path or ""),
+                issue.message,
+            ),
+            row_background=row_background,
         )
 
     def set_issues(self, issues: list[ScanIssue]) -> None:
+        """Replace the current issue table contents with the provided issues."""
         self.issues_table.setRowCount(0)
         for issue in issues:
             self.append_issue(issue)

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 ActionKind = Literal["keep", "rename", "delete"]
 SimilarityProfile = Literal["balanced", "conservative", "aggressive"]
@@ -13,6 +16,7 @@ ProbeWorkerMode = Literal["balanced", "burst"]
 ProbeBackendId = Literal["ffprobe", "pyav"]
 FrameDecodeBackendId = Literal["opencv", "pyav", "ffmpeg"]
 ScanWorkKind = Literal["cache_hit", "fingerprint_only", "probe_and_fingerprint"]
+ScanLinkKind = Literal["symlink", "hardlink"]
 ScanProcessCpuPriority = Literal[
     "idle",
     "below_normal",
@@ -48,6 +52,8 @@ class Settings:
     scan_roots: list[str] = field(default_factory=list)
     recent_scan_roots: list[str] = field(default_factory=list)
     extensions: list[str] = field(default_factory=list)
+    scan_size_mib_min: int = 50
+    scan_size_mib_max: int = 0
     similarity_profile: SimilarityProfile = "balanced"
     max_workers: int = 2
     preview_autoplay: bool = False
@@ -57,7 +63,9 @@ class Settings:
     identical_block_mib: int = 1
     identical_sample_a_pct: int = 23
     identical_sample_b_pct: int = 78
+    sources_drive_table_column_widths: list[int] = field(default_factory=list)
     scan_lane_table_column_widths: list[int] = field(default_factory=list)
+    scan_log_table_column_widths: list[int] = field(default_factory=list)
     results_table_column_widths: list[int] = field(default_factory=list)
     results_table_column_visibility: list[bool] = field(default_factory=list)
     saved_column_views: dict[str, dict[str, list[int] | list[bool]]] = field(
@@ -112,6 +120,32 @@ class VideoRecord:
     source_root: str = ""
     parallel_lane: int = 0
     file_id: int | None = None
+
+
+@dataclass(slots=True)
+class ScanLinkRecord:
+    """Tracked filesystem link excluded from duplicate-candidate matching."""
+
+    scan_id: int
+    link_kind: ScanLinkKind
+    link_path: str
+    target_original_path: str
+    target_exists: bool
+    source_root: str = ""
+
+
+@dataclass(slots=True)
+class ScanEnumerationResult:
+    """Completed enumeration payload with candidates, links, and issues."""
+
+    files: list[VideoRecord] = field(default_factory=list)
+    issues: list[ScanIssue] = field(default_factory=list)
+    links: list[ScanLinkRecord] = field(default_factory=list)
+
+    def __iter__(self) -> Iterator[list[VideoRecord] | list[ScanIssue]]:
+        """Yield backward-compatible tuple-style values for older callers."""
+        yield self.files
+        yield self.issues
 
 
 @dataclass(slots=True)

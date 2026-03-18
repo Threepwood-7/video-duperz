@@ -161,6 +161,12 @@ class MainWindowDriveViewMixin(MainWindowRootsMixin):
         if plan.requested_worker_target > plan.effective_total_workers:
             summary = f"{summary} | Caps applied"
         self.sources_drive_summary_label.setText(summary)
+        if self._sources_drive_table_column_widths:
+            self._set_sources_drive_table_column_widths(
+                self._sources_drive_table_column_widths
+            )
+        else:
+            self._fit_sources_drive_table_columns()
 
     def _show_about(self) -> None:
         QMessageBox.about(

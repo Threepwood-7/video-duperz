@@ -105,6 +105,12 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
         self._refresh_recent_roots_menu()
         normalized_extensions = normalize_extensions(list(self.settings.extensions))
         self.extensions_edit.setText(", ".join(normalized_extensions))
+        self.scan_size_mib_min_spin.setValue(
+            max(0, int(self.settings.scan_size_mib_min))
+        )
+        self.scan_size_mib_max_spin.setValue(
+            max(0, int(self.settings.scan_size_mib_max))
+        )
         preset_name = (
             detect_video_extension_preset(normalized_extensions)
             or DEFAULT_VIDEO_EXTENSION_PRESET
@@ -158,7 +164,17 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
             sample_a_pct=self.settings.identical_sample_a_pct,
             sample_b_pct=self.settings.identical_sample_b_pct,
         )
-        self.scan_view.set_column_widths(self.settings.scan_lane_table_column_widths)
+        self._sources_drive_table_column_widths = list(
+            self.settings.sources_drive_table_column_widths
+        )
+        if self._sources_drive_table_column_widths:
+            self._set_sources_drive_table_column_widths(
+                self._sources_drive_table_column_widths
+            )
+        self.scan_view.set_lane_column_widths(
+            self.settings.scan_lane_table_column_widths
+        )
+        self.scan_view.set_log_column_widths(self.settings.scan_log_table_column_widths)
         visibility = self.settings.results_table_column_visibility
         if visibility:
             self.results_view.set_column_visibility(visibility)
@@ -195,6 +211,8 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
             scan_roots=roots,
             recent_scan_roots=list(self._recent_roots),
             extensions=exts,
+            scan_size_mib_min=max(0, int(self.scan_size_mib_min_spin.value())),
+            scan_size_mib_max=max(0, int(self.scan_size_mib_max_spin.value())),
             similarity_profile=normalize_similarity_profile(
                 self.profile_combo.currentText()
             ),
@@ -208,7 +226,11 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
             identical_block_mib=self.settings.identical_block_mib,
             identical_sample_a_pct=self.settings.identical_sample_a_pct,
             identical_sample_b_pct=self.settings.identical_sample_b_pct,
-            scan_lane_table_column_widths=self.scan_view.column_widths(),
+            sources_drive_table_column_widths=(
+                self._capture_sources_drive_table_column_widths()
+            ),
+            scan_lane_table_column_widths=self.scan_view.lane_column_widths(),
+            scan_log_table_column_widths=self.scan_view.log_column_widths(),
             results_table_column_widths=self.results_view.column_widths(),
             results_table_column_visibility=self.results_view.column_visibility(),
             saved_column_views=self._normalized_saved_column_views(),
@@ -395,9 +417,18 @@ class MainWindowSavedViewsMixin(MainWindowSettingsMixin):
         return normalized
 
     def _fit_columns(self) -> None:
+        current_tab = self.tabs.currentWidget()
+        if current_tab is self.sources_tab:
+            self._fit_sources_drive_table_columns()
+            self.statusBar().showMessage("Sources columns fitted to contents.")
+            return
+        if current_tab is self.scan_view:
+            self.scan_view.fit_all_columns_to_contents()
+            self.statusBar().showMessage("Scan columns fitted to contents.")
+            return
         self.results_view.fit_columns_to_contents()
         self._sync_column_toggle_actions()
-        self.statusBar().showMessage("Columns fitted to contents.")
+        self.statusBar().showMessage("Results columns fitted to contents.")
 
     def _save_current_view(self) -> None:
         name, ok = QInputDialog.getText(self, "Save Current View", "View name:")

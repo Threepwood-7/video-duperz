@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 from threep_commons.fs_paths import is_path_under_root, path_key
 
 from .db_shared import decode_hashes, decode_string_list_json
-from .models import MatchItem
+from .models import MatchItem, ScanLinkRecord
 from .scan_sets import (
     normalize_extensions,
     normalize_roots_for_display,
@@ -200,6 +200,34 @@ class DatabaseScanQueryMixin:
             "scan_set_key": str(row["scan_set_key"] or ""),
             "status": str(row["status"]),
         }
+
+    def load_scan_links(self, scan_id: int) -> list[ScanLinkRecord]:
+        """Load all persisted tracked-link rows for one scan."""
+        rows = self.conn.execute(
+            """
+            SELECT scan_id, link_kind, link_path, target_original_path,
+                   target_exists_flag, source_root
+            FROM scan_links
+            WHERE scan_id = ?
+            ORDER BY link_path
+            """,
+            (int(scan_id),),
+        ).fetchall()
+        return [
+            ScanLinkRecord(
+                scan_id=int(row["scan_id"]),
+                link_kind=(
+                    "symlink"
+                    if str(row["link_kind"] or "").strip().lower() == "symlink"
+                    else "hardlink"
+                ),
+                link_path=str(row["link_path"]),
+                target_original_path=str(row["target_original_path"]),
+                target_exists=bool(row["target_exists_flag"]),
+                source_root=str(row["source_root"] or ""),
+            )
+            for row in rows
+        ]
 
     def latest_scan_id(self) -> int | None:
         """Return the most recent scan id, if any."""

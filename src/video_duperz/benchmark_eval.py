@@ -247,13 +247,14 @@ def build_benchmark_sample_plan(
 ) -> BenchmarkSamplePlan:
     """Enumerate candidate files and build one deterministic benchmark plan."""
 
-    records, _issues = enumerate_video_files(
+    enumeration = enumerate_video_files(
         scan_id=0,
         roots=roots,
         extensions=list(_BENCHMARK_VIDEO_EXTENSIONS),
         max_workers=max(1, len(roots)),
         drive_worker_overrides=drive_worker_overrides,
     )
+    records = enumeration.files
     sorted_records = _sorted_records(records)
     selected_records = _select_records_for_set(set_id, sorted_records)
     plan = build_physical_drive_scan_plan(

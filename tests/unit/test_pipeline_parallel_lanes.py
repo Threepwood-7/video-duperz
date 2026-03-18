@@ -45,6 +45,9 @@ class _FakeDb:
     def mark_missing_for_scan(self, scan_id: int, present_paths: set[str]) -> None:
         return None
 
+    def delete_scan_links_for_scan(self, scan_id: int) -> None:
+        return None
+
     def upsert_files_batch(self, files: list[dict[str, object]]) -> dict[str, int]:
         out: dict[str, int] = {}
         for file in files:
@@ -58,6 +61,10 @@ class _FakeDb:
                 self._path_to_id[path] = file_id
             out[path] = file_id
         return out
+
+    def upsert_scan_links_batch(self, links: list[object]) -> None:
+        _ = links
+        return None
 
     def upsert_file(
         self,

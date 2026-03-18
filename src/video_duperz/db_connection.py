@@ -18,7 +18,7 @@ from .scan_sets import (
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 
 class DatabaseConnectionMixin:
@@ -265,6 +265,19 @@ class DatabaseConnectionMixin:
             );
             CREATE INDEX IF NOT EXISTS idx_scan_failed_files_scan_id
               ON scan_failed_files(scan_id, normalized_path);
+
+            CREATE TABLE IF NOT EXISTS scan_links(
+              scan_id INTEGER NOT NULL,
+              link_kind TEXT NOT NULL,
+              link_path TEXT NOT NULL,
+              target_original_path TEXT NOT NULL,
+              target_exists_flag INTEGER NOT NULL DEFAULT 0,
+              source_root TEXT NOT NULL DEFAULT '',
+              PRIMARY KEY(scan_id, link_path),
+              FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_scan_links_scan_kind_path
+              ON scan_links(scan_id, link_kind, link_path);
             """
         )
         self._ensure_video_meta_columns()
@@ -273,6 +286,7 @@ class DatabaseConnectionMixin:
         self._ensure_scan_columns()
         self._ensure_scan_issue_table()
         self._ensure_scan_failed_files_table()
+        self._ensure_scan_links_table()
         self._backfill_scan_set_keys()
         self.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         self.conn.commit()
@@ -595,6 +609,25 @@ class DatabaseConnectionMixin:
             );
             CREATE INDEX IF NOT EXISTS idx_scan_failed_files_scan_id
               ON scan_failed_files(scan_id, normalized_path);
+            """
+        )
+
+    def _ensure_scan_links_table(self) -> None:
+        """Create the persisted scan-links table when absent."""
+        self.conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS scan_links(
+              scan_id INTEGER NOT NULL,
+              link_kind TEXT NOT NULL,
+              link_path TEXT NOT NULL,
+              target_original_path TEXT NOT NULL,
+              target_exists_flag INTEGER NOT NULL DEFAULT 0,
+              source_root TEXT NOT NULL DEFAULT '',
+              PRIMARY KEY(scan_id, link_path),
+              FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_scan_links_scan_kind_path
+              ON scan_links(scan_id, link_kind, link_path);
             """
         )
 

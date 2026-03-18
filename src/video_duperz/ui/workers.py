@@ -40,6 +40,8 @@ class ScanWorker(QRunnable):
         db_file: str,
         roots: list[str],
         extensions: list[str],
+        scan_size_mib_min: int,
+        scan_size_mib_max: int,
         profile: str,
         max_workers: int,
         drive_worker_overrides: dict[str, int] | None = None,
@@ -62,6 +64,8 @@ class ScanWorker(QRunnable):
         self._db_file = db_file
         self._roots = roots
         self._extensions = extensions
+        self._scan_size_mib_min = max(0, int(scan_size_mib_min))
+        self._scan_size_mib_max = max(0, int(scan_size_mib_max))
         self._profile = profile
         self._max_workers = max_workers
         self._drive_worker_overrides = dict(drive_worker_overrides or {})
@@ -103,6 +107,8 @@ class ScanWorker(QRunnable):
                     db=db,
                     roots=self._roots,
                     extensions=self._extensions,
+                    scan_size_mib_min=self._scan_size_mib_min,
+                    scan_size_mib_max=self._scan_size_mib_max,
                     profile=self._profile,
                     max_workers=self._max_workers,
                     drive_worker_overrides=self._drive_worker_overrides,

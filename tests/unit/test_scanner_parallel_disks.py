@@ -1,20 +1,19 @@
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
-from typing import TYPE_CHECKING
+
+import pytest
 
 from video_duperz import scanner
 
-if TYPE_CHECKING:
-    import os
 
-
-def _write_video(path: Path) -> None:
+def _write_video(path: Path, *, size: int = 1) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(b"x")
+    path.write_bytes(b"x" * size)
 
 
 def test_grouping_distinct_disk_tokens_stays_separate() -> None:
@@ -81,12 +80,14 @@ def test_lookup_failure_falls_back_to_volume_identity_and_emits_issue(
         scanner, "_resolve_volume_identity", lambda _path: "volume:fallback"
     )
 
-    found, issues = scanner.enumerate_video_files(
+    result = scanner.enumerate_video_files(
         scan_id=7,
         roots=[str(root)],
         extensions=["mp4"],
         max_workers=4,
     )
+    found = result.files
+    issues = result.issues
 
     assert [Path(item.path).name for item in found] == ["clip.mp4"]
     assert any(
@@ -112,15 +113,93 @@ def test_parallel_enumeration_returns_files_from_all_roots_in_global_alpha_order
 
     monkeypatch.setattr(scanner, "_resolve_physical_disk_tokens", _tokens)
 
-    found, issues = scanner.enumerate_video_files(
+    result = scanner.enumerate_video_files(
         scan_id=11,
         roots=[str(root_z), str(root_a)],
         extensions=["mp4"],
         max_workers=2,
     )
+    found = result.files
+    issues = result.issues
 
     assert not issues
     assert [Path(item.path).name for item in found] == ["a.mp4", "z.mp4"]
+
+
+def test_enumeration_tracks_symlink_files_without_returning_them_as_candidates(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    target = root / "target.mp4"
+    link_path = root / "target-link.mp4"
+    _write_video(target)
+    try:
+        link_path.symlink_to(target)
+    except (NotImplementedError, OSError):
+        pytest.skip("File symlinks are not available in this environment")
+
+    result = scanner.enumerate_video_files(
+        scan_id=23,
+        roots=[str(root)],
+        extensions=["mp4"],
+        max_workers=1,
+    )
+    found = result.files
+    issues = result.issues
+
+    assert issues == []
+    assert [Path(item.path).name for item in found] == ["target.mp4"]
+    assert len(result.links) == 1
+    assert result.links[0].link_kind == "symlink"
+    assert Path(result.links[0].link_path).name == "target-link.mp4"
+    assert Path(result.links[0].target_original_path).name == "target.mp4"
+    assert result.links[0].target_exists is True
+
+
+def test_enumeration_tracks_non_canonical_hardlinks_without_returning_them(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    root.mkdir(parents=True, exist_ok=True)
+    canonical = root / "a.mp4"
+    hardlink = root / "b.mp4"
+    canonical.write_bytes(b"same-content")
+    os.link(canonical, hardlink)
+
+    result = scanner.enumerate_video_files(
+        scan_id=24,
+        roots=[str(root)],
+        extensions=["mp4"],
+        max_workers=1,
+    )
+    found = result.files
+    issues = result.issues
+
+    assert issues == []
+    assert [Path(item.path).name for item in found] == ["a.mp4"]
+    assert len(result.links) == 1
+    assert result.links[0].link_kind == "hardlink"
+    assert Path(result.links[0].link_path).name == "b.mp4"
+    assert Path(result.links[0].target_original_path).name == "a.mp4"
+    assert result.links[0].target_exists is True
+
+
+def test_enumeration_applies_size_mib_filters(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    _write_video(root / "small.mp4", size=40 * 1024 * 1024)
+    _write_video(root / "good.mp4", size=80 * 1024 * 1024)
+    _write_video(root / "large.mp4", size=140 * 1024 * 1024)
+
+    result = scanner.enumerate_video_files(
+        scan_id=25,
+        roots=[str(root)],
+        extensions=["mp4"],
+        min_size_mib=50,
+        max_size_mib=100,
+        max_workers=1,
+    )
+
+    assert [Path(item.path).name for item in result.files] == ["good.mp4"]
 
 
 def test_parallel_cancellation_returns_partial_results_without_crash(
@@ -156,7 +235,7 @@ def test_parallel_cancellation_returns_partial_results_without_crash(
         if current >= 1:
             cancel_event.set()
 
-    found, issues = scanner.enumerate_video_files(
+    result = scanner.enumerate_video_files(
         scan_id=19,
         roots=[str(root_fast), str(root_slow)],
         extensions=["mp4"],
@@ -164,6 +243,8 @@ def test_parallel_cancellation_returns_partial_results_without_crash(
         cancel_event=cancel_event,
         progress_cb=_progress,
     )
+    found = result.files
+    issues = result.issues
 
     assert issues == []
     assert len(found) >= 1
@@ -312,12 +393,14 @@ def test_enumerate_video_files_stamps_source_root_and_lane(
         lambda path: {"disk:10"} if str(path) == str(root_a) else {"disk:20"},
     )
 
-    found, issues = scanner.enumerate_video_files(
+    result = scanner.enumerate_video_files(
         scan_id=55,
         roots=[str(root_a), str(root_b)],
         extensions=["mp4"],
         max_workers=4,
     )
+    found = result.files
+    issues = result.issues
 
     assert not issues
     assert len(found) == 2

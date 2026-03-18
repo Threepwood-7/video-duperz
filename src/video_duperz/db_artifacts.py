@@ -17,6 +17,7 @@ from .models import (
     FrameDecodeBackendId,
     ProbeBackendId,
     ScanIssue,
+    ScanLinkRecord,
     VideoMeta,
     utc_now_iso,
 )
@@ -235,6 +236,43 @@ class DatabaseArtifactMixin:
     def delete_scan_issues_for_scan(self, scan_id: int) -> None:
         """Delete all persisted issue rows for one scan."""
         self.conn.execute("DELETE FROM scan_issues WHERE scan_id = ?", (scan_id,))
+        self._commit_if_needed()
+
+    def delete_scan_links_for_scan(self, scan_id: int) -> None:
+        """Delete all persisted link rows for one scan."""
+        self.conn.execute("DELETE FROM scan_links WHERE scan_id = ?", (int(scan_id),))
+        self._commit_if_needed()
+
+    def upsert_scan_links_batch(self, links: list[ScanLinkRecord]) -> None:
+        """Persist multiple tracked link rows for one or more scans."""
+        if not links:
+            return
+        payload = [
+            (
+                int(link.scan_id),
+                str(link.link_kind),
+                str(link.link_path),
+                str(link.target_original_path),
+                1 if link.target_exists else 0,
+                str(link.source_root),
+            )
+            for link in links
+        ]
+        self.conn.executemany(
+            """
+            INSERT INTO scan_links(
+              scan_id, link_kind, link_path, target_original_path,
+              target_exists_flag, source_root
+            )
+            VALUES(?, ?, ?, ?, ?, ?)
+            ON CONFLICT(scan_id, link_path) DO UPDATE SET
+              link_kind = excluded.link_kind,
+              target_original_path = excluded.target_original_path,
+              target_exists_flag = excluded.target_exists_flag,
+              source_root = excluded.source_root
+            """,
+            payload,
+        )
         self._commit_if_needed()
 
     @staticmethod

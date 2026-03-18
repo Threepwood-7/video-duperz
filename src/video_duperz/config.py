@@ -36,7 +36,9 @@ from .scan_sets import (
 )
 
 RESULTS_TABLE_COLUMN_COUNT = 20
+SOURCES_DRIVE_TABLE_COLUMN_COUNT = 9
 SCAN_LANE_TABLE_COLUMN_COUNT = 13
+SCAN_LOG_TABLE_COLUMN_COUNT = 4
 MAX_RECENT_ROOTS = 20
 MAX_SAVED_SCAN_PROFILES = 200
 SETTINGS_FILE_NAME = f"{SETTINGS_APP_NAME}.ini"
@@ -48,6 +50,8 @@ DEFAULT_SCAN_DB_FLUSH_INTERVAL_MS = 200
 DEFAULT_SCAN_ENUM_QUEUE_MAX = 4096
 DEFAULT_SCAN_PROGRESS_EMIT_INTERVAL_MS = 200
 DEFAULT_SCAN_PROGRESS_EMIT_EVERY_FILES = 100
+DEFAULT_SCAN_SIZE_MIB_MIN = 50
+DEFAULT_SCAN_SIZE_MIB_MAX = 0
 
 
 def _object_list(value: object) -> list[object]:
@@ -366,6 +370,14 @@ def _read_qsettings_payload(
             qs.value("recent_scan_roots"), defaults.recent_scan_roots
         ),
         "extensions": _decode_json_value(qs.value("extensions"), defaults.extensions),
+        "scan_size_mib_min": qs.value(
+            "scan_size_mib_min",
+            defaults.scan_size_mib_min,
+        ),
+        "scan_size_mib_max": qs.value(
+            "scan_size_mib_max",
+            defaults.scan_size_mib_max,
+        ),
         "similarity_profile": qs.value(
             "similarity_profile", defaults.similarity_profile
         ),
@@ -389,9 +401,17 @@ def _read_qsettings_payload(
         "identical_sample_b_pct": qs.value(
             "identical_sample_b_pct", defaults.identical_sample_b_pct
         ),
+        "sources_drive_table_column_widths": _decode_json_value(
+            qs.value("sources_drive_table_column_widths"),
+            defaults.sources_drive_table_column_widths,
+        ),
         "scan_lane_table_column_widths": _decode_json_value(
             qs.value("scan_lane_table_column_widths"),
             defaults.scan_lane_table_column_widths,
+        ),
+        "scan_log_table_column_widths": _decode_json_value(
+            qs.value("scan_log_table_column_widths"),
+            defaults.scan_log_table_column_widths,
         ),
         "results_table_column_widths": _decode_json_value(
             qs.value("results_table_column_widths"),
@@ -492,6 +512,18 @@ def _settings_from_raw(raw: dict[str, object], defaults: Settings) -> Settings:
             raw.get("recent_scan_roots", defaults.recent_scan_roots)
         ),
         extensions=_string_list(raw.get("extensions", defaults.extensions)),
+        scan_size_mib_min=_normalize_int_range(
+            raw.get("scan_size_mib_min", defaults.scan_size_mib_min),
+            defaults.scan_size_mib_min,
+            minimum=0,
+            maximum=1024 * 1024,
+        ),
+        scan_size_mib_max=_normalize_int_range(
+            raw.get("scan_size_mib_max", defaults.scan_size_mib_max),
+            defaults.scan_size_mib_max,
+            minimum=0,
+            maximum=1024 * 1024,
+        ),
         similarity_profile=normalize_similarity_profile(
             str(raw.get("similarity_profile", defaults.similarity_profile))
         ),
@@ -511,9 +543,17 @@ def _settings_from_raw(raw: dict[str, object], defaults: Settings) -> Settings:
         ),
         identical_sample_a_pct=identical_a,
         identical_sample_b_pct=identical_b,
+        sources_drive_table_column_widths=_normalize_column_widths(
+            raw.get("sources_drive_table_column_widths", []),
+            expected_count=SOURCES_DRIVE_TABLE_COLUMN_COUNT,
+        ),
         scan_lane_table_column_widths=_normalize_column_widths(
             raw.get("scan_lane_table_column_widths", []),
             expected_count=SCAN_LANE_TABLE_COLUMN_COUNT,
+        ),
+        scan_log_table_column_widths=_normalize_column_widths(
+            raw.get("scan_log_table_column_widths", []),
+            expected_count=SCAN_LOG_TABLE_COLUMN_COUNT,
         ),
         results_table_column_widths=_normalize_column_widths(
             raw.get("results_table_column_widths", []),
@@ -638,6 +678,8 @@ def default_settings() -> Settings:
         scan_roots=[],
         recent_scan_roots=[],
         extensions=COMMON_VIDEO_EXTENSIONS.copy(),
+        scan_size_mib_min=DEFAULT_SCAN_SIZE_MIB_MIN,
+        scan_size_mib_max=DEFAULT_SCAN_SIZE_MIB_MAX,
         similarity_profile="balanced",
         max_workers=default_max_workers(),
         preview_autoplay=False,
@@ -647,7 +689,9 @@ def default_settings() -> Settings:
         identical_block_mib=1,
         identical_sample_a_pct=23,
         identical_sample_b_pct=78,
+        sources_drive_table_column_widths=[],
         scan_lane_table_column_widths=[],
+        scan_log_table_column_widths=[],
         results_table_column_widths=[],
         results_table_column_visibility=[],
         saved_column_views={},

@@ -100,6 +100,44 @@ def test_cmd_benchmark_eval_prints_json_summary(monkeypatch, capsys) -> None:
     assert capsys.readouterr().out.strip() == '{"ok": true}'
 
 
+def test_cmd_export_prints_duplicate_and_link_outputs(monkeypatch, capsys) -> None:
+    class _FakeDb:
+        def __enter__(self) -> _FakeDb:
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+            _ = exc_type, exc, tb
+
+        def latest_scan_id(self) -> int:
+            return 7
+
+    class _FakeDatabaseFactory:
+        def __call__(self) -> object:
+            return _FakeDb()
+
+    monkeypatch.setattr(app_main, "Database", _FakeDatabaseFactory())
+    monkeypatch.setattr(
+        app_main,
+        "export_scan",
+        lambda db, scan_id, out_dir: types.SimpleNamespace(
+            duplicates_csv="dup.csv",
+            duplicates_json="dup.json",
+            links_csv="links.csv",
+            links_json="links.json",
+        ),
+    )
+
+    rc = app_main._cmd_export(argparse.Namespace(scan_id=None, out="C:/tmp/out"))
+
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "scan_id=7" in captured.out
+    assert "duplicates_csv=dup.csv" in captured.out
+    assert "duplicates_json=dup.json" in captured.out
+    assert "links_csv=links.csv" in captured.out
+    assert "links_json=links.json" in captured.out
+
+
 def test_run_full_reset_removes_entire_app_data_dir(
     tmp_path: Path, monkeypatch
 ) -> None:

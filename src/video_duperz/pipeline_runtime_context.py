@@ -17,8 +17,10 @@ from .models import (
     FrameDecodeBackendId,
     ProbeBackendId,
     ProbeWorkerMode,
+    ScanEnumerationResult,
     ScanIssue,
     ScanLaneSnapshot,
+    ScanLinkRecord,
     ScanProgress,
     ScanWorkKind,
     VideoMeta,
@@ -29,7 +31,10 @@ if TYPE_CHECKING:
     from .db import Database
 
 _ScanPlanFn = Callable[..., Any]
-_EnumerateFn = Callable[..., tuple[list[VideoRecord], list[ScanIssue]]]
+_EnumerateFn = Callable[
+    ...,
+    ScanEnumerationResult | tuple[list[VideoRecord], list[ScanIssue]],
+]
 _FindEdgesFn = Callable[..., tuple[Any, Any]]
 _BuildGroupsFn = Callable[..., list[Any]]
 
@@ -75,6 +80,8 @@ class ScanContext:
     db: Database
     roots: list[str]
     extensions: list[str]
+    scan_size_mib_min: int
+    scan_size_mib_max: int
     profile: str
     probe_backend: ProbeBackendId
     drive_worker_overrides: dict[str, int] | None
@@ -118,6 +125,7 @@ class ScanContext:
     streamed_path_keys: set[str]
     failed_path_keys: set[str]
     pending_discovered: list[VideoRecord]
+    pending_scan_links: list[ScanLinkRecord]
     pending_meta_rows: list[tuple[int, int, int, VideoMeta]]
     pending_fp_rows: list[tuple[int, int, int, int, list[int]]]
     pending_fp_provenance_rows: list[tuple[int, FrameDecodeBackendId, str]]
@@ -154,7 +162,7 @@ class ScanContext:
     enum_files: list[VideoRecord]
     enum_issues: list[ScanIssue]
     enum_error: Exception | None
-    enum_queue: Queue[VideoRecord | object]
+    enum_queue: Queue[VideoRecord | ScanLinkRecord | object]
     enum_sentinel: object
     last_emit_at: float
     last_emit_stage: str
@@ -295,6 +303,8 @@ def create_context(
     db: Database,
     roots: list[str],
     extensions: list[str],
+    scan_size_mib_min: int,
+    scan_size_mib_max: int,
     profile: str,
     probe_backend: ProbeBackendId,
     max_workers: int,
@@ -345,6 +355,7 @@ def create_context(
             extensions=extensions,
             probe_backend=probe_backend,
         )
+    db.delete_scan_links_for_scan(scan_id)
     scan_plan = build_scan_plan_fn(
         roots=roots,
         max_workers=runtime_settings.requested_floor,
@@ -362,6 +373,8 @@ def create_context(
         db=db,
         roots=roots,
         extensions=extensions,
+        scan_size_mib_min=max(0, int(scan_size_mib_min)),
+        scan_size_mib_max=max(0, int(scan_size_mib_max)),
         profile=profile,
         probe_backend=probe_backend,
         drive_worker_overrides=drive_worker_overrides,
@@ -405,6 +418,7 @@ def create_context(
         streamed_path_keys=set(),
         failed_path_keys=_load_failed_path_keys(db, scan_id),
         pending_discovered=[],
+        pending_scan_links=[],
         pending_meta_rows=[],
         pending_fp_rows=[],
         pending_fp_provenance_rows=[],
@@ -441,7 +455,9 @@ def create_context(
         enum_files=[],
         enum_issues=[],
         enum_error=None,
-        enum_queue=Queue(maxsize=runtime_settings.enum_queue_max),
+        enum_queue=Queue[VideoRecord | ScanLinkRecord | object](
+            maxsize=runtime_settings.enum_queue_max
+        ),
         enum_sentinel=object(),
         last_emit_at=0.0,
         last_emit_stage="",

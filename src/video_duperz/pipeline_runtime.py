@@ -18,7 +18,9 @@ from .matcher import build_duplicate_groups, find_duplicate_edges
 from .models import (
     MatchStats,
     ProbeBackendId,
+    ScanEnumerationResult,
     ScanIssue,
+    ScanLinkRecord,
     ScanProgress,
     ScanResult,
     ScanWorkKind,
@@ -72,7 +74,10 @@ if TYPE_CHECKING:
 ReturnT = TypeVar("ReturnT")
 P = ParamSpec("P")
 _ScanPlanFn = Callable[..., Any]
-_EnumerateFn = Callable[..., tuple[list[VideoRecord], list[ScanIssue]]]
+_EnumerateFn = Callable[
+    ...,
+    ScanEnumerationResult | tuple[list[VideoRecord], list[ScanIssue]],
+]
 _FindEdgesFn = Callable[..., tuple[Any, MatchStats]]
 _BuildGroupsFn = Callable[..., list[Any]]
 
@@ -104,6 +109,22 @@ def _video_record_sort_key(record: VideoRecord) -> tuple[str, str]:
     """Return the canonical alpha-order sort key for one discovered record."""
     normalized_path = str(record.path)
     return (path_key(normalized_path), normalized_path)
+
+
+def _scan_link_sort_key(link: ScanLinkRecord) -> tuple[str, str]:
+    """Return the canonical alpha-order sort key for one tracked link row."""
+    normalized_path = str(link.link_path)
+    return (path_key(normalized_path), normalized_path)
+
+
+def _normalize_enumeration_result(
+    result: ScanEnumerationResult | tuple[list[VideoRecord], list[ScanIssue]],
+) -> ScanEnumerationResult:
+    """Normalize older tuple-style enumerate results into the new payload shape."""
+    if isinstance(result, ScanEnumerationResult):
+        return result
+    files, issues = result
+    return ScanEnumerationResult(files=list(files), issues=list(issues), links=[])
 
 
 def _prepare_total_locked(ctx: _ScanContext) -> int:
@@ -313,22 +334,28 @@ def _handle_file_discovered(ctx: _ScanContext, file: object) -> None:
 def _run_enumeration(ctx: _ScanContext) -> None:
     enumerate_started = time.perf_counter()
     try:
-        files, local_issues = ctx.enumerate_video_files_fn(
-            scan_id=ctx.scan_id,
-            roots=ctx.roots,
-            extensions=ctx.extensions,
-            max_workers=max(ctx.requested_floor, len(ctx.scan_plan.root_groups)),
-            drive_worker_overrides=ctx.drive_worker_overrides,
-            cancel_event=ctx.stop_event,
-            progress_cb=partial(_handle_enumerate_progress, ctx),
-            on_file_discovered=partial(_handle_file_discovered, ctx),
-            issue_cb=partial(_queue_runtime_issue, ctx),
+        enumerate_result = _normalize_enumeration_result(
+            ctx.enumerate_video_files_fn(
+                scan_id=ctx.scan_id,
+                roots=ctx.roots,
+                extensions=ctx.extensions,
+                min_size_mib=ctx.scan_size_mib_min,
+                max_size_mib=ctx.scan_size_mib_max,
+                max_workers=max(ctx.requested_floor, len(ctx.scan_plan.root_groups)),
+                drive_worker_overrides=ctx.drive_worker_overrides,
+                cancel_event=ctx.stop_event,
+                progress_cb=partial(_handle_enumerate_progress, ctx),
+                on_file_discovered=partial(_handle_file_discovered, ctx),
+                issue_cb=partial(_queue_runtime_issue, ctx),
+            )
         )
-        ctx.enum_files = sorted(files, key=_video_record_sort_key)
-        for issue in local_issues:
+        ctx.enum_files = sorted(enumerate_result.files, key=_video_record_sort_key)
+        for issue in enumerate_result.issues:
             _queue_runtime_issue(ctx, issue)
         for file in ctx.enum_files:
             _queue_enum_item(ctx, file)
+        for link in sorted(enumerate_result.links, key=_scan_link_sort_key):
+            _queue_enum_item(ctx, link)
     except Exception as exc:
         ctx.enum_error = exc
     finally:
@@ -343,8 +370,8 @@ def _run_enumeration(ctx: _ScanContext) -> None:
         _queue_enum_item(ctx, ctx.enum_sentinel)
 
 
-def _drain_enum_queue(ctx: _ScanContext) -> list[VideoRecord | object]:
-    drained: list[VideoRecord | object] = []
+def _drain_enum_queue(ctx: _ScanContext) -> list[VideoRecord | ScanLinkRecord | object]:
+    drained: list[VideoRecord | ScanLinkRecord | object] = []
     while True:
         try:
             drained.append(ctx.enum_queue.get_nowait())
@@ -694,13 +721,40 @@ def _ingest_discovered_queue(ctx: _ScanContext) -> bool:
         return False
     stop_requested = ctx.cancel_requested or ctx.pause_requested
     for queued in drained:
-        if queued is ctx.enum_sentinel or not isinstance(queued, VideoRecord):
+        if queued is ctx.enum_sentinel:
             continue
-        if stop_requested:
+        if isinstance(queued, ScanLinkRecord):
+            ctx.pending_scan_links.append(queued)
+            continue
+        if not isinstance(queued, VideoRecord) or stop_requested:
             continue
         ctx.pending_discovered.append(queued)
     ctx.pending_discovered.sort(key=_video_record_sort_key)
+    ctx.pending_scan_links.sort(key=_scan_link_sort_key)
     return True
+
+
+def _process_pending_scan_links(ctx: _ScanContext) -> bool:
+    """Persist queued tracked-link rows in scan-transaction batches."""
+    if not ctx.pending_scan_links:
+        return False
+    processed_any = False
+    while ctx.pending_scan_links and (
+        len(ctx.pending_scan_links) >= ctx.db_batch_size
+        or ctx.enum_finished
+        or ctx.cancel_requested
+        or ctx.pause_requested
+    ):
+        chunk = ctx.pending_scan_links[: ctx.db_batch_size]
+        del ctx.pending_scan_links[: len(chunk)]
+        _timed_db_write(ctx, ctx.db.upsert_scan_links_batch, len(chunk), chunk)
+        processed_any = True
+    if ctx.pending_scan_links and not ctx.pending_discovered and not ctx.futures:
+        chunk = ctx.pending_scan_links[: ctx.db_batch_size]
+        del ctx.pending_scan_links[: len(chunk)]
+        _timed_db_write(ctx, ctx.db.upsert_scan_links_batch, len(chunk), chunk)
+        processed_any = True
+    return processed_any
 
 
 def _process_pending_discovered(ctx: _ScanContext) -> bool:
@@ -756,6 +810,8 @@ def _run_pipeline_loop(ctx: _ScanContext, executor: ThreadPoolExecutor) -> None:
         made_progress = _ingest_discovered_queue(ctx)
         if _process_queued_issues(ctx) > 0:
             made_progress = True
+        if _process_pending_scan_links(ctx):
+            made_progress = True
         if _process_pending_discovered(ctx):
             made_progress = True
         if _process_done_futures(ctx) > 0:
@@ -796,6 +852,8 @@ def run_scan_runtime(
     db: Database,
     roots: list[str],
     extensions: list[str],
+    scan_size_mib_min: int = 50,
+    scan_size_mib_max: int = 0,
     profile: str = "balanced",
     max_workers: int = 2,
     drive_worker_overrides: dict[str, int] | None = None,
@@ -826,6 +884,8 @@ def run_scan_runtime(
         db,
         roots,
         extensions,
+        scan_size_mib_min,
+        scan_size_mib_max,
         profile,
         probe_backend,
         max_workers,

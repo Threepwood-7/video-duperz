@@ -63,6 +63,7 @@ from video_duperz.ui.results_view_shared import (
     COL_SIZE,
 )
 from video_duperz.ui.scan_view import (
+    SCAN_ISSUE_COL_FILE,
     SCAN_ISSUE_COL_MESSAGE,
     SCAN_ISSUE_HEADERS,
     SCAN_LANE_COL_ACTIVE_FILE,
@@ -72,6 +73,8 @@ from video_duperz.ui.scan_view import (
     SCAN_LANE_COL_DISC_PER_S,
     SCAN_LANE_COL_PROGRESS,
     SCAN_LANE_HEADERS,
+    SCAN_LOG_DEFAULT_WIDTHS,
+    SCAN_PROGRESS_COL_FILE,
     SCAN_PROGRESS_COL_MESSAGE,
     SCAN_PROGRESS_COL_PROGRESS,
     SCAN_PROGRESS_HEADERS,
@@ -410,6 +413,17 @@ def _table_row_texts(table: QTableWidget, row: int) -> list[str]:
     return values
 
 
+def _table_cell_background_name(
+    table: QTableWidget,
+    row: int,
+    column: int = 0,
+) -> str:
+    """Return the normalized background color name for one table cell."""
+    item = table.item(row, column)
+    assert item is not None
+    return item.background().color().name().lower()
+
+
 def test_main_window_launches_with_new_results_table(tmp_path: Path) -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QApplication.instance() or QApplication([])
@@ -618,8 +632,53 @@ def test_sources_tab_defaults_to_broad_extensions_preset(
 
         assert window.extensions_preset_combo.currentText() == "broad"
         assert window.extensions_edit.text() == video_extensions_csv_for_preset("broad")
+        assert window.scan_size_mib_min_spin.value() == 50
+        assert window.scan_size_mib_max_spin.value() == 0
 
         window.close()
+
+
+def test_sources_tab_scan_size_filters_exist_and_persist(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        assert (
+            window.findChild(QSpinBox, "sources_scan_size_mib_min_spin")
+            is window.scan_size_mib_min_spin
+        )
+        assert (
+            window.findChild(QSpinBox, "sources_scan_size_mib_max_spin")
+            is window.scan_size_mib_max_spin
+        )
+        assert window.scan_size_mib_min_spin.value() == 50
+        assert window.scan_size_mib_max_spin.value() == 0
+        assert "never enter duplicate analysis" in (
+            window.scan_size_mib_min_spin.toolTip().lower()
+        )
+        assert "no upper size limit" in (
+            window.scan_size_mib_max_spin.toolTip().lower()
+        )
+
+        window.scan_size_mib_min_spin.setValue(120)
+        window.scan_size_mib_max_spin.setValue(700)
+        app.processEvents()
+        window._persist_settings()
+        window.close()
+
+    loaded = load_settings()
+    assert loaded.scan_size_mib_min == 120
+    assert loaded.scan_size_mib_max == 700
 
 
 def test_results_column_widths_persist(tmp_path: Path, monkeypatch) -> None:
@@ -718,6 +777,290 @@ def test_scan_lane_column_widths_auto_fit_and_persist(
 
         assert window.scan_view.lane_table.columnWidth(SCAN_LANE_COL_ACTIVE_FILE) == 520
         assert window.scan_view.lane_table.columnWidth(SCAN_LANE_COL_PROGRESS) == 210
+        window.close()
+
+
+def test_scan_log_column_widths_persist_and_stay_mirrored(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    app = QApplication.instance() or QApplication([])
+
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        for index, default_width in enumerate(SCAN_LOG_DEFAULT_WIDTHS):
+            assert window.scan_view.progress_table.columnWidth(index) == default_width
+            assert window.scan_view.issues_table.columnWidth(index) == default_width
+
+        window.scan_view.progress_table.setColumnWidth(SCAN_PROGRESS_COL_FILE, 333)
+        window.scan_view.progress_table.setColumnWidth(SCAN_PROGRESS_COL_MESSAGE, 444)
+        app.processEvents()
+
+        assert window.scan_view.issues_table.columnWidth(SCAN_ISSUE_COL_FILE) == 333
+        assert window.scan_view.issues_table.columnWidth(SCAN_ISSUE_COL_MESSAGE) == 444
+        window.close()
+
+    loaded = load_settings()
+    assert loaded.scan_log_table_column_widths[SCAN_PROGRESS_COL_FILE] == 333
+    assert loaded.scan_log_table_column_widths[SCAN_PROGRESS_COL_MESSAGE] == 444
+
+    with Database(tmp_path / "app-second.db") as db:
+        window = MainWindow(db=db, settings=loaded)
+        window.show()
+        app.processEvents()
+
+        assert (
+            window.scan_view.progress_table.columnWidth(SCAN_PROGRESS_COL_FILE) == 333
+        )
+        assert (
+            window.scan_view.progress_table.columnWidth(SCAN_PROGRESS_COL_MESSAGE)
+            == 444
+        )
+        assert window.scan_view.issues_table.columnWidth(SCAN_ISSUE_COL_FILE) == 333
+        assert window.scan_view.issues_table.columnWidth(SCAN_ISSUE_COL_MESSAGE) == 444
+        window.close()
+
+
+def test_sources_drive_table_column_widths_persist(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    app = QApplication.instance() or QApplication([])
+
+    monkeypatch.setattr(
+        "video_duperz.ui.main_window_profiles.list_physical_drives",
+        lambda roots=None: [
+            PhysicalDriveInfo(
+                root="R:\\",
+                volume_identity="volume:a",
+                disk_tokens=["disk:0"],
+                total_bytes=1_000,
+                free_bytes=250,
+                used_percent=75.0,
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        "video_duperz.ui.main_window_profiles.build_physical_drive_scan_plan",
+        lambda roots, max_workers, drive_worker_overrides=None: SimpleNamespace(
+            matched_volume_identities={"volume:a"} if roots else set(),
+            requested_worker_target=max_workers,
+            effective_total_workers=1 if roots else 0,
+        ),
+    )
+
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = ["R:/Videos"]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        window.sources_drive_table.setColumnWidth(0, 321)
+        window.sources_drive_table.setColumnWidth(8, 456)
+        app.processEvents()
+        window._persist_settings()
+        window.close()
+
+    loaded = load_settings()
+    assert loaded.sources_drive_table_column_widths[0] == 321
+    assert loaded.sources_drive_table_column_widths[8] == 456
+
+    with Database(tmp_path / "app-second.db") as db:
+        window = MainWindow(db=db, settings=loaded)
+        window.show()
+        app.processEvents()
+
+        assert window.sources_drive_table.columnWidth(0) == 321
+        assert window.sources_drive_table.columnWidth(8) == 456
+        window.close()
+
+
+def test_fit_columns_targets_the_current_tab_view(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+
+    monkeypatch.setattr(
+        "video_duperz.ui.main_window_profiles.list_physical_drives",
+        lambda roots=None: [
+            PhysicalDriveInfo(
+                root="R:\\Very Long Root Name\\Videos",
+                volume_identity="volume:a",
+                disk_tokens=["disk:0"],
+                total_bytes=1_000,
+                free_bytes=250,
+                used_percent=75.0,
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        "video_duperz.ui.main_window_profiles.build_physical_drive_scan_plan",
+        lambda roots, max_workers, drive_worker_overrides=None: SimpleNamespace(
+            matched_volume_identities={"volume:a"} if roots else set(),
+            requested_worker_target=max_workers,
+            effective_total_workers=1 if roots else 0,
+        ),
+    )
+
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = ["R:/Videos"]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        long_result_path = str(
+            tmp_path
+            / "very_long_results_folder_name"
+            / "nested"
+            / "result_clip_subject.mp4"
+        )
+        window.results_view.load_groups(
+            [
+                DuplicateGroup(
+                    scan_id=1,
+                    profile="balanced",
+                    created_at="now",
+                    items=[
+                        _dup_item(1, long_result_path, 320, 240, 1000, 1.0),
+                        _dup_item(
+                            2,
+                            str(tmp_path / "copy" / "result_clip_subject_copy.mp4"),
+                            320,
+                            240,
+                            900,
+                            0.98,
+                        ),
+                    ],
+                    total_size_bytes=200,
+                    group_id=42,
+                )
+            ]
+        )
+        window.scan_view.initialize_lane_plan(
+            [[str(tmp_path / "lane_alpha")]],
+            worker_limit=1,
+        )
+        window.scan_view.update_progress(
+            ScanProgress(
+                stage="probe",
+                current=1,
+                total=3,
+                message="Analyzing a long-path scan item",
+                lane_snapshots=[
+                    ScanLaneSnapshot(
+                        lane=0,
+                        roots=[str(tmp_path / "lane_alpha")],
+                        state="running",
+                        discovered=3,
+                        queued=2,
+                        completed=1,
+                        active_file=str(
+                            tmp_path
+                            / "lane_alpha"
+                            / "nested"
+                            / "a_very_long_active_file_name.mp4"
+                        ),
+                        workers=1,
+                        discovered_files_per_s=1.0,
+                        discovered_mib_per_s=2.0,
+                        analyzed_files_per_s=1.0,
+                        analyzed_mib_per_s=1.5,
+                    )
+                ],
+            )
+        )
+        window.scan_view.append_progress_note(
+            "probe",
+            "Progress message",
+            str(tmp_path / "scan_progress_subject_file_name.mp4"),
+        )
+        window.scan_view.append_issue(
+            ScanIssue(
+                stage="warning",
+                path=str(tmp_path / "scan_issue_subject_file_name.mp4"),
+                message="Issue message",
+            )
+        )
+        app.processEvents()
+
+        window.tabs.setCurrentWidget(window.sources_tab)
+        window.sources_drive_table.setColumnWidth(0, 80)
+        results_before_sources = window.results_view.results_table.columnWidth(
+            COL_FULL_PATH
+        )
+        lane_before_sources = window.scan_view.lane_table.columnWidth(
+            SCAN_LANE_COL_ACTIVE_FILE
+        )
+        window._fit_columns()
+        app.processEvents()
+
+        assert (
+            window.statusBar().currentMessage() == "Sources columns fitted to contents."
+        )
+        assert window.sources_drive_table.columnWidth(0) > 80
+        assert (
+            window.results_view.results_table.columnWidth(COL_FULL_PATH)
+            == results_before_sources
+        )
+        assert (
+            window.scan_view.lane_table.columnWidth(SCAN_LANE_COL_ACTIVE_FILE)
+            == lane_before_sources
+        )
+
+        window.tabs.setCurrentWidget(window.scan_view)
+        window.scan_view.lane_table.setColumnWidth(SCAN_LANE_COL_ACTIVE_FILE, 90)
+        window.scan_view.progress_table.setColumnWidth(SCAN_PROGRESS_COL_FILE, 60)
+        window.scan_view.issues_table.setColumnWidth(SCAN_ISSUE_COL_FILE, 60)
+        results_before_scan = window.results_view.results_table.columnWidth(
+            COL_FULL_PATH
+        )
+        window._fit_columns()
+        app.processEvents()
+
+        assert window.statusBar().currentMessage() == "Scan columns fitted to contents."
+        assert window.scan_view.lane_table.columnWidth(SCAN_LANE_COL_ACTIVE_FILE) > 90
+        assert window.scan_view.progress_table.columnWidth(SCAN_PROGRESS_COL_FILE) > 60
+        assert window.scan_view.progress_table.columnWidth(
+            SCAN_PROGRESS_COL_FILE
+        ) == window.scan_view.issues_table.columnWidth(SCAN_ISSUE_COL_FILE)
+        assert (
+            window.results_view.results_table.columnWidth(COL_FULL_PATH)
+            == results_before_scan
+        )
+
+        window.tabs.setCurrentWidget(window.results_view)
+        window.results_view.results_table.setColumnWidth(COL_FULL_PATH, 120)
+        sources_before_results = window.sources_drive_table.columnWidth(0)
+        scan_before_results = window.scan_view.progress_table.columnWidth(
+            SCAN_PROGRESS_COL_FILE
+        )
+        window._fit_columns()
+        app.processEvents()
+
+        assert (
+            window.statusBar().currentMessage() == "Results columns fitted to contents."
+        )
+        assert window.results_view.results_table.columnWidth(COL_FULL_PATH) > 120
+        assert window.sources_drive_table.columnWidth(0) == sources_before_results
+        assert (
+            window.scan_view.progress_table.columnWidth(SCAN_PROGRESS_COL_FILE)
+            == scan_before_results
+        )
         window.close()
 
 
@@ -894,6 +1237,16 @@ def test_view_columns_menu_toggle_and_saved_view(tmp_path: Path, monkeypatch) ->
             == window.results_view.results_table.columnCount()
         )
         assert window._columns_menu is not None
+        top_level_view_menu = next(
+            action.menu()
+            for action in window.menuBar().actions()
+            if action.text().replace("&", "") == "View"
+        )
+        assert top_level_view_menu is window._columns_menu
+        assert all(
+            action.text().replace("&", "") != "Columns"
+            for action in window._columns_menu.actions()
+        )
         window._columns_menu.popup(window.mapToGlobal(QPoint(32, 32)))
         app.processEvents()
         assert window._columns_menu.isVisible()
@@ -3870,6 +4223,13 @@ def test_scan_view_removes_redundant_top_progress_labels(tmp_path: Path) -> None
             window.scan_view.issues_table.horizontalHeaderItem(index).text()
             for index in range(window.scan_view.issues_table.columnCount())
         ] == SCAN_ISSUE_HEADERS
+        assert [
+            window.scan_view.progress_table.columnWidth(index)
+            for index in range(window.scan_view.progress_table.columnCount())
+        ] == [
+            window.scan_view.issues_table.columnWidth(index)
+            for index in range(window.scan_view.issues_table.columnCount())
+        ]
         window.close()
 
 
@@ -3896,10 +4256,114 @@ def test_scan_issue_rows_do_not_echo_to_status_bar(tmp_path: Path) -> None:
         assert window.scan_view.issues_table.rowCount() == 1
         assert _table_row_texts(window.scan_view.issues_table, 0) == [
             "probe",
-            str(tmp_path / "bad.mp4"),
+            "",
+            "bad.mp4",
             "Could not probe file",
         ]
+        issue_file_item = window.scan_view.issues_table.item(0, SCAN_ISSUE_COL_FILE)
+        assert issue_file_item is not None
+        assert issue_file_item.toolTip() == str(tmp_path / "bad.mp4")
         assert window.statusBar().currentMessage() == "Scan started"
+        window.close()
+
+
+def test_scan_log_tables_use_shared_columns_and_filename_only_values(
+    tmp_path: Path,
+) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        progress_path = str(tmp_path / "nested" / "progress_subject.mp4")
+        issue_path = str(tmp_path / "nested" / "issue_subject.mp4")
+        window.scan_view.append_progress_note(
+            "probe",
+            "Progress details",
+            progress_path,
+        )
+        window.scan_view.append_issue(
+            ScanIssue(
+                stage="warning",
+                path=issue_path,
+                message="Issue details",
+            )
+        )
+        app.processEvents()
+
+        assert _table_row_texts(window.scan_view.progress_table, 0) == [
+            "probe",
+            "",
+            "progress_subject.mp4",
+            "Progress details",
+        ]
+        assert _table_row_texts(window.scan_view.issues_table, 0) == [
+            "warning",
+            "",
+            "issue_subject.mp4",
+            "Issue details",
+        ]
+        progress_file_item = window.scan_view.progress_table.item(
+            0, SCAN_PROGRESS_COL_FILE
+        )
+        issue_file_item = window.scan_view.issues_table.item(0, SCAN_ISSUE_COL_FILE)
+        assert progress_file_item is not None
+        assert issue_file_item is not None
+        assert progress_file_item.toolTip() == progress_path
+        assert issue_file_item.toolTip() == issue_path
+        window.close()
+
+
+def test_scan_log_tables_use_light_state_tints(tmp_path: Path) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        window.scan_view.append_progress_note(
+            "cache",
+            "Reused cached analysis clip.mp4",
+        )
+        window.scan_view.append_progress_note(
+            "probe",
+            "Analyzing clip.mp4",
+        )
+        window.scan_view.append_issue(
+            ScanIssue(
+                stage="warning",
+                path=str(tmp_path / "warn.mp4"),
+                message="Skipped because metadata was incomplete",
+            )
+        )
+        window.scan_view.append_issue(
+            ScanIssue(
+                stage="probe",
+                path=str(tmp_path / "bad.mp4"),
+                message="Failed to probe file",
+            )
+        )
+        app.processEvents()
+
+        assert (
+            _table_cell_background_name(window.scan_view.progress_table, 0) == "#e9f8ea"
+        )
+        assert (
+            _table_cell_background_name(window.scan_view.progress_table, 1) == "#eaf4ff"
+        )
+        assert (
+            _table_cell_background_name(window.scan_view.issues_table, 0) == "#fff4db"
+        )
+        assert (
+            _table_cell_background_name(window.scan_view.issues_table, 1) == "#fde7e7"
+        )
         window.close()
 
 
@@ -3929,8 +4393,6 @@ def test_scan_progress_table_auto_scroll_pauses_until_bottom(tmp_path: Path) -> 
 
         scroll_bar = window.scan_view.progress_table.verticalScrollBar()
         assert scroll_bar.maximum() > 0
-        scroll_bar.setValue(scroll_bar.maximum())
-        app.processEvents()
         assert scroll_bar.value() >= scroll_bar.maximum() - 1
 
         scroll_bar.setValue(max(0, scroll_bar.maximum() // 2))
@@ -3988,8 +4450,6 @@ def test_scan_issues_table_auto_scroll_pauses_until_bottom(tmp_path: Path) -> No
 
         scroll_bar = window.scan_view.issues_table.verticalScrollBar()
         assert scroll_bar.maximum() > 0
-        scroll_bar.setValue(scroll_bar.maximum())
-        app.processEvents()
         assert scroll_bar.value() >= scroll_bar.maximum() - 1
 
         scroll_bar.setValue(max(0, scroll_bar.maximum() // 2))
@@ -4053,10 +4513,10 @@ def test_scan_log_tables_double_click_emit_associated_path(tmp_path: Path) -> No
         app.processEvents()
 
         window.scan_view.progress_table.itemDoubleClicked.emit(
-            window.scan_view.progress_table.item(0, SCAN_PROGRESS_COL_MESSAGE)
+            window.scan_view.progress_table.item(0, SCAN_PROGRESS_COL_FILE)
         )
         window.scan_view.issues_table.itemDoubleClicked.emit(
-            window.scan_view.issues_table.item(0, SCAN_ISSUE_COL_MESSAGE)
+            window.scan_view.issues_table.item(0, SCAN_ISSUE_COL_FILE)
         )
 
         assert captured_paths == [progress_path, issue_path]

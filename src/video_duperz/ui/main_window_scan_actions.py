@@ -100,6 +100,8 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
             db_file=self.db_file,
             roots=self.settings.scan_roots,
             extensions=self.settings.normalized_extensions(),
+            scan_size_mib_min=self.settings.scan_size_mib_min,
+            scan_size_mib_max=self.settings.scan_size_mib_max,
             profile=self.settings.similarity_profile,
             max_workers=self.settings.max_workers,
             drive_worker_overrides=self.settings.drive_worker_overrides,
@@ -365,14 +367,14 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
         )
 
     def _export_current_scan(self) -> None:
-        """Export the currently loaded scan to CSV and JSON."""
+        """Export the currently loaded scan to duplicate and link CSV/JSON files."""
         if self.current_scan_id is None:
             QMessageBox.warning(self, "No Scan", "Run a scan first.")
             return
         out_dir = QFileDialog.getExistingDirectory(self, "Choose export directory")
         if not out_dir:
             return
-        csv_path, json_path = export_scan(
+        export_paths = export_scan(
             self.db,
             scan_id=self.current_scan_id,
             out_dir=out_dir,
@@ -380,7 +382,14 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
         QMessageBox.information(
             self,
             "Export Complete",
-            f"CSV: {csv_path}\nJSON: {json_path}",
+            "\n".join(
+                [
+                    f"Duplicates CSV: {export_paths.duplicates_csv}",
+                    f"Duplicates JSON: {export_paths.duplicates_json}",
+                    f"Links CSV: {export_paths.links_csv}",
+                    f"Links JSON: {export_paths.links_json}",
+                ]
+            ),
         )
 
     def closeEvent(self, event: QCloseEvent) -> None:
