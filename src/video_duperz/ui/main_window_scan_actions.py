@@ -65,7 +65,10 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
         if resume_scan_id is not None:
             self.scan_view.set_issues(self.db.list_scan_issues(resume_scan_id))
             failed_count = self.db.count_failed_files(resume_scan_id)
-            self.scan_view.set_retry_failed_file_count(failed_count)
+            self.scan_view.set_retry_failed_file_count(
+                failed_count,
+                checked=retry_failed_files,
+            )
             self.scan_view.append_progress_note(
                 "paused",
                 (

@@ -13,8 +13,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
     QProgressBar,
     QPushButton,
     QTableWidget,
@@ -69,6 +67,16 @@ SCAN_LANE_DEFAULT_WIDTHS = [
     86,
     180,
 ]
+SCAN_PROGRESS_COL_STAGE = 0
+SCAN_PROGRESS_COL_PROGRESS = 1
+SCAN_PROGRESS_COL_MESSAGE = 2
+SCAN_PROGRESS_HEADERS = ["Stage", "Progress", "Message"]
+SCAN_PROGRESS_DEFAULT_WIDTHS = [96, 112, 520]
+SCAN_ISSUE_COL_STAGE = 0
+SCAN_ISSUE_COL_PATH = 1
+SCAN_ISSUE_COL_MESSAGE = 2
+SCAN_ISSUE_HEADERS = ["Stage", "Path", "Message"]
+SCAN_ISSUE_DEFAULT_WIDTHS = [96, 280, 480]
 
 
 class _LaneProgressCell(QWidget):
@@ -151,20 +159,20 @@ class ScanView(QWidget):
         lane_header.sectionResized.connect(self._on_column_resized)
         for index, width in enumerate(SCAN_LANE_DEFAULT_WIDTHS):
             self.lane_table.setColumnWidth(index, width)
-        self.progress_list = QListWidget(self)
-        self.progress_list.setUniformItemSizes(True)
-        self.progress_list.setSelectionMode(
-            QAbstractItemView.SelectionMode.SingleSelection
+        self.progress_table = self._create_log_table(
+            headers=SCAN_PROGRESS_HEADERS,
+            default_widths=SCAN_PROGRESS_DEFAULT_WIDTHS,
+            stretch_column=SCAN_PROGRESS_COL_MESSAGE,
+            object_name="scan_progress_table",
         )
-        self.progress_list.itemDoubleClicked.connect(self._emit_item_path)
-        self.issues_list = QListWidget(self)
-        self.issues_list.setUniformItemSizes(True)
-        self.issues_list.setSelectionMode(
-            QAbstractItemView.SelectionMode.SingleSelection
+        self.issues_table = self._create_log_table(
+            headers=SCAN_ISSUE_HEADERS,
+            default_widths=SCAN_ISSUE_DEFAULT_WIDTHS,
+            stretch_column=SCAN_ISSUE_COL_MESSAGE,
+            object_name="scan_issues_table",
         )
-        self.issues_list.itemDoubleClicked.connect(self._emit_item_path)
         self._max_progress_rows = 5000
-        self._last_progress_row = ""
+        self._last_progress_row: tuple[str, str, str] | None = None
         self._lane_rows: dict[int, int] = {}
         self._worker_limit = 0
         self._paused_loaded = False
@@ -206,9 +214,38 @@ class ScanView(QWidget):
         layout.addWidget(QLabel("Parallel Lanes", self))
         layout.addWidget(self.lane_table, stretch=1)
         layout.addWidget(QLabel("Detailed Scan Progress", self))
-        layout.addWidget(self.progress_list, stretch=2)
+        layout.addWidget(self.progress_table, stretch=2)
         layout.addWidget(QLabel("Scan Issues", self))
-        layout.addWidget(self.issues_list, stretch=1)
+        layout.addWidget(self.issues_table, stretch=1)
+
+    def _create_log_table(
+        self,
+        *,
+        headers: list[str],
+        default_widths: list[int],
+        stretch_column: int,
+        object_name: str,
+    ) -> QTableWidget:
+        """Create one read-only log table used by the Scan tab."""
+        table = QTableWidget(0, len(headers), self)
+        table.setObjectName(object_name)
+        table.setHorizontalHeaderLabels(headers)
+        table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.verticalHeader().setVisible(False)
+        header = table.horizontalHeader()
+        header.setStretchLastSection(False)
+        for index, width in enumerate(default_widths):
+            table.setColumnWidth(index, width)
+            resize_mode = (
+                QHeaderView.ResizeMode.Stretch
+                if index == stretch_column
+                else QHeaderView.ResizeMode.Interactive
+            )
+            header.setSectionResizeMode(index, resize_mode)
+        table.itemDoubleClicked.connect(self._emit_item_path)
+        return table
 
     def _apply_mode(self, mode: str) -> None:
         """Apply the scan-action button state for one high-level mode."""
@@ -252,33 +289,54 @@ class ScanView(QWidget):
         done_by = datetime.now() + timedelta(seconds=remaining_s)
         return f"ETA: {remaining_text} | Done by {done_by:%H:%M}"
 
-    def _progress_row_text(self, progress: ScanProgress) -> str:
-        """Render one stable detailed-progress row string."""
+    def _progress_row_values(self, progress: ScanProgress) -> tuple[str, str, str]:
+        """Render one structured detailed-progress row."""
         message = progress.message.strip() or progress.stage
         current, total = self._display_counter_values(progress)
-        return f"[{progress.stage}] {self._format_counter(current, total)} -> {message}"
+        return (progress.stage, self._format_counter(current, total), message)
 
-    def _issue_row_text(self, issue: ScanIssue) -> str:
-        """Render one stable issue row string."""
-        if issue.path.strip():
-            return f"[{issue.stage}] {issue.path} -> {issue.message}"
-        return f"[{issue.stage}] {issue.message}"
+    def _issue_row_values(self, issue: ScanIssue) -> tuple[str, str, str]:
+        """Render one structured issue row."""
+        return (issue.stage, issue.path.strip(), issue.message)
 
-    def _append_list_item(
+    @staticmethod
+    def _table_is_at_bottom(table: QTableWidget, tolerance: int = 2) -> bool:
+        """Return whether one table is currently scrolled to the bottom."""
+        scroll_bar = table.verticalScrollBar()
+        return scroll_bar.maximum() <= 0 or scroll_bar.value() >= (
+            scroll_bar.maximum() - max(0, int(tolerance))
+        )
+
+    @staticmethod
+    def _scroll_table_to_bottom(table: QTableWidget) -> None:
+        """Scroll one table to its last visible row."""
+        scroll_bar = table.verticalScrollBar()
+        scroll_bar.setValue(scroll_bar.maximum())
+
+    def _append_table_row(
         self,
-        target: QListWidget,
-        text: str,
+        target: QTableWidget,
+        row_values: tuple[str, ...],
         subject_path: str = "",
+        *,
+        max_rows: int | None = None,
     ) -> None:
-        """Append one list item with its structured path payload."""
-        item = QListWidgetItem(text)
-        item.setData(self._PATH_ROLE, subject_path)
-        target.addItem(item)
-        if target is self.progress_list and target.count() > self._max_progress_rows:
-            target.takeItem(0)
-        target.scrollToBottom()
+        """Append one table row with its structured path payload."""
+        should_scroll = self._table_is_at_bottom(target)
+        row = target.rowCount()
+        target.insertRow(row)
+        for column, text in enumerate(row_values):
+            item = QTableWidgetItem(text)
+            item.setData(self._PATH_ROLE, subject_path)
+            if text:
+                item.setToolTip(text)
+            target.setItem(row, column, item)
+        if max_rows is not None and target.rowCount() > max_rows:
+            target.removeRow(0)
+        if should_scroll:
+            self._scroll_table_to_bottom(target)
 
-    def _emit_item_path(self, item: QListWidgetItem) -> None:
+    def _emit_item_path(self, item: QTableWidgetItem) -> None:
         """Emit the structured path associated with one double-clicked row."""
         subject_path = str(item.data(self._PATH_ROLE) or "")
         self.path_activation_requested.emit(subject_path)
@@ -295,9 +353,9 @@ class ScanView(QWidget):
             " | skipped failed 0"
         )
         self.lane_table.setRowCount(0)
-        self.progress_list.clear()
-        self.issues_list.clear()
-        self._last_progress_row = ""
+        self.progress_table.setRowCount(0)
+        self.issues_table.setRowCount(0)
+        self._last_progress_row = None
         self._lane_rows = {}
         self._worker_limit = 0
         self._paused_loaded = False
@@ -676,9 +734,9 @@ class ScanView(QWidget):
         self.retry_failed_checkbox.setEnabled(retry_count > 0)
         self.retry_failed_checkbox.setVisible(bool(visible))
 
-    def set_retry_failed_file_count(self, count: int) -> None:
+    def set_retry_failed_file_count(self, count: int, *, checked: bool = True) -> None:
         """Show the failed-file retry checkbox for the loaded paused scan."""
-        self._set_retry_failed_state(visible=True, count=count, checked=True)
+        self._set_retry_failed_state(visible=True, count=count, checked=checked)
 
     def retry_failed_files_enabled(self) -> bool:
         """Return whether the next resume should retry prior failed files."""
@@ -696,12 +754,13 @@ class ScanView(QWidget):
         subject_path: str = "",
     ) -> None:
         """Append one synthetic progress row without requiring a full snapshot."""
-        self._append_list_item(
-            self.progress_list,
-            f"[{stage}] {message}",
+        self._append_table_row(
+            self.progress_table,
+            (stage, "", message),
             subject_path,
+            max_rows=self._max_progress_rows,
         )
-        self._last_progress_row = ""
+        self._last_progress_row = None
 
     def update_progress(self, progress: ScanProgress) -> None:
         display_current, display_total = self._display_counter_values(progress)
@@ -717,24 +776,25 @@ class ScanView(QWidget):
             for snapshot in progress.lane_snapshots:
                 self._upsert_lane_snapshot(snapshot)
         self._update_io_stats(progress)
-        progress_row = self._progress_row_text(progress)
+        progress_row = self._progress_row_values(progress)
         if progress_row != self._last_progress_row:
-            self._append_list_item(
-                self.progress_list,
+            self._append_table_row(
+                self.progress_table,
                 progress_row,
                 progress.subject_path,
+                max_rows=self._max_progress_rows,
             )
             self._last_progress_row = progress_row
 
     def append_issue(self, issue: ScanIssue) -> None:
         """Append one live issue row."""
-        self._append_list_item(
-            self.issues_list,
-            self._issue_row_text(issue),
+        self._append_table_row(
+            self.issues_table,
+            self._issue_row_values(issue),
             issue.path,
         )
 
     def set_issues(self, issues: list[ScanIssue]) -> None:
-        self.issues_list.clear()
+        self.issues_table.setRowCount(0)
         for issue in issues:
             self.append_issue(issue)

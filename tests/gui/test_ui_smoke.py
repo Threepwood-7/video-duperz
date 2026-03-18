@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSpinBox,
+    QTableWidget,
     QWidget,
 )
 
@@ -62,6 +63,8 @@ from video_duperz.ui.results_view_shared import (
     COL_SIZE,
 )
 from video_duperz.ui.scan_view import (
+    SCAN_ISSUE_COL_MESSAGE,
+    SCAN_ISSUE_HEADERS,
     SCAN_LANE_COL_ACTIVE_FILE,
     SCAN_LANE_COL_ANAL_MIB_PER_S,
     SCAN_LANE_COL_ANAL_PER_S,
@@ -69,6 +72,9 @@ from video_duperz.ui.scan_view import (
     SCAN_LANE_COL_DISC_PER_S,
     SCAN_LANE_COL_PROGRESS,
     SCAN_LANE_HEADERS,
+    SCAN_PROGRESS_COL_MESSAGE,
+    SCAN_PROGRESS_COL_PROGRESS,
+    SCAN_PROGRESS_HEADERS,
 )
 from video_duperz.ui.thumbnails import thumbnail_cache_dir
 
@@ -393,6 +399,15 @@ def _lane_progress_bar(cell_widget: QWidget | None) -> QProgressBar:
     progress_bar = cell_widget.findChild(QProgressBar, "scan_lane_progress_bar")
     assert progress_bar is not None
     return progress_bar
+
+
+def _table_row_texts(table: QTableWidget, row: int) -> list[str]:
+    """Return the visible text for one table row."""
+    values: list[str] = []
+    for column in range(table.columnCount()):
+        item = table.item(row, column)
+        values.append("" if item is None else item.text())
+    return values
 
 
 def test_main_window_launches_with_new_results_table(tmp_path: Path) -> None:
@@ -2557,7 +2572,7 @@ def test_load_saved_scan_profile_paused_loads_scan_tab_and_issues(
         assert window.scan_view.retry_failed_checkbox.isEnabled()
         assert window.scan_view.retry_failed_checkbox.isChecked()
         assert window.scan_view.retry_failed_checkbox.text().endswith("(1)")
-        assert window.scan_view.issues_list.count() == 1
+        assert window.scan_view.issues_table.rowCount() == 1
         assert "paused" in window.statusBar().currentMessage().lower()
         assert window.probe_backend_combo.currentText() == "ffprobe"
         window.close()
@@ -2615,6 +2630,77 @@ def test_resume_scan_passes_retry_failed_checkbox_state(
 
         assert captured["resume_scan_id"] == paused_id
         assert captured["retry_failed_files"] is False
+        window.close()
+
+
+def test_resume_launch_preserves_unchecked_retry_failed_checkbox(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        roots = [str(tmp_path / "library")]
+        paused_id = db.create_scan(
+            profile="balanced",
+            roots=roots,
+            extensions=["mp4"],
+            probe_backend="ffprobe",
+        )
+        db.upsert_failed_file(
+            paused_id,
+            ScanIssue(
+                stage="fingerprint",
+                path=str(tmp_path / "library" / "clip.mp4"),
+                message="decoder timeout",
+            ),
+        )
+        db.complete_scan(paused_id, status="paused")
+
+        settings = default_settings()
+        settings.scan_roots = roots
+        settings.extensions = ["mp4"]
+        settings.probe_backend = "ffprobe"
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        scan_info = db.get_scan_info(paused_id)
+        window._load_paused_scan(
+            scan_id=paused_id,
+            source_name="Paused Profile",
+            scan_info=scan_info,
+        )
+        app.processEvents()
+        window.scan_view.retry_failed_checkbox.setChecked(False)
+
+        class _DummySignal:
+            def connect(self, _callback: object) -> None:
+                return None
+
+        class _DummySignals:
+            def __init__(self) -> None:
+                self.progress = _DummySignal()
+                self.issue = _DummySignal()
+                self.finished = _DummySignal()
+                self.error = _DummySignal()
+
+        class _DummyScanWorker:
+            def __init__(self, **_kwargs: object) -> None:
+                self.signals = _DummySignals()
+
+        monkeypatch.setattr(
+            "video_duperz.ui.main_window_scan_actions.ScanWorker",
+            _DummyScanWorker,
+        )
+        monkeypatch.setattr(window.thread_pool, "start", lambda _worker: None)
+        monkeypatch.setattr(window, "_apply_scan_parent_priority", lambda: None)
+
+        window._resume_scan()
+        app.processEvents()
+
+        assert window.scan_view.retry_failed_checkbox.isVisible()
+        assert not window.scan_view.retry_failed_checkbox.isChecked()
         window.close()
 
 
@@ -3659,7 +3745,11 @@ def test_scan_view_progress_keeps_parallel_worker_tokens(tmp_path: Path) -> None
         )
         app.processEvents()
 
-        assert "[workers 2/3]" in window.scan_view.progress_list.item(0).text()
+        assert (
+            window.scan_view.progress_table.item(0, SCAN_PROGRESS_COL_MESSAGE)
+            .text()
+            .endswith(f"{tmp_path} [workers 2/3]")
+        )
         window.close()
 
 
@@ -3683,7 +3773,10 @@ def test_scan_view_progress_uses_padded_counters(tmp_path: Path) -> None:
         )
         app.processEvents()
 
-        assert "  12 / 1001" in window.scan_view.progress_list.item(0).text()
+        assert (
+            window.scan_view.progress_table.item(0, SCAN_PROGRESS_COL_PROGRESS).text()
+            == "  12 / 1001"
+        )
         window.close()
 
 
@@ -3769,6 +3862,14 @@ def test_scan_view_removes_redundant_top_progress_labels(tmp_path: Path) -> None
         assert "Detailed Scan Progress" in scan_labels
         assert "Scan Issues" in scan_labels
         assert window.scan_view.stage_progress is not None
+        assert [
+            window.scan_view.progress_table.horizontalHeaderItem(index).text()
+            for index in range(window.scan_view.progress_table.columnCount())
+        ] == SCAN_PROGRESS_HEADERS
+        assert [
+            window.scan_view.issues_table.horizontalHeaderItem(index).text()
+            for index in range(window.scan_view.issues_table.columnCount())
+        ] == SCAN_ISSUE_HEADERS
         window.close()
 
 
@@ -3792,9 +3893,173 @@ def test_scan_issue_rows_do_not_echo_to_status_bar(tmp_path: Path) -> None:
         )
         app.processEvents()
 
-        assert window.scan_view.issues_list.count() == 1
-        assert "Could not probe file" in window.scan_view.issues_list.item(0).text()
+        assert window.scan_view.issues_table.rowCount() == 1
+        assert _table_row_texts(window.scan_view.issues_table, 0) == [
+            "probe",
+            str(tmp_path / "bad.mp4"),
+            "Could not probe file",
+        ]
         assert window.statusBar().currentMessage() == "Scan started"
+        window.close()
+
+
+def test_scan_progress_table_auto_scroll_pauses_until_bottom(tmp_path: Path) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.resize(960, 520)
+        window.show()
+        window.tabs.setCurrentWidget(window.scan_view)
+        window.scan_view.progress_table.setFixedHeight(140)
+        window.scan_view.progress_table.verticalHeader().setDefaultSectionSize(24)
+        app.processEvents()
+
+        for index in range(80):
+            window.scan_view.append_progress_note(
+                "probe",
+                f"Progress row {index}",
+                str(tmp_path / f"row_{index}.mp4"),
+            )
+        for row in range(window.scan_view.progress_table.rowCount()):
+            window.scan_view.progress_table.setRowHeight(row, 24)
+        app.processEvents()
+
+        scroll_bar = window.scan_view.progress_table.verticalScrollBar()
+        assert scroll_bar.maximum() > 0
+        scroll_bar.setValue(scroll_bar.maximum())
+        app.processEvents()
+        assert scroll_bar.value() >= scroll_bar.maximum() - 1
+
+        scroll_bar.setValue(max(0, scroll_bar.maximum() // 2))
+        app.processEvents()
+        paused_value = scroll_bar.value()
+
+        window.scan_view.append_progress_note(
+            "probe",
+            "Progress row while paused",
+            str(tmp_path / "paused.mp4"),
+        )
+        app.processEvents()
+
+        assert scroll_bar.value() >= paused_value
+        assert scroll_bar.value() < scroll_bar.maximum()
+
+        scroll_bar.setValue(scroll_bar.maximum())
+        app.processEvents()
+        window.scan_view.append_progress_note(
+            "probe",
+            "Progress row after resume",
+            str(tmp_path / "resumed.mp4"),
+        )
+        app.processEvents()
+
+        assert scroll_bar.value() >= scroll_bar.maximum() - 1
+        window.close()
+
+
+def test_scan_issues_table_auto_scroll_pauses_until_bottom(tmp_path: Path) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.resize(960, 520)
+        window.show()
+        window.tabs.setCurrentWidget(window.scan_view)
+        window.scan_view.issues_table.setFixedHeight(140)
+        window.scan_view.issues_table.verticalHeader().setDefaultSectionSize(24)
+        app.processEvents()
+
+        for index in range(60):
+            window.scan_view.append_issue(
+                ScanIssue(
+                    stage="probe",
+                    path=str(tmp_path / f"issue_{index}.mp4"),
+                    message=f"Issue row {index}",
+                )
+            )
+        for row in range(window.scan_view.issues_table.rowCount()):
+            window.scan_view.issues_table.setRowHeight(row, 24)
+        app.processEvents()
+
+        scroll_bar = window.scan_view.issues_table.verticalScrollBar()
+        assert scroll_bar.maximum() > 0
+        scroll_bar.setValue(scroll_bar.maximum())
+        app.processEvents()
+        assert scroll_bar.value() >= scroll_bar.maximum() - 1
+
+        scroll_bar.setValue(max(0, scroll_bar.maximum() // 2))
+        app.processEvents()
+        paused_value = scroll_bar.value()
+
+        window.scan_view.append_issue(
+            ScanIssue(
+                stage="probe",
+                path=str(tmp_path / "paused_issue.mp4"),
+                message="Issue row while paused",
+            )
+        )
+        app.processEvents()
+
+        assert scroll_bar.value() >= paused_value
+        assert scroll_bar.value() < scroll_bar.maximum()
+
+        scroll_bar.setValue(scroll_bar.maximum())
+        app.processEvents()
+        window.scan_view.append_issue(
+            ScanIssue(
+                stage="probe",
+                path=str(tmp_path / "resumed_issue.mp4"),
+                message="Issue row after resume",
+            )
+        )
+        app.processEvents()
+
+        assert scroll_bar.value() >= scroll_bar.maximum() - 1
+        window.close()
+
+
+def test_scan_log_tables_double_click_emit_associated_path(tmp_path: Path) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        captured_paths: list[str] = []
+        window.scan_view.path_activation_requested.connect(captured_paths.append)
+
+        progress_path = str(tmp_path / "progress_subject.mp4")
+        issue_path = str(tmp_path / "issue_subject.mp4")
+        window.scan_view.append_progress_note(
+            "probe",
+            "Open progress path",
+            progress_path,
+        )
+        window.scan_view.append_issue(
+            ScanIssue(
+                stage="probe",
+                path=issue_path,
+                message="Open issue path",
+            )
+        )
+        app.processEvents()
+
+        window.scan_view.progress_table.itemDoubleClicked.emit(
+            window.scan_view.progress_table.item(0, SCAN_PROGRESS_COL_MESSAGE)
+        )
+        window.scan_view.issues_table.itemDoubleClicked.emit(
+            window.scan_view.issues_table.item(0, SCAN_ISSUE_COL_MESSAGE)
+        )
+
+        assert captured_paths == [progress_path, issue_path]
         window.close()
 
 
@@ -4036,10 +4301,19 @@ def test_scan_view_progress_rows_distinguish_resume_work_kinds(tmp_path: Path) -
         app.processEvents()
 
         rows = [
-            window.scan_view.progress_list.item(index).text()
-            for index in range(window.scan_view.progress_list.count())
+            _table_row_texts(window.scan_view.progress_table, index)
+            for index in range(window.scan_view.progress_table.rowCount())
         ]
-        assert any("Reused cached analysis a.mp4" in row for row in rows)
-        assert any("Reused probe, fingerprinted b.mp4" in row for row in rows)
-        assert any("Probed and fingerprinted c.mp4" in row for row in rows)
+        assert any(
+            row[SCAN_PROGRESS_COL_MESSAGE] == "Reused cached analysis a.mp4"
+            for row in rows
+        )
+        assert any(
+            row[SCAN_PROGRESS_COL_MESSAGE] == "Reused probe, fingerprinted b.mp4"
+            for row in rows
+        )
+        assert any(
+            row[SCAN_PROGRESS_COL_MESSAGE] == "Probed and fingerprinted c.mp4"
+            for row in rows
+        )
         window.close()
