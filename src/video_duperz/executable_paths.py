@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 def normalize_executable_override_path(value: object) -> str:
@@ -26,6 +30,7 @@ def resolve_executable_path(
     override_path: str = "",
     *,
     not_found_message: str,
+    fallback_paths: Sequence[str] = (),
 ) -> str:
     """Resolve one external executable path from override or PATH.
 
@@ -33,6 +38,7 @@ def resolve_executable_path(
         tool_name: Human-facing executable id, such as ``ffmpeg``.
         override_path: Optional configured override path.
         not_found_message: Error message used when PATH lookup fails.
+        fallback_paths: Extra absolute candidate paths checked after PATH lookup.
 
     Returns:
         Concrete executable path to launch.
@@ -52,4 +58,8 @@ def resolve_executable_path(
     resolved = shutil.which(tool_name)
     if resolved:
         return resolved
+    for candidate in fallback_paths:
+        normalized_candidate = normalize_executable_override_path(candidate)
+        if normalized_candidate and Path(normalized_candidate).is_file():
+            return normalized_candidate
     raise FileNotFoundError(not_found_message)

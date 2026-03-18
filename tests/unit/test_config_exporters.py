@@ -7,6 +7,7 @@ from PySide6.QtCore import QSettings
 
 from video_duperz.config import (
     MAX_DRIVE_WORKERS,
+    RESULTS_TABLE_COLUMN_COUNT,
     default_settings,
     load_settings,
     save_settings,
@@ -39,13 +40,17 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     settings.identical_block_mib = 4
     settings.identical_sample_a_pct = 12
     settings.identical_sample_b_pct = 91
-    settings.results_table_column_widths = [80] * 19
+    settings.results_table_column_widths = [80] * RESULTS_TABLE_COLUMN_COUNT
     settings.drive_worker_overrides = {"volume:a": 3}
     settings.probe_backend = "pyav"
     settings.probe_worker_mode = "burst"
     settings.ffmpeg_exe_path = "~/bin/ffmpeg.exe"
     settings.ffprobe_exe_path = "~/bin/ffprobe.exe"
     settings.mediainfo_exe_path = "~/bin/mediainfo.exe"
+    settings.everything_exe_path = "~/bin/Everything.exe"
+    settings.custom_command_f2 = '"C:/Tools/F2 Runner.exe" --flag'
+    settings.custom_command_f3 = '"C:/Tools/F3 Runner.exe"'
+    settings.custom_command_f4 = ""
     settings.scan_db_batch_size = 2048
     settings.scan_db_flush_interval_ms = 450
     settings.scan_enum_queue_max = 8192
@@ -71,13 +76,17 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     assert loaded.identical_block_mib == 4
     assert loaded.identical_sample_a_pct == 12
     assert loaded.identical_sample_b_pct == 91
-    assert loaded.results_table_column_widths == [80] * 19
+    assert loaded.results_table_column_widths == [80] * RESULTS_TABLE_COLUMN_COUNT
     assert loaded.drive_worker_overrides == {"volume:a": 3}
     assert loaded.probe_backend == "pyav"
     assert loaded.probe_worker_mode == "burst"
     assert loaded.ffmpeg_exe_path == str(Path("~/bin/ffmpeg.exe").expanduser())
     assert loaded.ffprobe_exe_path == str(Path("~/bin/ffprobe.exe").expanduser())
     assert loaded.mediainfo_exe_path == str(Path("~/bin/mediainfo.exe").expanduser())
+    assert loaded.everything_exe_path == str(Path("~/bin/Everything.exe").expanduser())
+    assert loaded.custom_command_f2 == '"C:/Tools/F2 Runner.exe" --flag'
+    assert loaded.custom_command_f3 == '"C:/Tools/F3 Runner.exe"'
+    assert loaded.custom_command_f4 == ""
     assert loaded.scan_db_batch_size == 2048
     assert loaded.scan_db_flush_interval_ms == 450
     assert loaded.scan_enum_queue_max == 8192
@@ -194,8 +203,16 @@ def test_settings_old_column_payloads_are_ignored(tmp_path: Path, monkeypatch) -
     save_settings(settings)
 
     path = settings_path()
-    _set_qsettings_value(path, "results_table_column_widths", [80] * 18)
-    _set_qsettings_value(path, "results_table_column_visibility", [False] * 18)
+    _set_qsettings_value(
+        path,
+        "results_table_column_widths",
+        [80] * (RESULTS_TABLE_COLUMN_COUNT - 1),
+    )
+    _set_qsettings_value(
+        path,
+        "results_table_column_visibility",
+        [False] * (RESULTS_TABLE_COLUMN_COUNT - 1),
+    )
 
     loaded = load_settings()
     assert loaded.results_table_column_widths == []
@@ -214,16 +231,16 @@ def test_settings_saved_views_normalization(tmp_path: Path, monkeypatch) -> None
         "saved_column_views",
         {
             "good": {
-                "widths": [80] * 19,
-                "visibility": [True] * 19,
+                "widths": [80] * RESULTS_TABLE_COLUMN_COUNT,
+                "visibility": [True] * RESULTS_TABLE_COLUMN_COUNT,
             },
             "bad_short": {
                 "widths": [80] * 3,
-                "visibility": [True] * 19,
+                "visibility": [True] * RESULTS_TABLE_COLUMN_COUNT,
             },
             "bad_all_hidden": {
-                "widths": [80] * 19,
-                "visibility": [False] * 19,
+                "widths": [80] * RESULTS_TABLE_COLUMN_COUNT,
+                "visibility": [False] * RESULTS_TABLE_COLUMN_COUNT,
             },
         },
     )
@@ -249,8 +266,8 @@ def test_settings_saved_views_with_old_column_counts_are_ignored(
         "saved_column_views",
         {
             "legacy": {
-                "widths": [90] * 18,
-                "visibility": [True] * 18,
+                "widths": [90] * (RESULTS_TABLE_COLUMN_COUNT - 1),
+                "visibility": [True] * (RESULTS_TABLE_COLUMN_COUNT - 1),
             }
         },
     )

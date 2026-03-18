@@ -148,6 +148,12 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
             for key, value in self.settings.drive_worker_overrides.items()
         }
         self.results_view.set_mediainfo_exe_path(self.settings.mediainfo_exe_path)
+        self.results_view.set_everything_exe_path(self.settings.everything_exe_path)
+        self.results_view.set_custom_command_overrides(
+            command_f2=self.settings.custom_command_f2,
+            command_f3=self.settings.custom_command_f3,
+            command_f4=self.settings.custom_command_f4,
+        )
         self._update_root_buttons_state()
         self._sync_column_toggle_actions()
         self._refresh_sources_physical_drive_view()
@@ -195,6 +201,12 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
             mediainfo_exe_path=normalize_executable_override_path(
                 self.mediainfo_exe_path_edit.text()
             ),
+            everything_exe_path=normalize_executable_override_path(
+                self.settings.everything_exe_path
+            ),
+            custom_command_f2=str(self.settings.custom_command_f2 or "").strip(),
+            custom_command_f3=str(self.settings.custom_command_f3 or "").strip(),
+            custom_command_f4=str(self.settings.custom_command_f4 or "").strip(),
             scan_db_batch_size=self.settings.scan_db_batch_size,
             scan_db_flush_interval_ms=self.settings.scan_db_flush_interval_ms,
             scan_enum_queue_max=self.settings.scan_enum_queue_max,
@@ -217,6 +229,12 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
             sample_b_pct=self.settings.identical_sample_b_pct,
         )
         self.results_view.set_mediainfo_exe_path(self.settings.mediainfo_exe_path)
+        self.results_view.set_everything_exe_path(self.settings.everything_exe_path)
+        self.results_view.set_custom_command_overrides(
+            command_f2=self.settings.custom_command_f2,
+            command_f3=self.settings.custom_command_f3,
+            command_f4=self.settings.custom_command_f4,
+        )
 
     def _on_tab_changed(self, index: int) -> None:
         """Keep the Scan tab selected while a scan is running."""

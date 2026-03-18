@@ -5,8 +5,17 @@ from __future__ import annotations
 from collections import deque
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QSignalBlocker, QSize, Qt, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QAction, QKeySequence, QShowEvent
+from PySide6.QtCore import (
+    QEvent,
+    QObject,
+    QSignalBlocker,
+    QSize,
+    Qt,
+    QThreadPool,
+    QTimer,
+    Signal,
+)
+from PySide6.QtGui import QAction, QKeyEvent, QKeySequence, QShowEvent
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -26,6 +35,11 @@ from PySide6.QtWidgets import (
 
 from ..media_format_policy import normalize_media_suffix
 from .results_view_shared import (
+    COL_CHECK,
+    COL_FILE_NAME,
+    COL_FULL_PATH,
+    COL_GROUP_ID,
+    COL_PARENT_DIR,
     HDR_FILTER_ANY,
     HDR_FILTER_OPTIONS,
     RESULTS_HEADERS,
@@ -45,6 +59,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from ..models import DuplicateGroup
+    from .results_view_shared import RowMeta
 
 
 class ResultsViewBase(QWidget):
@@ -76,6 +91,10 @@ class ResultsViewBase(QWidget):
         self._applying_column_widths = False
         self._mediainfo_missing_notified = False
         self._mediainfo_exe_path = ""
+        self._everything_exe_path = ""
+        self._custom_command_f2 = ""
+        self._custom_command_f3 = ""
+        self._custom_command_f4 = ""
         self._checked_file_ids: set[int] = set()
         self._rebuilding_table = False
         self._scan_context_note = ""
@@ -97,7 +116,13 @@ class ResultsViewBase(QWidget):
         self._group_compare_workers: dict[int, object] = {}
         self.open_current_file_action: QAction
         self.explore_current_file_action: QAction
+        self.copy_full_path_action: QAction
+        self.search_everything_action: QAction
+        self.open_web_search_action: QAction
         self.launch_mediainfo_action: QAction
+        self.custom_command_f2_action: QAction
+        self.custom_command_f3_action: QAction
+        self.custom_command_f4_action: QAction
         self.delete_selected_action: QAction
         self.delete_selected_permanent_action: QAction
         self._filter_apply_timer = QTimer(self)
@@ -419,6 +444,7 @@ class ResultsViewBase(QWidget):
         self.results_table.itemDoubleClicked.connect(
             self._on_results_table_item_double_clicked
         )
+        self.results_table.installEventFilter(self)
 
         self.filter_include_name_edit.textChanged.connect(self._schedule_filter_apply)
         self.filter_include_path_edit.textChanged.connect(self._schedule_filter_apply)
@@ -483,7 +509,21 @@ class ResultsViewBase(QWidget):
 
     def explore_current_file(self) -> None: ...
 
+    def copy_current_full_path(self) -> None: ...
+
+    def search_current_filename_in_everything(self) -> None: ...
+
+    def open_current_title_web_search(self) -> None: ...
+
     def launch_mediainfo(self) -> None: ...
+
+    def run_custom_command_f2(self) -> None: ...
+
+    def run_custom_command_f3(self) -> None: ...
+
+    def run_custom_command_f4(self) -> None: ...
+
+    def _row_meta(self, row: int) -> RowMeta | None: ...
 
     @staticmethod
     def _normalize_column_widths(
@@ -624,10 +664,40 @@ class ResultsViewBase(QWidget):
             [QKeySequence("E")],
             self.explore_current_file,
         )
+        self.copy_full_path_action = self._create_results_action(
+            "&Copy Full Path",
+            [QKeySequence("C")],
+            self.copy_current_full_path,
+        )
+        self.search_everything_action = self._create_results_action(
+            "Search In &Everything",
+            [QKeySequence("S")],
+            self.search_current_filename_in_everything,
+        )
+        self.open_web_search_action = self._create_results_action(
+            "Open &Web Search",
+            [QKeySequence("G")],
+            self.open_current_title_web_search,
+        )
         self.launch_mediainfo_action = self._create_results_action(
             "Launch &MediaInfo",
             [QKeySequence("M")],
             self.launch_mediainfo,
+        )
+        self.custom_command_f2_action = self._create_results_action(
+            "Run Custom Command F&2",
+            [QKeySequence("F2")],
+            self.run_custom_command_f2,
+        )
+        self.custom_command_f3_action = self._create_results_action(
+            "Run Custom Command F&3",
+            [QKeySequence("F3")],
+            self.run_custom_command_f3,
+        )
+        self.custom_command_f4_action = self._create_results_action(
+            "Run Custom Command F&4",
+            [QKeySequence("F4")],
+            self.run_custom_command_f4,
         )
         self.delete_selected_action = self._create_results_action(
             "&Delete Selected",
@@ -741,6 +811,22 @@ class ResultsViewBase(QWidget):
     def set_mediainfo_exe_path(self, path: str) -> None:
         """Store the configured MediaInfo executable override path."""
         self._mediainfo_exe_path = str(path or "").strip()
+
+    def set_everything_exe_path(self, path: str) -> None:
+        """Store the configured Everything executable override path."""
+        self._everything_exe_path = str(path or "").strip()
+
+    def set_custom_command_overrides(
+        self,
+        *,
+        command_f2: str,
+        command_f3: str,
+        command_f4: str,
+    ) -> None:
+        """Store the three INI-driven custom command strings."""
+        self._custom_command_f2 = str(command_f2 or "").strip()
+        self._custom_command_f3 = str(command_f3 or "").strip()
+        self._custom_command_f4 = str(command_f4 or "").strip()
 
     @staticmethod
     def _normalize_identical_block_mib(value: object) -> int:
@@ -864,9 +950,116 @@ class ResultsViewBase(QWidget):
         self._rebuild_results_table()
 
     def _on_results_table_item_double_clicked(self, item: QTableWidgetItem) -> None:
-        """Launch the double-clicked row using the default file opener."""
+        """Dispatch one row double-click according to the clicked column."""
         self.results_table.setCurrentItem(item)
+        if item.column() == COL_FILE_NAME:
+            self.open_current_in_default_player()
+            return
+        if item.column() in {COL_PARENT_DIR, COL_FULL_PATH}:
+            self.explore_current_file()
+            return
         self.open_current_in_default_player()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        """Handle results-table keys that should not follow default focus logic."""
+        if watched is self.results_table and event.type() == QEvent.Type.KeyPress:
+            key_event = event if isinstance(event, QKeyEvent) else None
+            if key_event is None:
+                return super().eventFilter(watched, event)
+            if key_event.key() == Qt.Key.Key_Space and (
+                key_event.modifiers() == Qt.KeyboardModifier.NoModifier
+            ):
+                self._toggle_current_row_checkbox()
+                key_event.accept()
+                return True
+            if (
+                key_event.key() == Qt.Key.Key_Tab
+                and key_event.modifiers() == Qt.KeyboardModifier.NoModifier
+            ):
+                self._move_current_selection_to_adjacent_group(step=1)
+                key_event.accept()
+                return True
+            if key_event.key() == Qt.Key.Key_Backtab or (
+                key_event.key() == Qt.Key.Key_Tab
+                and key_event.modifiers() == Qt.KeyboardModifier.ShiftModifier
+            ):
+                self._move_current_selection_to_adjacent_group(step=-1)
+                key_event.accept()
+                return True
+        return super().eventFilter(watched, event)
+
+    def _toggle_current_row_checkbox(self) -> None:
+        """Toggle the current row checkbox and keep keyboard focus on the row."""
+        row = self.results_table.currentRow()
+        if row < 0:
+            if self.results_table.rowCount() == 0:
+                return
+            row = 0
+        column = self.results_table.currentColumn()
+        check_item = self.results_table.item(row, COL_CHECK)
+        if check_item is None:
+            return
+        next_state = (
+            Qt.CheckState.Unchecked
+            if check_item.checkState() == Qt.CheckState.Checked
+            else Qt.CheckState.Checked
+        )
+        check_item.setCheckState(next_state)
+        self.results_table.setCurrentCell(row, max(column, COL_GROUP_ID))
+
+    def _move_current_selection_to_adjacent_group(self, *, step: int) -> None:
+        """Jump to the first row of the next or previous visible duplicate group."""
+        if self.results_table.rowCount() == 0:
+            return
+        column = max(self.results_table.currentColumn(), COL_GROUP_ID)
+        current_row = self.results_table.currentRow()
+        if current_row < 0:
+            target_row = (
+                0
+                if step > 0
+                else self._first_row_for_group(self.results_table.rowCount() - 1)
+            )
+            self.results_table.setCurrentCell(target_row, column)
+            target_item = self.results_table.item(target_row, COL_GROUP_ID)
+            if target_item is not None:
+                self.results_table.scrollToItem(target_item)
+            return
+        current_meta = self._row_meta(current_row)
+        if current_meta is None:
+            return
+        current_group_id = current_meta.group_db_id
+        target_row: int | None = None
+        if step > 0:
+            for row in range(current_row + 1, self.results_table.rowCount()):
+                meta = self._row_meta(row)
+                if meta is not None and meta.group_db_id != current_group_id:
+                    target_row = row
+                    break
+        else:
+            for row in range(current_row - 1, -1, -1):
+                meta = self._row_meta(row)
+                if meta is not None and meta.group_db_id != current_group_id:
+                    target_row = self._first_row_for_group(row)
+                    break
+        if target_row is None:
+            return
+        self.results_table.setCurrentCell(target_row, column)
+        target_item = self.results_table.item(target_row, COL_GROUP_ID)
+        if target_item is not None:
+            self.results_table.scrollToItem(target_item)
+
+    def _first_row_for_group(self, row: int) -> int:
+        """Return the first visible row for the group containing one row."""
+        target_meta = self._row_meta(row)
+        if target_meta is None:
+            return row
+        target_group_id = target_meta.group_db_id
+        while row > 0:
+            previous_meta = self._row_meta(row - 1)
+            if previous_meta is None or previous_meta.group_db_id != target_group_id:
+                break
+            row -= 1
+        return row
 
     def _clear_filters(self) -> None:
         """Reset every filter control and rebuild the full results set."""

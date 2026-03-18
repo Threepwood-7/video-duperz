@@ -50,6 +50,13 @@ from video_duperz.ui.results_view import (
     SORT_GROUP_SIZE_DESC,
     SORT_ROW_SIZE_DESC,
 )
+from video_duperz.ui.results_view_shared import (
+    COL_CHECK,
+    COL_FILE_NAME,
+    COL_FULL_PATH,
+    COL_PARENT_DIR,
+    COL_SIZE,
+)
 from video_duperz.ui.thumbnails import thumbnail_cache_dir
 
 
@@ -265,7 +272,7 @@ def _results_menu_actions(window: MainWindow) -> list[QAction]:
 def _visible_result_paths(window: MainWindow) -> list[str]:
     """Return the currently visible full-result paths from the results table."""
     return [
-        window.results_view.results_table.item(row, 18).text()
+        window.results_view.results_table.item(row, COL_FULL_PATH).text()
         for row in range(window.results_view.results_table.rowCount())
     ]
 
@@ -309,18 +316,22 @@ def test_main_window_launches_with_new_results_table(tmp_path: Path) -> None:
 
         assert window.thumbnail_size_combo.count() == 4
         assert window.add_recent_root_btn.text() == "Add Recent Folder"
-        assert window.results_view.results_table.columnCount() == 19
+        assert window.results_view.results_table.columnCount() == 20
         assert window.results_view.results_table.horizontalHeaderItem(2).text() == "="
         assert (
             window.results_view.results_table.horizontalHeaderItem(3).text()
             == "Thumbnail"
         )
         assert (
-            window.results_view.results_table.horizontalHeaderItem(9).text()
+            window.results_view.results_table.horizontalHeaderItem(5).text()
+            == "Extension"
+        )
+        assert (
+            window.results_view.results_table.horizontalHeaderItem(10).text()
             == "Audio Codec"
         )
         assert (
-            window.results_view.results_table.horizontalHeaderItem(13).text() == "HDR"
+            window.results_view.results_table.horizontalHeaderItem(14).text() == "HDR"
         )
 
         group = DuplicateGroup(
@@ -509,13 +520,13 @@ def test_results_column_widths_persist(tmp_path: Path, monkeypatch) -> None:
         app.processEvents()
 
         window.results_view.results_table.setColumnWidth(3, 280)
-        window.results_view.results_table.setColumnWidth(18, 520)
+        window.results_view.results_table.setColumnWidth(COL_FULL_PATH, 520)
         app.processEvents()
         window.close()
 
     loaded = load_settings()
     assert loaded.results_table_column_widths[3] == 280
-    assert loaded.results_table_column_widths[18] == 520
+    assert loaded.results_table_column_widths[COL_FULL_PATH] == 520
 
 
 def test_group_formatting_and_keep_strategy(tmp_path: Path) -> None:
@@ -695,7 +706,7 @@ def test_view_columns_menu_toggle_and_saved_view(tmp_path: Path, monkeypatch) ->
         app.processEvents()
         assert window._columns_menu.isVisible()
         toggle_rect = window._columns_menu.actionGeometry(
-            window._column_toggle_actions[18]
+            window._column_toggle_actions[COL_FULL_PATH]
         )
         QTest.mouseClick(
             window._columns_menu,
@@ -705,13 +716,13 @@ def test_view_columns_menu_toggle_and_saved_view(tmp_path: Path, monkeypatch) ->
         )
         app.processEvents()
         assert window._columns_menu.isVisible()
-        assert window.results_view.results_table.isColumnHidden(18)
+        assert window.results_view.results_table.isColumnHidden(COL_FULL_PATH)
         window._columns_menu.close()
         app.processEvents()
 
-        window._column_toggle_actions[18].setChecked(False)
+        window._column_toggle_actions[COL_FULL_PATH].setChecked(False)
         app.processEvents()
-        assert window.results_view.results_table.isColumnHidden(18)
+        assert window.results_view.results_table.isColumnHidden(COL_FULL_PATH)
 
         monkeypatch.setattr(
             "video_duperz.ui.main_window_settings.QInputDialog.getText",
@@ -720,13 +731,13 @@ def test_view_columns_menu_toggle_and_saved_view(tmp_path: Path, monkeypatch) ->
         window._save_current_view()
         assert "Compact" in window._saved_column_views
 
-        window._column_toggle_actions[18].setChecked(True)
+        window._column_toggle_actions[COL_FULL_PATH].setChecked(True)
         app.processEvents()
-        assert not window.results_view.results_table.isColumnHidden(18)
+        assert not window.results_view.results_table.isColumnHidden(COL_FULL_PATH)
 
         window._apply_saved_view("Compact")
         app.processEvents()
-        assert window.results_view.results_table.isColumnHidden(18)
+        assert window.results_view.results_table.isColumnHidden(COL_FULL_PATH)
         window.close()
 
     loaded = load_settings()
@@ -752,11 +763,17 @@ def test_view_sort_menu_and_results_filters(tmp_path: Path) -> None:
 
         window._sort_actions[SORT_GROUP_SIZE_DESC].trigger()
         app.processEvents()
-        assert "gamma" in window.results_view.results_table.item(0, 18).text().lower()
+        assert (
+            "gamma"
+            in window.results_view.results_table.item(0, COL_FULL_PATH).text().lower()
+        )
 
         window._sort_actions[SORT_GROUP_COUNT_DESC].trigger()
         app.processEvents()
-        assert "beta" in window.results_view.results_table.item(0, 18).text().lower()
+        assert (
+            "beta"
+            in window.results_view.results_table.item(0, COL_FULL_PATH).text().lower()
+        )
 
         window._sort_actions[SORT_ROW_SIZE_DESC].trigger()
         app.processEvents()
@@ -767,7 +784,11 @@ def test_view_sort_menu_and_results_filters(tmp_path: Path) -> None:
             if window.results_view.results_table.item(row, 0).text() == first_group
         ]
         first_group_sizes = [
-            int(window.results_view.results_table.item(row, 5).text().replace(",", ""))
+            int(
+                window.results_view.results_table.item(row, COL_SIZE)
+                .text()
+                .replace(",", "")
+            )
             for row in first_group_rows
         ]
         assert first_group_sizes == sorted(first_group_sizes, reverse=True)
@@ -778,7 +799,9 @@ def test_view_sort_menu_and_results_filters(tmp_path: Path) -> None:
         assert window.results_view.results_table.rowCount() == 7
         assert any(
             "skip"
-            in Path(window.results_view.results_table.item(row, 18).text()).name.lower()
+            in Path(
+                window.results_view.results_table.item(row, COL_FULL_PATH).text()
+            ).name.lower()
             for row in range(window.results_view.results_table.rowCount())
         )
 
@@ -788,7 +811,9 @@ def test_view_sort_menu_and_results_filters(tmp_path: Path) -> None:
         assert window.results_view.results_table.rowCount() == 5
         assert all(
             "gamma"
-            not in window.results_view.results_table.item(row, 18).text().lower()
+            not in window.results_view.results_table.item(row, COL_FULL_PATH)
+            .text()
+            .lower()
             for row in range(window.results_view.results_table.rowCount())
         )
 
@@ -797,7 +822,8 @@ def test_view_sort_menu_and_results_filters(tmp_path: Path) -> None:
         app.processEvents()
         assert window.results_view.results_table.rowCount() == 3
         assert all(
-            "beta" in window.results_view.results_table.item(row, 18).text().lower()
+            "beta"
+            in window.results_view.results_table.item(row, COL_FULL_PATH).text().lower()
             for row in range(window.results_view.results_table.rowCount())
         )
         window.close()
@@ -833,7 +859,8 @@ def test_results_filters_debounce_multi_value_and_enter_apply(tmp_path: Path) ->
         app.processEvents()
         assert window.results_view.results_table.rowCount() == 2
         assert all(
-            "alpha" in window.results_view.results_table.item(row, 18).text().lower()
+            "alpha"
+            in window.results_view.results_table.item(row, COL_FULL_PATH).text().lower()
             for row in range(window.results_view.results_table.rowCount())
         )
 
@@ -852,7 +879,8 @@ def test_results_filters_debounce_multi_value_and_enter_apply(tmp_path: Path) ->
         app.processEvents()
         assert window.results_view.results_table.rowCount() == 3
         assert all(
-            "beta" in window.results_view.results_table.item(row, 18).text().lower()
+            "beta"
+            in window.results_view.results_table.item(row, COL_FULL_PATH).text().lower()
             for row in range(window.results_view.results_table.rowCount())
         )
         window.close()
@@ -1112,7 +1140,8 @@ def test_results_filter_attribute_options_refresh_and_fallback(tmp_path: Path) -
         app.processEvents()
         assert window.results_view.results_table.rowCount() == 2
         assert all(
-            "extras" in window.results_view.results_table.item(row, 18).text().lower()
+            "extras"
+            in window.results_view.results_table.item(row, COL_FULL_PATH).text().lower()
             for row in range(window.results_view.results_table.rowCount())
         )
 
@@ -1242,7 +1271,8 @@ def test_results_filters_must_match_all_and_hide_singletons(tmp_path: Path) -> N
         app.processEvents()
         assert window.results_view.results_table.rowCount() == 3
         assert all(
-            "beta" in window.results_view.results_table.item(row, 18).text().lower()
+            "beta"
+            in window.results_view.results_table.item(row, COL_FULL_PATH).text().lower()
             for row in range(window.results_view.results_table.rowCount())
         )
         window.close()
@@ -1663,7 +1693,13 @@ def test_results_actions_menu_shortcuts_and_row_double_click(
         menu_actions = [action for action in actions_menu if not action.isSeparator()]
         assert window.open_current_file_action in menu_actions
         assert window.explore_current_file_action in menu_actions
+        assert window.copy_full_path_action in menu_actions
+        assert window.search_everything_action in menu_actions
+        assert window.open_web_search_action in menu_actions
         assert window.launch_mediainfo_action in menu_actions
+        assert window.custom_command_f2_action in menu_actions
+        assert window.custom_command_f3_action in menu_actions
+        assert window.custom_command_f4_action in menu_actions
         assert window.delete_selected_action in menu_actions
         assert window.delete_selected_permanent_action in menu_actions
 
@@ -1676,9 +1712,32 @@ def test_results_actions_menu_shortcuts_and_row_double_click(
             for sequence in window.explore_current_file_action.shortcuts()
         } == {"E"}
         assert {
+            sequence.toString() for sequence in window.copy_full_path_action.shortcuts()
+        } == {"C"}
+        assert {
+            sequence.toString()
+            for sequence in window.search_everything_action.shortcuts()
+        } == {"S"}
+        assert {
+            sequence.toString()
+            for sequence in window.open_web_search_action.shortcuts()
+        } == {"G"}
+        assert {
             sequence.toString()
             for sequence in window.launch_mediainfo_action.shortcuts()
         } == {"M"}
+        assert {
+            sequence.toString()
+            for sequence in window.custom_command_f2_action.shortcuts()
+        } == {"F2"}
+        assert {
+            sequence.toString()
+            for sequence in window.custom_command_f3_action.shortcuts()
+        } == {"F3"}
+        assert {
+            sequence.toString()
+            for sequence in window.custom_command_f4_action.shortcuts()
+        } == {"F4"}
         assert {
             sequence.toString()
             for sequence in window.delete_selected_action.shortcuts()
@@ -1689,17 +1748,156 @@ def test_results_actions_menu_shortcuts_and_row_double_click(
         } == {"Shift+Del"}
 
         opened: list[Path] = []
+        explored: list[Path] = []
         monkeypatch.setattr(
             "video_duperz.ui.results_view_actions.open_path_in_default_app",
             lambda path: opened.append(Path(path)) or True,
         )
+        monkeypatch.setattr(
+            "video_duperz.ui.results_view_actions.reveal_path_in_file_manager",
+            lambda path: explored.append(Path(path)) or True,
+        )
 
         window.results_view.results_table.itemDoubleClicked.emit(
-            window.results_view.results_table.item(0, 0)
+            window.results_view.results_table.item(0, COL_FILE_NAME)
+        )
+        window.results_view.results_table.itemDoubleClicked.emit(
+            window.results_view.results_table.item(0, COL_PARENT_DIR)
+        )
+        window.results_view.results_table.itemDoubleClicked.emit(
+            window.results_view.results_table.item(0, COL_FULL_PATH)
         )
         app.processEvents()
 
         assert opened == [target]
+        assert explored == [target, target]
+        window.close()
+
+
+def test_results_table_keyboard_navigation_and_extra_actions(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Support table-space toggles, group tabbing, and extra row actions."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    target_a = tmp_path / "alpha.mp4"
+    target_b = tmp_path / "beta.mkv"
+    target_a.write_bytes(b"")
+    target_b.write_bytes(b"")
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        settings.everything_exe_path = r"C:\tools\Everything.exe"
+        settings.custom_command_f2 = '"C:\\Tools\\Runner F2.exe" --first'
+        settings.custom_command_f3 = '"C:\\Tools\\Runner F3.exe"'
+        settings.custom_command_f4 = '"C:\\Tools\\Runner F4.exe" --tail'
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        group_a = DuplicateGroup(
+            scan_id=1,
+            profile="balanced",
+            created_at="now",
+            items=[
+                _dup_item(31, str(target_a), 320, 240, 1000, 1.0),
+                _dup_item(32, str(tmp_path / "alpha_copy.mp4"), 320, 240, 900, 0.98),
+            ],
+            total_size_bytes=200,
+            group_id=56,
+        )
+        group_b = DuplicateGroup(
+            scan_id=1,
+            profile="balanced",
+            created_at="now",
+            items=[
+                _dup_item(33, str(target_b), 320, 240, 800, 0.97),
+                _dup_item(34, str(tmp_path / "beta_copy.mkv"), 320, 240, 780, 0.96),
+            ],
+            total_size_bytes=200,
+            group_id=57,
+        )
+        window.results_view.load_groups([group_a, group_b])
+        window.results_view.results_table.setCurrentCell(0, COL_FILE_NAME)
+        window.results_view.results_table.setFocus()
+        app.processEvents()
+
+        check_item = window.results_view.results_table.item(0, COL_CHECK)
+        assert check_item is not None
+        assert check_item.checkState() == Qt.CheckState.Unchecked
+
+        QTest.keyClick(window.results_view.results_table, Qt.Key.Key_Space)
+        app.processEvents()
+        assert check_item.checkState() == Qt.CheckState.Checked
+
+        QTest.keyClick(window.results_view.results_table, Qt.Key.Key_Tab)
+        app.processEvents()
+        assert window.results_view.results_table.currentRow() == 2
+
+        QTest.keyClick(
+            window.results_view.results_table,
+            Qt.Key.Key_Backtab,
+            Qt.KeyboardModifier.ShiftModifier,
+        )
+        app.processEvents()
+        assert window.results_view.results_table.currentRow() == 0
+
+        launched_commands: list[list[str]] = []
+        opened_urls: list[str] = []
+
+        def _resolve_executable_path(
+            tool_name: str,
+            override_path: str = "",
+            *,
+            not_found_message: str,
+            fallback_paths: tuple[str, ...] = (),
+        ) -> str:
+            _ = not_found_message, fallback_paths
+            return str(override_path or tool_name)
+
+        monkeypatch.setattr(
+            "video_duperz.ui.results_view_actions.resolve_executable_path",
+            _resolve_executable_path,
+        )
+        monkeypatch.setattr(
+            "video_duperz.ui.results_view_actions.subprocess.Popen",
+            lambda command: launched_commands.append(list(command)),
+        )
+        monkeypatch.setattr(
+            "video_duperz.ui.results_view_actions.webbrowser.open",
+            lambda url: opened_urls.append(str(url)) or True,
+        )
+
+        window.results_view.copy_full_path_action.trigger()
+        assert QApplication.clipboard().text() == str(target_a)
+
+        window.results_view.search_everything_action.trigger()
+        window.results_view.open_web_search_action.trigger()
+        window.results_view.custom_command_f2_action.trigger()
+        window.results_view.custom_command_f3_action.trigger()
+        window.results_view.custom_command_f4_action.trigger()
+
+        assert launched_commands == [
+            [r"C:\tools\Everything.exe", "-search", "alpha.mp4"],
+            [
+                r"C:\Tools\Runner F2.exe",
+                "--first",
+                str(target_a),
+                str(target_a.parent),
+            ],
+            [
+                r"C:\Tools\Runner F3.exe",
+                str(target_a),
+                str(target_a.parent),
+            ],
+            [
+                r"C:\Tools\Runner F4.exe",
+                "--tail",
+                str(target_a),
+                str(target_a.parent),
+            ],
+        ]
+        assert opened_urls == ["https://www.google.com/search?q=alpha"]
         window.close()
 
 
@@ -2478,6 +2676,7 @@ def test_results_view_launch_mediainfo_uses_configured_override(tmp_path: Path) 
         window = MainWindow(db=db, settings=settings)
         window.show()
         app.processEvents()
+        (tmp_path / "a.mp4").write_bytes(b"")
 
         launched: list[list[str]] = []
         group = DuplicateGroup(
@@ -2525,6 +2724,7 @@ def test_results_view_launch_mediainfo_blank_override_falls_back_to_path(
         window = MainWindow(db=db, settings=settings)
         window.show()
         app.processEvents()
+        (tmp_path / "b.mp4").write_bytes(b"")
 
         launched: list[list[str]] = []
         group = DuplicateGroup(
@@ -2570,6 +2770,7 @@ def test_results_view_launch_mediainfo_invalid_override_warns(
         window = MainWindow(db=db, settings=settings)
         window.show()
         app.processEvents()
+        (tmp_path / "c.mp4").write_bytes(b"")
 
         warnings: list[tuple[str, str]] = []
         statuses: list[str] = []

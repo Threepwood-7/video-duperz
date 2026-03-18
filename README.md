@@ -142,6 +142,7 @@ The Results tab exposes a grouped filter panel above the duplicate table with an
 
 - `Basic Filters`:
   - `Include Name`, `Include Path`, `Exclude Name`, `Exclude Path`
+  - `Must match all`
   - `Clear Filters`
   - case-insensitive matching
   - use `|` inside one text box for OR matching, for example `sample|trailer`
@@ -154,6 +155,7 @@ The Results tab exposes a grouped filter panel above the duplicate table with an
   - `Similarity Min`
   - `Width Min`
   - `Height Min`
+  - `Extension`
   - `Video Codec`
   - `HDR` with `Any`, `HDR only`, and `SDR only`
 
@@ -185,6 +187,8 @@ Runtime settings are stored via QSettings:
 | Identical file matching | Block size (1-64 MiB) and sample positions |
 | Keep rule strategy | Quality scoring (resolution + bitrate + codec) |
 | Batch size / flush intervals | Scan pipeline tuning parameters |
+| Everything path override | Optional `Everything.exe` override used by the Results shortcut |
+| Custom Results commands | INI-only `custom_command_F2/F3/F4` entries that receive the current file path and parent dir |
 
 ### Recent Folders
 
@@ -196,9 +200,16 @@ Up to 20 recently scanned folders are stored for quick access. Saved scan profil
 |---|---|
 | Delete | Soft delete selected files |
 | Shift+Delete | Permanently delete selected files |
+| Space | Toggle the current row checkbox |
+| Tab | Jump to the next visible duplicate group |
+| Shift+Tab | Jump to the previous visible duplicate group |
 | Enter | Open current file in default player |
 | E | Open file location in Explorer |
+| C | Copy the current full path |
+| S | Search the current filename in Everything |
+| G | Open a web search for the current filename stem |
 | M | Launch MediaInfo for selected file |
+| F2 / F3 / F4 | Run the configured INI custom command with `file_full_path` and `file_parent_dir_path` |
 | Ctrl+Q / Alt+X | Exit application |
 | F1 | Help |
 
@@ -217,7 +228,7 @@ Up to 20 recently scanned folders are stored for quick access. Saved scan profil
   - Fit Columns
   - Save Current View
   - Saved Views (dynamic)
-  - Per-column visibility toggles (19 columns)
+  - Per-column visibility toggles (20 columns)
 
 **Sort** (mutually exclusive):
 - Larger / Smaller size groups first
@@ -226,9 +237,30 @@ Up to 20 recently scanned folders are stored for quick access. Saved scan profil
 - Size difference (spread) DESC / ASC
 
 **Actions**:
+- Open Current File
+- Explore Current File
+- Copy Full Path
+- Search In Everything
+- Open Web Search
+- Launch MediaInfo
+- Run Custom Command F2 / F3 / F4
 - Select all, keep best / worst / larger / smaller / newer / older
 - Delete Selected
 - Permanently Delete Selected
+
+### INI-Only Results Actions
+
+The following settings are available only in the INI file:
+
+- `everything_exe_path`
+- `custom_command_F2`
+- `custom_command_F3`
+- `custom_command_F4`
+
+When `custom_command_F2/F3/F4` are triggered from the Results tab, the app appends these two arguments to the configured command line:
+
+- `file_full_path`
+- `file_parent_dir_path`
 
 **Tools**:
 - Edit .ini File

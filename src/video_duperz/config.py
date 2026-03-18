@@ -32,7 +32,7 @@ from .scan_sets import (
     normalize_similarity_profile,
 )
 
-RESULTS_TABLE_COLUMN_COUNT = 19
+RESULTS_TABLE_COLUMN_COUNT = 20
 MAX_RECENT_ROOTS = 20
 MAX_SAVED_SCAN_PROFILES = 200
 SETTINGS_FILE_NAME = f"{SETTINGS_APP_NAME}.ini"
@@ -265,6 +265,11 @@ def _normalize_probe_backend(
     return default
 
 
+def _normalize_command_line_text(value: object) -> str:
+    """Normalize one INI-only custom command string."""
+    return str(value or "").strip()
+
+
 def _normalize_int_range(
     value: object, default: int, minimum: int, maximum: int
 ) -> int:
@@ -391,6 +396,22 @@ def _read_qsettings_payload(
             "mediainfo_exe_path",
             defaults.mediainfo_exe_path,
         ),
+        "everything_exe_path": qs.value(
+            "everything_exe_path",
+            defaults.everything_exe_path,
+        ),
+        "custom_command_F2": qs.value(
+            "custom_command_F2",
+            defaults.custom_command_f2,
+        ),
+        "custom_command_F3": qs.value(
+            "custom_command_F3",
+            defaults.custom_command_f3,
+        ),
+        "custom_command_F4": qs.value(
+            "custom_command_F4",
+            defaults.custom_command_f4,
+        ),
         "scan_db_batch_size": qs.value(
             "scan_db_batch_size", defaults.scan_db_batch_size
         ),
@@ -486,6 +507,18 @@ def _settings_from_raw(raw: dict[str, object], defaults: Settings) -> Settings:
         mediainfo_exe_path=normalize_executable_override_path(
             raw.get("mediainfo_exe_path", defaults.mediainfo_exe_path)
         ),
+        everything_exe_path=normalize_executable_override_path(
+            raw.get("everything_exe_path", defaults.everything_exe_path)
+        ),
+        custom_command_f2=_normalize_command_line_text(
+            raw.get("custom_command_F2", defaults.custom_command_f2)
+        ),
+        custom_command_f3=_normalize_command_line_text(
+            raw.get("custom_command_F3", defaults.custom_command_f3)
+        ),
+        custom_command_f4=_normalize_command_line_text(
+            raw.get("custom_command_F4", defaults.custom_command_f4)
+        ),
         scan_db_batch_size=_normalize_int_range(
             raw.get("scan_db_batch_size", defaults.scan_db_batch_size),
             defaults.scan_db_batch_size,
@@ -565,6 +598,10 @@ def default_settings() -> Settings:
         ffmpeg_exe_path="",
         ffprobe_exe_path="",
         mediainfo_exe_path="",
+        everything_exe_path="",
+        custom_command_f2="",
+        custom_command_f3="",
+        custom_command_f4="",
         scan_db_batch_size=DEFAULT_SCAN_DB_BATCH_SIZE,
         scan_db_flush_interval_ms=DEFAULT_SCAN_DB_FLUSH_INTERVAL_MS,
         scan_enum_queue_max=DEFAULT_SCAN_ENUM_QUEUE_MAX,

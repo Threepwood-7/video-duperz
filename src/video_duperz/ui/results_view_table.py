@@ -17,6 +17,7 @@ from .results_view_shared import (
     COL_BITRATE,
     COL_CHECK,
     COL_DURATION,
+    COL_EXTENSION,
     COL_FILE_NAME,
     COL_FULL_PATH,
     COL_GROUP_ID,
@@ -189,6 +190,9 @@ class ResultsViewTableMixin(ResultsViewBase):
         file_path = Path(item.path)
         row_items = {
             COL_FILE_NAME: QTableWidgetItem(file_path.name),
+            COL_EXTENSION: QTableWidgetItem(
+                self._normalized_extension_value(item.path)
+            ),
             COL_SIZE: QTableWidgetItem(f"{item.size:,}"),
             COL_RESOLUTION: QTableWidgetItem(f"{item.width}x{item.height}"),
             COL_DURATION: QTableWidgetItem(f"{item.duration_s:.1f}s"),

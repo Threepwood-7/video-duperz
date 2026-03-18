@@ -216,6 +216,12 @@ class MainWindowBase(QMainWindow):
             sample_b_pct=settings.identical_sample_b_pct,
         )
         self.results_view.set_mediainfo_exe_path(settings.mediainfo_exe_path)
+        self.results_view.set_everything_exe_path(settings.everything_exe_path)
+        self.results_view.set_custom_command_overrides(
+            command_f2=settings.custom_command_f2,
+            command_f3=settings.custom_command_f3,
+            command_f4=settings.custom_command_f4,
+        )
 
         self._build_sources_tab()
         self._build_menus()
@@ -399,8 +405,27 @@ class MainWindowMenuMixin(MainWindowBase):
         self.explore_current_file_action = self.results_view.explore_current_file_action
         actions_menu.addAction(self.explore_current_file_action)
 
+        self.copy_full_path_action = self.results_view.copy_full_path_action
+        actions_menu.addAction(self.copy_full_path_action)
+
+        self.search_everything_action = self.results_view.search_everything_action
+        actions_menu.addAction(self.search_everything_action)
+
+        self.open_web_search_action = self.results_view.open_web_search_action
+        actions_menu.addAction(self.open_web_search_action)
+
         self.launch_mediainfo_action = self.results_view.launch_mediainfo_action
         actions_menu.addAction(self.launch_mediainfo_action)
+
+        actions_menu.addSeparator()
+        self.custom_command_f2_action = self.results_view.custom_command_f2_action
+        actions_menu.addAction(self.custom_command_f2_action)
+
+        self.custom_command_f3_action = self.results_view.custom_command_f3_action
+        actions_menu.addAction(self.custom_command_f3_action)
+
+        self.custom_command_f4_action = self.results_view.custom_command_f4_action
+        actions_menu.addAction(self.custom_command_f4_action)
 
         actions_menu.addSeparator()
         self.keep_best_action = QAction("&Select all, keep best", self)

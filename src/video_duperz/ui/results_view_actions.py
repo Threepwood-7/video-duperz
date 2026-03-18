@@ -2,20 +2,30 @@
 
 from __future__ import annotations
 
+import os
+import shlex
 import subprocess
+import webbrowser
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from statistics import median
 from typing import TYPE_CHECKING
+from urllib.parse import quote_plus
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QMessageBox, QTableWidgetItem
 from threep_commons.desktop import open_path_in_default_app, reveal_path_in_file_manager
 
 from ..executable_paths import resolve_executable_path
 from ..quality import codec_rank
-from .results_view_shared import COL_CHECK, COL_FULL_PATH, DeleteTarget, RowMeta
+from .results_view_shared import (
+    COL_CHECK,
+    COL_FULL_PATH,
+    DeleteTarget,
+    RowMeta,
+)
 from .results_view_thumbnail import ResultsViewThumbnailMixin
 
 if TYPE_CHECKING:
@@ -39,6 +49,20 @@ class DuplicateStatsSummary:
 
 class ResultsViewActionMixin(ResultsViewThumbnailMixin):
     """Selection, launch, and table-state helper methods."""
+
+    @staticmethod
+    def _everything_common_paths() -> list[str]:
+        """Return the common Windows install locations for Everything.exe."""
+        candidates = [
+            r"C:\Program Files\Everything\Everything.exe",
+            r"C:\Program Files (x86)\Everything\Everything.exe",
+        ]
+        local_appdata = str(os.environ.get("LOCALAPPDATA", "")).strip()
+        if local_appdata:
+            candidates.append(
+                str(Path(local_appdata) / "Programs" / "Everything" / "Everything.exe")
+            )
+        return candidates
 
     def _group_rows(self) -> dict[int, list[int]]:
         """Group visible row indexes by duplicate group id."""
@@ -227,14 +251,47 @@ class ResultsViewActionMixin(ResultsViewThumbnailMixin):
             return None
         return item.text()
 
-    def open_current_in_default_player(self) -> None:
-        """Open the current file with the system default handler."""
+    def current_file_name(self) -> str | None:
+        """Return the current row filename, if any."""
         path = self.current_file_path()
         if not path:
-            return
+            return None
+        return Path(path).name
+
+    def current_file_parent_dir_path(self) -> str | None:
+        """Return the current row parent directory path, if any."""
+        path = self.current_file_path()
+        if not path:
+            return None
+        return str(Path(path).parent)
+
+    def _current_existing_file_target(self) -> Path | None:
+        """Return the selected file path when it currently exists on disk."""
+        path = self.current_file_path()
+        if not path:
+            self.status_message.emit("No current results row selected.")
+            return None
         target = Path(path)
         if not target.exists():
             self.status_message.emit("Selected file does not exist.")
+            return None
+        return target
+
+    def _current_file_command_arguments(self) -> tuple[str, str] | None:
+        """Return the full-path and parent-dir arguments for custom commands."""
+        target = self._current_existing_file_target()
+        if target is None:
+            return None
+        parent_dir_path = self.current_file_parent_dir_path()
+        if parent_dir_path is None:
+            self.status_message.emit("No current results row selected.")
+            return None
+        return (str(target), parent_dir_path)
+
+    def open_current_in_default_player(self) -> None:
+        """Open the current file with the system default handler."""
+        target = self._current_existing_file_target()
+        if target is None:
             return
         try:
             if not open_path_in_default_app(target):
@@ -246,12 +303,8 @@ class ResultsViewActionMixin(ResultsViewThumbnailMixin):
 
     def explore_current_file(self) -> None:
         """Reveal the current file in the system file manager."""
-        path = self.current_file_path()
-        if not path:
-            return
-        target = Path(path)
-        if not target.exists():
-            self.status_message.emit("Selected file does not exist.")
+        target = self._current_existing_file_target()
+        if target is None:
             return
         try:
             if not reveal_path_in_file_manager(target):
@@ -263,8 +316,8 @@ class ResultsViewActionMixin(ResultsViewThumbnailMixin):
 
     def launch_mediainfo(self) -> None:
         """Launch the current file in MediaInfo when available."""
-        path = self.current_file_path()
-        if not path:
+        target = self._current_existing_file_target()
+        if target is None:
             return
         try:
             mediainfo_path = resolve_executable_path(
@@ -272,7 +325,7 @@ class ResultsViewActionMixin(ResultsViewThumbnailMixin):
                 self._mediainfo_exe_path,
                 not_found_message="mediainfo executable not found on PATH.",
             )
-            subprocess.Popen([mediainfo_path, path])
+            subprocess.Popen([mediainfo_path, str(target)])
             self.status_message.emit("Launched MediaInfo.")
         except FileNotFoundError:
             if not self._mediainfo_missing_notified:
@@ -296,6 +349,111 @@ class ResultsViewActionMixin(ResultsViewThumbnailMixin):
         except Exception as exc:
             QMessageBox.warning(self, "MediaInfo Failed", str(exc))
             self.status_message.emit("Failed to launch mediainfo.")
+
+    def copy_current_full_path(self) -> None:
+        """Copy the selected full path to the system clipboard."""
+        path = self.current_file_path()
+        if not path:
+            self.status_message.emit("No current results row selected.")
+            return
+        clipboard = QGuiApplication.clipboard()
+        clipboard.setText(path)
+        self.status_message.emit("Copied full path.")
+
+    def search_current_filename_in_everything(self) -> None:
+        """Launch Everything.exe search for the selected filename."""
+        file_name = self.current_file_name()
+        if not file_name:
+            self.status_message.emit("No current results row selected.")
+            return
+        try:
+            everything_path = resolve_executable_path(
+                "Everything.exe",
+                self._everything_exe_path,
+                not_found_message=(
+                    "Everything.exe not found on PATH or in common locations."
+                ),
+                fallback_paths=self._everything_common_paths(),
+            )
+            subprocess.Popen([everything_path, "-search", file_name])
+            self.status_message.emit(f"Searched Everything for {file_name}.")
+        except FileNotFoundError as exc:
+            QMessageBox.warning(self, "Everything Missing", str(exc))
+            self.status_message.emit(
+                "Everything.exe is not installed, not on PATH, "
+                "or has an invalid override path."
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "Everything Failed", str(exc))
+            self.status_message.emit("Failed to launch Everything search.")
+
+    def open_current_title_web_search(self) -> None:
+        """Open a web search for the selected filename stem."""
+        path = self.current_file_path()
+        if not path:
+            self.status_message.emit("No current results row selected.")
+            return
+        query = Path(path).stem
+        url = f"https://www.google.com/search?q={quote_plus(query)}"
+        try:
+            if not webbrowser.open(url):
+                raise RuntimeError("No browser was available for this search")
+            self.status_message.emit(f"Opened web search for {query}.")
+        except Exception as exc:
+            QMessageBox.warning(self, "Web Search Failed", str(exc))
+            self.status_message.emit("Failed to open web search.")
+
+    def _custom_command_text_for_key(self, key: str) -> str:
+        """Return the configured custom command string for one function key."""
+        return {
+            "F2": self._custom_command_f2,
+            "F3": self._custom_command_f3,
+            "F4": self._custom_command_f4,
+        }.get(key, "")
+
+    def _run_custom_command(self, key: str) -> None:
+        """Run one INI-configured custom command with file path arguments."""
+        command_text = self._custom_command_text_for_key(key)
+        if not command_text:
+            self.status_message.emit(f"Custom command {key} is not configured.")
+            return
+        arguments = self._current_file_command_arguments()
+        if arguments is None:
+            return
+        try:
+            command = [
+                token.strip('"')
+                for token in shlex.split(command_text, posix=False)
+                if token.strip('"')
+            ]
+        except ValueError as exc:
+            QMessageBox.warning(self, "Custom Command Invalid", str(exc))
+            self.status_message.emit(f"Custom command {key} could not be parsed.")
+            return
+        if not command:
+            self.status_message.emit(f"Custom command {key} is not configured.")
+            return
+        try:
+            subprocess.Popen([*command, *arguments])
+            self.status_message.emit(f"Ran custom command {key}.")
+        except FileNotFoundError as exc:
+            QMessageBox.warning(self, "Custom Command Missing", str(exc))
+            self.status_message.emit(f"Custom command {key} could not be launched.")
+        except Exception as exc:
+            QMessageBox.warning(self, "Custom Command Failed", str(exc))
+            self.status_message.emit(f"Custom command {key} failed.")
+
+    def run_custom_command_f2(self) -> None:
+        """Run the configured F2 custom command."""
+        self._run_custom_command("F2")
+
+    def run_custom_command_f3(self) -> None:
+        """Run the configured F3 custom command."""
+        self._run_custom_command("F3")
+
+    def run_custom_command_f4(self) -> None:
+        """Run the configured F4 custom command."""
+        self._run_custom_command("F4")
 
     def remove_file_by_id(self, file_id: int) -> None:
         """Remove one file from the loaded groups and rebuild if anything changed."""
