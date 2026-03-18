@@ -9,6 +9,8 @@ from PySide6.QtGui import QAction, QActionGroup, QKeyEvent, QKeySequence, QMouse
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QGridLayout,
+    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -544,6 +546,11 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
 
     def _build_sources_root_controls(self) -> QHBoxLayout:
         self.roots_list = QListWidget(self.sources_tab)
+        self._configure_named_widget(
+            self.roots_list,
+            object_name="sources_roots_list",
+            widget_alias="Scan Folders List",
+        )
         self.add_root_btn = QPushButton("Add Folder", self.sources_tab)
         self.remove_root_btn = QPushButton("Remove Folder", self.sources_tab)
         self.remove_all_roots_btn = QPushButton("Remove All", self.sources_tab)
@@ -557,6 +564,92 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         self.save_scan_set_btn.clicked.connect(self._save_current_scan_set_as)
         self.load_saved_scan_btn.clicked.connect(self._show_saved_scans_menu)
         self.roots_list.currentRowChanged.connect(self._update_root_buttons_state)
+        self._configure_named_widget(
+            self.add_root_btn,
+            object_name="sources_add_root_btn",
+            widget_alias="Add Folder",
+        )
+        self._configure_named_widget(
+            self.remove_root_btn,
+            object_name="sources_remove_root_btn",
+            widget_alias="Remove Folder",
+        )
+        self._configure_named_widget(
+            self.remove_all_roots_btn,
+            object_name="sources_remove_all_roots_btn",
+            widget_alias="Remove All Folders",
+        )
+        self._configure_named_widget(
+            self.add_recent_root_btn,
+            object_name="sources_add_recent_root_btn",
+            widget_alias="Add Recent Folder",
+        )
+        self._configure_named_widget(
+            self.save_scan_set_btn,
+            object_name="sources_save_scan_set_btn",
+            widget_alias="Save Scan Set",
+        )
+        self._configure_named_widget(
+            self.load_saved_scan_btn,
+            object_name="sources_load_saved_scan_btn",
+            widget_alias="Load Saved Scan",
+        )
+        self._set_sources_tooltip(
+            self.roots_list,
+            (
+                "Choose the top-level folders that this scan will walk.\n\n"
+                "Every matching video file found under these roots is eligible for "
+                "duplicate analysis. The selected roots also drive the physical-drive "
+                "planning shown below."
+            ),
+        )
+        self._set_sources_tooltip(
+            self.add_root_btn,
+            (
+                "Browse for one more folder and add it to the scan list.\n\n"
+                "Use this when you want to include another library, drive, or "
+                "archive location in the same scan."
+            ),
+        )
+        self._set_sources_tooltip(
+            self.remove_root_btn,
+            (
+                "Remove only the currently selected folder from the scan list.\n\n"
+                "This does not delete anything from disk. It only changes which "
+                "roots will be scanned next."
+            ),
+        )
+        self._set_sources_tooltip(
+            self.remove_all_roots_btn,
+            (
+                "Clear the entire scan-folder list.\n\n"
+                "Use this when you want to rebuild the source selection from scratch."
+            ),
+        )
+        self._set_sources_tooltip(
+            self.add_recent_root_btn,
+            (
+                "Open the recent-folder menu and add a previously used source root.\n\n"
+                "This is a fast way to restore common scan locations without "
+                "browsing again."
+            ),
+        )
+        self._set_sources_tooltip(
+            self.save_scan_set_btn,
+            (
+                "Save the current combination of scan folders, extensions, and "
+                "profile as a reusable scan set.\n\n"
+                "Saved scan sets help you switch between recurring jobs quickly."
+            ),
+        )
+        self._set_sources_tooltip(
+            self.load_saved_scan_btn,
+            (
+                "Load a previously saved scan set back into the Sources tab.\n\n"
+                "This restores roots, extensions, and similarity profile for a "
+                "known scanning configuration."
+            ),
+        )
 
         roots_actions = QHBoxLayout()
         roots_actions.addWidget(self.add_root_btn)
@@ -578,20 +671,50 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         self.extensions_preset_combo.currentTextChanged.connect(
             self._extensions_preset_changed
         )
+        self._configure_named_widget(
+            self.extensions_preset_combo,
+            object_name="extensions_preset_combo",
+            widget_alias="Extensions Preset",
+        )
         self.extensions_edit = QLineEdit(self.sources_tab)
         self.extensions_edit.textEdited.connect(self._extensions_text_edited)
+        self._configure_named_widget(
+            self.extensions_edit,
+            object_name="sources_extensions_edit",
+            widget_alias="Extensions",
+        )
         self.profile_combo = QComboBox(self.sources_tab)
         self.profile_combo.addItems(["balanced", "conservative", "aggressive"])
+        self._configure_named_widget(
+            self.profile_combo,
+            object_name="sources_profile_combo",
+            widget_alias="Similarity Profile",
+        )
 
         self.max_workers_spin = QSpinBox(self.sources_tab)
         self.max_workers_spin.setRange(1, 16)
         self.max_workers_spin.valueChanged.connect(
             self._refresh_sources_physical_drive_view
         )
+        self._configure_named_widget(
+            self.max_workers_spin,
+            object_name="sources_max_workers_spin",
+            widget_alias="Max Workers",
+        )
         self.probe_backend_combo = QComboBox(self.sources_tab)
         self.probe_backend_combo.addItems(["pyav", "ffprobe"])
+        self._configure_named_widget(
+            self.probe_backend_combo,
+            object_name="probe_backend_combo",
+            widget_alias="Probe Backend",
+        )
         self.probe_mode_combo = QComboBox(self.sources_tab)
         self.probe_mode_combo.addItems(["balanced", "burst"])
+        self._configure_named_widget(
+            self.probe_mode_combo,
+            object_name="sources_probe_mode_combo",
+            widget_alias="Probe Mode",
+        )
         self.probe_backend_combo.currentTextChanged.connect(
             self._refresh_sources_physical_drive_view
         )
@@ -600,6 +723,16 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         )
         self.ffmpeg_exe_path_edit = QLineEdit(self.sources_tab)
         self.ffmpeg_exe_path_browse_btn = QPushButton("Browse...", self.sources_tab)
+        self._configure_named_widget(
+            self.ffmpeg_exe_path_edit,
+            object_name="sources_ffmpeg_exe_path_edit",
+            widget_alias="ffmpeg Path Override",
+        )
+        self._configure_named_widget(
+            self.ffmpeg_exe_path_browse_btn,
+            object_name="sources_ffmpeg_exe_path_browse_btn",
+            widget_alias="Browse ffmpeg Path",
+        )
         self.ffmpeg_exe_path_browse_btn.clicked.connect(
             lambda: self._browse_executable_path(
                 self.ffmpeg_exe_path_edit,
@@ -608,6 +741,16 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         )
         self.ffprobe_exe_path_edit = QLineEdit(self.sources_tab)
         self.ffprobe_exe_path_browse_btn = QPushButton("Browse...", self.sources_tab)
+        self._configure_named_widget(
+            self.ffprobe_exe_path_edit,
+            object_name="sources_ffprobe_exe_path_edit",
+            widget_alias="ffprobe Path Override",
+        )
+        self._configure_named_widget(
+            self.ffprobe_exe_path_browse_btn,
+            object_name="sources_ffprobe_exe_path_browse_btn",
+            widget_alias="Browse ffprobe Path",
+        )
         self.ffprobe_exe_path_browse_btn.clicked.connect(
             lambda: self._browse_executable_path(
                 self.ffprobe_exe_path_edit,
@@ -616,6 +759,16 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         )
         self.mediainfo_exe_path_edit = QLineEdit(self.sources_tab)
         self.mediainfo_exe_path_browse_btn = QPushButton("Browse...", self.sources_tab)
+        self._configure_named_widget(
+            self.mediainfo_exe_path_edit,
+            object_name="sources_mediainfo_exe_path_edit",
+            widget_alias="MediaInfo Path Override",
+        )
+        self._configure_named_widget(
+            self.mediainfo_exe_path_browse_btn,
+            object_name="sources_mediainfo_exe_path_browse_btn",
+            widget_alias="Browse MediaInfo Path",
+        )
         self.mediainfo_exe_path_browse_btn.clicked.connect(
             lambda: self._browse_executable_path(
                 self.mediainfo_exe_path_edit,
@@ -627,6 +780,11 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             self.thumbnail_size_combo.addItem(label, size_key)
         self.thumbnail_size_combo.currentIndexChanged.connect(
             self._thumbnail_size_changed
+        )
+        self._configure_named_widget(
+            self.thumbnail_size_combo,
+            object_name="sources_thumbnail_size_combo",
+            widget_alias="Thumbnail Preview Size",
         )
         self.scan_parent_cpu_priority_combo = QComboBox(self.sources_tab)
         self._configure_named_widget(
@@ -658,21 +816,144 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         for label, value in IO_MODE_OPTIONS:
             self.scan_parent_io_mode_combo.addItem(label, value)
             self.scan_child_io_mode_combo.addItem(label, value)
+        self._set_sources_tooltip(
+            self.extensions_preset_combo,
+            (
+                "Choose a prepared extension list for the scan.\n\n"
+                "Use this when you want to switch quickly between narrower or "
+                "broader media coverage. The preset fills the custom extensions "
+                "field below."
+            ),
+        )
+        self._set_sources_tooltip(
+            self.extensions_edit,
+            (
+                "Enter the video file extensions that should be scanned.\n\n"
+                "Use commas, and dots are optional. Only files whose suffix matches "
+                "this list are enumerated."
+            ),
+        )
+        self._set_sources_tooltip(
+            self.profile_combo,
+            (
+                "Choose how strict duplicate matching should be.\n\n"
+                "Balanced is the everyday default. Conservative reduces false "
+                "positives, while aggressive is more willing to group near-matches."
+            ),
+        )
+        self._set_sources_tooltip(
+            self.max_workers_spin,
+            (
+                "Set the total worker budget for the scan.\n\n"
+                "Higher values can improve throughput on fast storage, but they can "
+                "also increase disk contention. The physical-drive planner below "
+                "shows how this budget is distributed."
+            ),
+        )
+        self._set_sources_tooltip(
+            self.probe_backend_combo,
+            (
+                "Choose how video metadata is extracted before matching.\n\n"
+                "PyAV stays inside the Python process, while ffprobe shells out to "
+                "the ffprobe executable and parses JSON output."
+            ),
+        )
+        self._set_sources_tooltip(
+            self.probe_mode_combo,
+            (
+                "Choose how aggressively probe work is dispatched.\n\n"
+                "Balanced is safer for slower disks. Burst is better suited to fast "
+                "SSDs when you want more concurrency."
+            ),
+        )
+        self._set_sources_tooltip(
+            self.scan_parent_cpu_priority_combo,
+            (
+                "Choose the CPU priority for the Video Duperz process while a scan is "
+                "active.\n\n"
+                "This affects the main app process only during scans and is restored "
+                "after the scan finishes, pauses, fails, or is cancelled."
+            ),
+        )
+        self._set_sources_tooltip(
+            self.scan_parent_io_mode_combo,
+            (
+                "Choose the scan-time I/O mode for the Video Duperz process.\n\n"
+                "Background mode asks Windows to deprioritize this process's scan "
+                "I/O so foreground work stays responsive."
+            ),
+        )
+        self._set_sources_tooltip(
+            self.scan_child_cpu_priority_combo,
+            (
+                "Choose the CPU priority for scan-related child processes.\n\n"
+                "This affects heavy probe and fingerprint subprocesses only. It does "
+                "not affect Explorer, MediaInfo, Everything, or custom commands."
+            ),
+        )
+        self._set_sources_tooltip(
+            self.scan_child_io_mode_combo,
+            (
+                "Choose the I/O mode for scan-related child processes.\n\n"
+                "Background mode lowers the I/O impact of ffprobe, ffmpeg, and "
+                "fingerprint-child subprocesses during scanning."
+            ),
+        )
+        ffmpeg_tooltip = (
+            "Optional override path for the ffmpeg executable.\n\n"
+            "Leave this blank to use ffmpeg from PATH. Set it when you want the app "
+            "to use a specific ffmpeg build for fingerprint frame extraction."
+        )
+        ffprobe_tooltip = (
+            "Optional override path for the ffprobe executable.\n\n"
+            "Leave this blank to use ffprobe from PATH. Set it when you want to pin "
+            "metadata extraction to a specific ffprobe build."
+        )
+        mediainfo_tooltip = (
+            "Optional override path for the MediaInfo executable used from the "
+            "Results tab.\n\n"
+            "Leave this blank to use MediaInfo from PATH."
+        )
+        browse_tooltip = (
+            "Browse for an executable path and copy it into the override field.\n\n"
+            "Use this when the tool is not on PATH or when you want to pin a "
+            "specific installed binary."
+        )
+        self._set_sources_tooltip(self.ffmpeg_exe_path_edit, ffmpeg_tooltip)
+        self._set_sources_tooltip(self.ffprobe_exe_path_edit, ffprobe_tooltip)
+        self._set_sources_tooltip(self.mediainfo_exe_path_edit, mediainfo_tooltip)
+        self._set_sources_tooltip(self.ffmpeg_exe_path_browse_btn, browse_tooltip)
+        self._set_sources_tooltip(self.ffprobe_exe_path_browse_btn, browse_tooltip)
+        self._set_sources_tooltip(self.mediainfo_exe_path_browse_btn, browse_tooltip)
+        self._set_sources_tooltip(
+            self.thumbnail_size_combo,
+            (
+                "Choose the thumbnail preview size used in the Results tab.\n\n"
+                "Larger previews are easier to inspect but take more space and can "
+                "make the table denser."
+            ),
+        )
 
-    def _build_executable_override_row(
+    def _create_sources_group_box(
         self,
-        label_text: str,
-        path_edit: QLineEdit,
-        browse_button: QPushButton,
-    ) -> QWidget:
-        """Build one labeled row for an executable override field."""
-        row_widget = QWidget(self.sources_tab)
-        row_layout = QHBoxLayout(row_widget)
-        row_layout.setContentsMargins(0, 0, 0, 0)
-        row_layout.addWidget(QLabel(label_text, row_widget))
-        row_layout.addWidget(path_edit, stretch=1)
-        row_layout.addWidget(browse_button)
-        return row_widget
+        title: str,
+        *,
+        object_name: str,
+        widget_alias: str,
+        tooltip: str,
+    ) -> tuple[QGroupBox, QVBoxLayout]:
+        """Build one named Sources-tab group box with shared spacing and tooltip."""
+        group_box = QGroupBox(title, self.sources_tab)
+        self._configure_named_widget(
+            group_box,
+            object_name=object_name,
+            widget_alias=widget_alias,
+        )
+        self._set_sources_tooltip(group_box, tooltip)
+        layout = QVBoxLayout(group_box)
+        layout.setContentsMargins(12, 16, 12, 12)
+        layout.setSpacing(10)
+        return group_box, layout
 
     @staticmethod
     def _configure_named_widget(
@@ -686,17 +967,54 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         widget.setProperty("widget_id", object_name)
         widget.setProperty("widget_alias", widget_alias)
 
-    def _build_labeled_combo_row(
+    @staticmethod
+    def _set_sources_tooltip(widget: QWidget, tooltip: str) -> None:
+        """Attach one detailed tooltip to a Sources-tab widget."""
+        widget.setToolTip(tooltip)
+        widget.setWhatsThis(tooltip)
+
+    def _build_labeled_control_block(
         self,
         label_text: str,
-        combo: QComboBox,
+        control: QWidget,
+        *,
+        tooltip: str,
     ) -> QWidget:
-        """Build one labeled combo-box row for scan priority controls."""
+        """Build one Sources-tab control block with its label above the control."""
         row_widget = QWidget(self.sources_tab)
-        row_layout = QHBoxLayout(row_widget)
+        row_layout = QVBoxLayout(row_widget)
         row_layout.setContentsMargins(0, 0, 0, 0)
-        row_layout.addWidget(QLabel(label_text, row_widget))
-        row_layout.addWidget(combo, stretch=1)
+        row_layout.setSpacing(4)
+        label = QLabel(label_text, row_widget)
+        self._set_sources_tooltip(label, tooltip)
+        self._set_sources_tooltip(control, tooltip)
+        row_layout.addWidget(label)
+        row_layout.addWidget(control)
+        return row_widget
+
+    def _build_executable_override_block(
+        self,
+        label_text: str,
+        path_edit: QLineEdit,
+        browse_button: QPushButton,
+        *,
+        tooltip: str,
+    ) -> QWidget:
+        """Build one labeled executable override block with a stacked label."""
+        row_widget = QWidget(self.sources_tab)
+        row_layout = QVBoxLayout(row_widget)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(4)
+        label = QLabel(label_text, row_widget)
+        self._set_sources_tooltip(label, tooltip)
+        self._set_sources_tooltip(path_edit, tooltip)
+        row_layout.addWidget(label)
+        path_row = QWidget(row_widget)
+        path_row_layout = QHBoxLayout(path_row)
+        path_row_layout.setContentsMargins(0, 0, 0, 0)
+        path_row_layout.addWidget(path_edit, stretch=1)
+        path_row_layout.addWidget(browse_button)
+        row_layout.addWidget(path_row)
         return row_widget
 
     def _build_sources_drive_widgets(self) -> None:
@@ -704,7 +1022,34 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             "Matched physical drives: 0 | Requested workers: 1 | Effective workers: 0",
             self.sources_tab,
         )
+        self._configure_named_widget(
+            self.sources_drive_summary_label,
+            object_name="sources_drive_summary_label",
+            widget_alias="Physical Drives Summary",
+        )
+        self._set_sources_tooltip(
+            self.sources_drive_summary_label,
+            (
+                "Summarizes how the current scan roots map to local physical "
+                "drives.\n\n"
+                "Requested workers is your global worker target. Effective workers "
+                "reflect the per-drive plan after root matching and any overrides."
+            ),
+        )
         self.sources_drive_table = QTableWidget(0, 9, self.sources_tab)
+        self._configure_named_widget(
+            self.sources_drive_table,
+            object_name="sources_drive_table",
+            widget_alias="Physical Drives Table",
+        )
+        self._set_sources_tooltip(
+            self.sources_drive_table,
+            (
+                "Shows the local-drive planning data used to spread scan work.\n\n"
+                "Matched rows belong to the selected scan roots. The Workers column "
+                "lets you tune per-drive concurrency without changing unrelated drives."
+            ),
+        )
         self.sources_drive_table.setHorizontalHeaderLabels(
             [
                 "Root",
@@ -728,6 +1073,7 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             QAbstractItemView.EditTrigger.NoEditTriggers
         )
         self.sources_drive_table.setAlternatingRowColors(True)
+        self.sources_drive_table.setMinimumHeight(280)
         self.sources_drive_table.verticalHeader().setVisible(False)
         drives_header = self.sources_drive_table.horizontalHeader()
         drives_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
@@ -739,74 +1085,194 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         drives_header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
         drives_header.setSectionResizeMode(7, QHeaderView.ResizeMode.ResizeToContents)
         drives_header.setSectionResizeMode(8, QHeaderView.ResizeMode.Stretch)
+        header_tooltips = [
+            (
+                "The scan root or local-drive row this entry represents.\n\n"
+                "Matched roots are emphasized because they participate in the active "
+                "scan plan."
+            ),
+            (
+                "The disk identifiers reported for the underlying physical drive.\n\n"
+                "These help show which roots are sharing the same hardware."
+            ),
+            (
+                "The normalized volume identity used by the planner.\n\n"
+                "Per-drive worker overrides are keyed by this identity."
+            ),
+            ("Total capacity reported for the matched drive or volume."),
+            ("Currently free capacity reported for the matched drive or volume."),
+            ("Approximate percentage of the drive that is already used."),
+            (
+                "Worker count assigned to this drive.\n\n"
+                "Editable rows let you override concurrency for matched drives."
+            ),
+            ("Whether this row belongs to the roots currently selected for scanning."),
+            (
+                "Additional lookup or planning notes.\n\n"
+                "This can explain missing drive metadata or why a row is "
+                "informational only."
+            ),
+        ]
+        for index, tooltip in enumerate(header_tooltips):
+            header_item = self.sources_drive_table.horizontalHeaderItem(index)
+            if header_item is not None:
+                header_item.setToolTip(tooltip)
 
     def _build_sources_layout(self, roots_actions: QHBoxLayout) -> None:
-        layout = QVBoxLayout(self.sources_tab)
-        layout.addWidget(QLabel("Scan Folders"))
-        layout.addWidget(self.roots_list, stretch=1)
-        layout.addLayout(roots_actions)
-        layout.addWidget(QLabel("Extensions preset"))
-        layout.addWidget(self.extensions_preset_combo)
-        layout.addWidget(QLabel("Extensions (comma-separated, no dots required)"))
-        layout.addWidget(self.extensions_edit)
-        layout.addWidget(QLabel("Similarity profile"))
-        layout.addWidget(self.profile_combo)
-        layout.addWidget(QLabel("Max Workers total"))
-        layout.addWidget(self.max_workers_spin)
-        layout.addWidget(QLabel("Probe backend"))
-        layout.addWidget(self.probe_backend_combo)
-        layout.addWidget(QLabel("Probe mode"))
-        layout.addWidget(self.probe_mode_combo)
-        layout.addWidget(QLabel("Scan Process Priority"))
-        layout.addWidget(
-            self._build_labeled_combo_row(
-                "Parent CPU",
-                self.scan_parent_cpu_priority_combo,
+        scan_folders_group, scan_folders_layout = self._create_sources_group_box(
+            "Scan Folders",
+            object_name="sources_scan_folders_group",
+            widget_alias="Scan Folders Group",
+            tooltip=(
+                "Define which folders belong to the next scan.\n\n"
+                "These roots control file discovery, saved scan sets, and the "
+                "physical-drive planning shown just below."
+            ),
+        )
+        scan_folders_layout.addWidget(self.roots_list, stretch=1)
+        scan_folders_layout.addLayout(roots_actions)
+
+        physical_drives_group, physical_drives_layout = self._create_sources_group_box(
+            "Physical Drives",
+            object_name="sources_physical_drives_group",
+            widget_alias="Physical Drives Group",
+            tooltip=(
+                "Review how the selected scan roots map to local physical drives.\n\n"
+                "This section explains the drive-aware worker plan and lets you tune "
+                "per-drive worker counts when a specific disk needs gentler or more "
+                "aggressive scheduling."
+            ),
+        )
+        physical_drives_layout.addWidget(self.sources_drive_summary_label)
+        physical_drives_layout.addWidget(self.sources_drive_table, stretch=1)
+
+        scan_content_group, scan_content_layout = self._create_sources_group_box(
+            "Scan Content",
+            object_name="sources_scan_content_group",
+            widget_alias="Scan Content Group",
+            tooltip=(
+                "Choose what kinds of files are scanned and how strict matching "
+                "should be.\n\n"
+                "Use these controls to define scan coverage and duplicate sensitivity."
+            ),
+        )
+        scan_content_layout.addWidget(
+            self._build_labeled_control_block(
+                "Extensions preset",
+                self.extensions_preset_combo,
+                tooltip=self.extensions_preset_combo.toolTip(),
             )
         )
-        layout.addWidget(
-            self._build_labeled_combo_row(
-                "Parent I/O",
-                self.scan_parent_io_mode_combo,
+        scan_content_layout.addWidget(
+            self._build_labeled_control_block(
+                "Extensions (comma-separated, no dots required)",
+                self.extensions_edit,
+                tooltip=self.extensions_edit.toolTip(),
             )
         )
-        layout.addWidget(
-            self._build_labeled_combo_row(
-                "Child CPU",
-                self.scan_child_cpu_priority_combo,
+        scan_content_layout.addWidget(
+            self._build_labeled_control_block(
+                "Similarity profile",
+                self.profile_combo,
+                tooltip=self.profile_combo.toolTip(),
             )
         )
-        layout.addWidget(
-            self._build_labeled_combo_row(
-                "Child I/O",
-                self.scan_child_io_mode_combo,
+        scan_content_layout.addStretch(1)
+
+        scan_performance_group, scan_performance_layout = (
+            self._create_sources_group_box(
+                "Scan Performance",
+                object_name="sources_scan_performance_group",
+                widget_alias="Scan Performance Group",
+                tooltip=(
+                    "Tune scan concurrency, probe behavior, and scan-time process "
+                    "priority.\n\n"
+                    "These settings affect how aggressively the app uses CPU and disk "
+                    "resources while scanning."
+                ),
             )
         )
-        layout.addWidget(QLabel("Executable overrides (blank = use PATH)"))
-        layout.addWidget(
-            self._build_executable_override_row(
-                "ffmpeg",
+        for label_text, control in (
+            ("Max workers total", self.max_workers_spin),
+            ("Probe backend", self.probe_backend_combo),
+            ("Probe mode", self.probe_mode_combo),
+            ("Parent CPU priority during scan", self.scan_parent_cpu_priority_combo),
+            ("Parent I/O mode during scan", self.scan_parent_io_mode_combo),
+            ("Child CPU priority during scan", self.scan_child_cpu_priority_combo),
+            ("Child I/O mode during scan", self.scan_child_io_mode_combo),
+        ):
+            scan_performance_layout.addWidget(
+                self._build_labeled_control_block(
+                    label_text,
+                    control,
+                    tooltip=control.toolTip(),
+                )
+            )
+        scan_performance_layout.addStretch(1)
+
+        tools_group, tools_layout = self._create_sources_group_box(
+            "Tool Paths & Preview",
+            object_name="sources_tool_paths_preview_group",
+            widget_alias="Tool Paths And Preview Group",
+            tooltip=(
+                "Override external tool paths when needed and choose how preview "
+                "thumbnails should be shown in Results.\n\n"
+                "Blank tool-path fields fall back to PATH lookup."
+            ),
+        )
+        tools_layout.addWidget(
+            self._build_executable_override_block(
+                "ffmpeg executable override",
                 self.ffmpeg_exe_path_edit,
                 self.ffmpeg_exe_path_browse_btn,
+                tooltip=self.ffmpeg_exe_path_edit.toolTip(),
             )
         )
-        layout.addWidget(
-            self._build_executable_override_row(
-                "ffprobe",
+        tools_layout.addWidget(
+            self._build_executable_override_block(
+                "ffprobe executable override",
                 self.ffprobe_exe_path_edit,
                 self.ffprobe_exe_path_browse_btn,
+                tooltip=self.ffprobe_exe_path_edit.toolTip(),
             )
         )
-        layout.addWidget(
-            self._build_executable_override_row(
-                "mediainfo",
+        tools_layout.addWidget(
+            self._build_executable_override_block(
+                "MediaInfo executable override",
                 self.mediainfo_exe_path_edit,
                 self.mediainfo_exe_path_browse_btn,
+                tooltip=self.mediainfo_exe_path_edit.toolTip(),
             )
         )
-        layout.addWidget(QLabel("Physical drives"))
-        layout.addWidget(self.sources_drive_summary_label)
-        layout.addWidget(self.sources_drive_table, stretch=1)
-        layout.addWidget(QLabel("Thumbnail preview size"))
-        layout.addWidget(self.thumbnail_size_combo)
+        tools_layout.addWidget(
+            self._build_labeled_control_block(
+                "Thumbnail preview size",
+                self.thumbnail_size_combo,
+                tooltip=self.thumbnail_size_combo.toolTip(),
+            )
+        )
+        tools_layout.addStretch(1)
+
+        options_container = QWidget(self.sources_tab)
+        self._configure_named_widget(
+            options_container,
+            object_name="sources_options_container",
+            widget_alias="Sources Options Container",
+        )
+        options_layout = QGridLayout(options_container)
+        options_layout.setContentsMargins(0, 0, 0, 0)
+        options_layout.setHorizontalSpacing(12)
+        options_layout.setVerticalSpacing(12)
+        options_layout.addWidget(scan_content_group, 0, 0)
+        options_layout.addWidget(scan_performance_group, 0, 1)
+        options_layout.addWidget(tools_group, 1, 0, 1, 2)
+        options_layout.setColumnStretch(0, 1)
+        options_layout.setColumnStretch(1, 1)
+
+        layout = QVBoxLayout(self.sources_tab)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(12)
+        layout.addWidget(scan_folders_group, stretch=1)
+        layout.addWidget(physical_drives_group, stretch=2)
+        layout.addWidget(options_container)
         layout.addStretch(1)

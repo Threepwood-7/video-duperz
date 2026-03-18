@@ -459,17 +459,51 @@ def test_sources_root_buttons_labels_order_and_state(tmp_path: Path) -> None:
         assert window.remove_all_roots_btn.text() == "Remove All"
         sources_layout = window.sources_tab.layout()
         assert sources_layout is not None
-        scan_folders_label = sources_layout.itemAt(0).widget()
-        assert scan_folders_label is not None
-        assert scan_folders_label.text() == "Scan Folders"
-        labels = []
-        for i in range(sources_layout.count()):
-            widget = sources_layout.itemAt(i).widget()
-            if widget is not None and hasattr(widget, "text"):
-                labels.append(str(widget.text()))
-        assert "Max Workers total" in labels
+        scan_folders_group = window.findChild(QGroupBox, "sources_scan_folders_group")
+        physical_drives_group = window.findChild(
+            QGroupBox,
+            "sources_physical_drives_group",
+        )
+        scan_content_group = window.findChild(QGroupBox, "sources_scan_content_group")
+        scan_performance_group = window.findChild(
+            QGroupBox,
+            "sources_scan_performance_group",
+        )
+        tools_group = window.findChild(
+            QGroupBox,
+            "sources_tool_paths_preview_group",
+        )
+        options_container = window.findChild(QWidget, "sources_options_container")
+        assert scan_folders_group is not None
+        assert physical_drives_group is not None
+        assert scan_content_group is not None
+        assert scan_performance_group is not None
+        assert tools_group is not None
+        assert options_container is not None
+        assert sources_layout.itemAt(0).widget() is scan_folders_group
+        assert sources_layout.itemAt(1).widget() is physical_drives_group
+        assert sources_layout.itemAt(2).widget() is options_container
+        assert scan_folders_group.title() == "Scan Folders"
+        assert physical_drives_group.title() == "Physical Drives"
+        content_labels = {
+            label.text() for label in scan_content_group.findChildren(QLabel)
+        }
+        performance_labels = {
+            label.text() for label in scan_performance_group.findChildren(QLabel)
+        }
+        tools_labels = {label.text() for label in tools_group.findChildren(QLabel)}
+        assert "Extensions preset" in content_labels
+        assert "Extensions (comma-separated, no dots required)" in content_labels
+        assert "Similarity profile" in content_labels
+        assert "Max workers total" in performance_labels
+        assert "Parent CPU priority during scan" in performance_labels
+        assert "Child I/O mode during scan" in performance_labels
+        assert "ffmpeg executable override" in tools_labels
+        assert "Thumbnail preview size" in tools_labels
 
-        roots_actions_layout = sources_layout.itemAt(2).layout()
+        scan_folders_layout = scan_folders_group.layout()
+        assert scan_folders_layout is not None
+        roots_actions_layout = scan_folders_layout.itemAt(1).layout()
         assert roots_actions_layout is not None
         button_texts: list[str] = []
         for i in range(roots_actions_layout.count()):
@@ -2966,6 +3000,65 @@ def test_sources_tab_scan_priority_controls_exist(tmp_path: Path) -> None:
         assert str(window.scan_parent_io_mode_combo.currentData()) == "normal"
         assert str(window.scan_child_cpu_priority_combo.currentData()) == "normal"
         assert str(window.scan_child_io_mode_combo.currentData()) == "normal"
+        window.close()
+
+
+def test_sources_tab_grouped_layout_has_detailed_tooltips(tmp_path: Path) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        scan_folders_group = window.findChild(QGroupBox, "sources_scan_folders_group")
+        physical_drives_group = window.findChild(
+            QGroupBox,
+            "sources_physical_drives_group",
+        )
+        scan_content_group = window.findChild(QGroupBox, "sources_scan_content_group")
+        assert scan_folders_group is not None
+        assert physical_drives_group is not None
+        assert scan_content_group is not None
+        assert "define which folders belong" in scan_folders_group.toolTip().lower()
+        assert "physical-drive planning" in scan_folders_group.toolTip().lower()
+        assert "worker plan" in physical_drives_group.toolTip().lower()
+        assert "scan coverage" in scan_content_group.toolTip().lower()
+        assert "eligible for duplicate analysis" in (
+            window.roots_list.toolTip().lower()
+        )
+        assert "previously used source root" in (
+            window.add_recent_root_btn.toolTip().lower()
+        )
+        assert "only files whose suffix matches" in (
+            window.extensions_edit.toolTip().lower()
+        )
+        assert "shells out to the ffprobe executable" in (
+            window.probe_backend_combo.toolTip().lower()
+        )
+        assert "restored after the scan finishes" in (
+            window.scan_parent_cpu_priority_combo.toolTip().lower()
+        )
+        assert "heavy probe and fingerprint subprocesses" in (
+            window.scan_child_cpu_priority_combo.toolTip().lower()
+        )
+        assert "leave this blank to use ffmpeg from path" in (
+            window.ffmpeg_exe_path_edit.toolTip().lower()
+        )
+        assert "current scan roots map to local physical drives" in (
+            window.sources_drive_summary_label.toolTip().lower()
+        )
+        assert window.sources_drive_table.minimumHeight() >= 280
+        sources_layout = window.sources_tab.layout()
+        assert sources_layout is not None
+        assert sources_layout.stretch(1) > sources_layout.stretch(0)
+        workers_header = window.sources_drive_table.horizontalHeaderItem(6)
+        assert workers_header is not None
+        assert "worker count assigned to this drive" in (
+            workers_header.toolTip().lower()
+        )
         window.close()
 
 
