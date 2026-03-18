@@ -57,6 +57,7 @@ class Settings:
     identical_block_mib: int = 1
     identical_sample_a_pct: int = 23
     identical_sample_b_pct: int = 78
+    scan_lane_table_column_widths: list[int] = field(default_factory=list)
     results_table_column_widths: list[int] = field(default_factory=list)
     results_table_column_visibility: list[bool] = field(default_factory=list)
     saved_column_views: dict[str, dict[str, list[int] | list[bool]]] = field(

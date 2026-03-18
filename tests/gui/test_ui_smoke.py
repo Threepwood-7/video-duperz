@@ -8,7 +8,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from video_duperz.config import default_settings, load_settings
+from video_duperz.config import (
+    SCAN_LANE_TABLE_COLUMN_COUNT,
+    default_settings,
+    load_settings,
+)
 from video_duperz.db import Database
 
 pytest.importorskip("PySide6")
@@ -56,6 +60,15 @@ from video_duperz.ui.results_view_shared import (
     COL_FULL_PATH,
     COL_PARENT_DIR,
     COL_SIZE,
+)
+from video_duperz.ui.scan_view import (
+    SCAN_LANE_COL_ACTIVE_FILE,
+    SCAN_LANE_COL_ANAL_MIB_PER_S,
+    SCAN_LANE_COL_ANAL_PER_S,
+    SCAN_LANE_COL_DISC_MIB_PER_S,
+    SCAN_LANE_COL_DISC_PER_S,
+    SCAN_LANE_COL_PROGRESS,
+    SCAN_LANE_HEADERS,
 )
 from video_duperz.ui.thumbnails import thumbnail_cache_dir
 
@@ -639,6 +652,58 @@ def test_results_column_widths_persist(tmp_path: Path, monkeypatch) -> None:
     loaded = load_settings()
     assert loaded.results_table_column_widths[3] == 280
     assert loaded.results_table_column_widths[COL_FULL_PATH] == 520
+
+
+def test_scan_lane_column_widths_auto_fit_and_persist(
+    tmp_path: Path, monkeypatch
+) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    app = QApplication.instance() or QApplication([])
+
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        window.scan_view.initialize_lane_plan(
+            [[str(tmp_path / "alpha")], [str(tmp_path / "beta")]],
+            worker_limit=2,
+        )
+        app.processEvents()
+
+        assert len(window.scan_view.column_widths()) == SCAN_LANE_TABLE_COLUMN_COUNT
+        assert window.scan_view.lane_table.columnWidth(
+            SCAN_LANE_COL_ACTIVE_FILE
+        ) > window.scan_view.lane_table.columnWidth(SCAN_LANE_COL_PROGRESS)
+
+        window.scan_view.lane_table.setColumnWidth(SCAN_LANE_COL_ACTIVE_FILE, 520)
+        window.scan_view.lane_table.setColumnWidth(SCAN_LANE_COL_PROGRESS, 210)
+        app.processEvents()
+        window.close()
+
+    loaded = load_settings()
+    assert len(loaded.scan_lane_table_column_widths) == SCAN_LANE_TABLE_COLUMN_COUNT
+    assert loaded.scan_lane_table_column_widths[SCAN_LANE_COL_ACTIVE_FILE] == 520
+    assert loaded.scan_lane_table_column_widths[SCAN_LANE_COL_PROGRESS] == 210
+
+    with Database(tmp_path / "app-second.db") as db:
+        window = MainWindow(db=db, settings=loaded)
+        window.show()
+        app.processEvents()
+
+        window.scan_view.initialize_lane_plan(
+            [[str(tmp_path / "alpha")], [str(tmp_path / "beta")]],
+            worker_limit=2,
+        )
+        app.processEvents()
+
+        assert window.scan_view.lane_table.columnWidth(SCAN_LANE_COL_ACTIVE_FILE) == 520
+        assert window.scan_view.lane_table.columnWidth(SCAN_LANE_COL_PROGRESS) == 210
+        window.close()
 
 
 def test_group_formatting_and_keep_strategy(tmp_path: Path) -> None:
@@ -3594,7 +3659,6 @@ def test_scan_view_progress_keeps_parallel_worker_tokens(tmp_path: Path) -> None
         )
         app.processEvents()
 
-        assert "[workers 2/3]" in window.scan_view.status_label.text()
         assert "[workers 2/3]" in window.scan_view.progress_list.item(0).text()
         window.close()
 
@@ -3619,8 +3683,56 @@ def test_scan_view_progress_uses_padded_counters(tmp_path: Path) -> None:
         )
         app.processEvents()
 
-        assert "(  12 / 1001)" in window.scan_view.status_label.text()
         assert "  12 / 1001" in window.scan_view.progress_list.item(0).text()
+        window.close()
+
+
+def test_scan_view_removes_redundant_top_progress_labels(tmp_path: Path) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        assert not hasattr(window.scan_view, "status_label")
+        scan_labels = {
+            label.text()
+            for label in window.scan_view.findChildren(QLabel)
+            if label.text()
+        }
+        assert "Stage Progress" not in scan_labels
+        assert "Detailed Scan Progress" in scan_labels
+        assert "Scan Issues" in scan_labels
+        assert window.scan_view.stage_progress is not None
+        window.close()
+
+
+def test_scan_issue_rows_do_not_echo_to_status_bar(tmp_path: Path) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        window.statusBar().showMessage("Scan started")
+        window._scan_issue(
+            ScanIssue(
+                stage="probe",
+                path=str(tmp_path / "bad.mp4"),
+                message="Could not probe file",
+            )
+        )
+        app.processEvents()
+
+        assert window.scan_view.issues_list.count() == 1
+        assert "Could not probe file" in window.scan_view.issues_list.item(0).text()
+        assert window.statusBar().currentMessage() == "Scan started"
         window.close()
 
 
@@ -3715,19 +3827,41 @@ def test_scan_view_renders_lane_snapshots_and_worker_utilization(
         assert window.scan_view.eta_label.text().startswith("ETA: 3m | Done by ")
         assert window.scan_view.lane_table.rowCount() == 2
         assert window.scan_view.lane_table.columnCount() == 13
+        assert [
+            window.scan_view.lane_table.horizontalHeaderItem(index).text()
+            for index in range(window.scan_view.lane_table.columnCount())
+        ] == SCAN_LANE_HEADERS
         assert window.scan_view.lane_table.item(0, 2).text() == "running"
-        lane0_progress_cell = window.scan_view.lane_table.cellWidget(0, 6)
+        lane0_progress_cell = window.scan_view.lane_table.cellWidget(
+            0,
+            SCAN_LANE_COL_PROGRESS,
+        )
         assert lane0_progress_cell is not None
         lane0_progress = _lane_progress_bar(lane0_progress_cell)
-        assert lane0_progress.format() == "1 / 3+"
+        assert lane0_progress.format() == "1 / 3+ (33%)"
         lane0_layout = lane0_progress_cell.layout()
         assert lane0_layout is not None
         assert bool(lane0_layout.alignment() & Qt.AlignmentFlag.AlignVCenter)
-        assert window.scan_view.lane_table.item(0, 7).text() == "R:/Videos/a.mp4"
-        assert window.scan_view.lane_table.item(0, 9).text() == "1.20"
-        assert window.scan_view.lane_table.item(0, 10).text() == "2.40"
-        assert window.scan_view.lane_table.item(0, 11).text() == "0.40"
-        assert window.scan_view.lane_table.item(0, 12).text() == "0.80"
+        assert (
+            window.scan_view.lane_table.item(0, SCAN_LANE_COL_ACTIVE_FILE).text()
+            == "R:/Videos/a.mp4"
+        )
+        assert (
+            window.scan_view.lane_table.item(0, SCAN_LANE_COL_DISC_PER_S).text()
+            == "1.20"
+        )
+        assert (
+            window.scan_view.lane_table.item(0, SCAN_LANE_COL_DISC_MIB_PER_S).text()
+            == "2.40"
+        )
+        assert (
+            window.scan_view.lane_table.item(0, SCAN_LANE_COL_ANAL_PER_S).text()
+            == "0.40"
+        )
+        assert (
+            window.scan_view.lane_table.item(0, SCAN_LANE_COL_ANAL_MIB_PER_S).text()
+            == "0.80"
+        )
         assert (
             window.scan_view.lane_table.item(0, 0).background().color().name().lower()
             == "#f0f8ff"
@@ -3735,9 +3869,9 @@ def test_scan_view_renders_lane_snapshots_and_worker_utilization(
         assert window.scan_view.lane_table.item(1, 2).text() == "idle"
         assert window.scan_view.lane_table.item(1, 5).text() == "2"
         lane1_progress = _lane_progress_bar(
-            window.scan_view.lane_table.cellWidget(1, 6)
+            window.scan_view.lane_table.cellWidget(1, SCAN_LANE_COL_PROGRESS)
         )
-        assert lane1_progress.format() == "2 / 2"
+        assert lane1_progress.format() == "2 / 2 (100%)"
         assert (
             window.scan_view.lane_table.item(1, 0).background().color().name().lower()
             == "#f5f5f5"

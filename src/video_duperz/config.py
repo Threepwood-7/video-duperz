@@ -36,6 +36,7 @@ from .scan_sets import (
 )
 
 RESULTS_TABLE_COLUMN_COUNT = 20
+SCAN_LANE_TABLE_COLUMN_COUNT = 13
 MAX_RECENT_ROOTS = 20
 MAX_SAVED_SCAN_PROFILES = 200
 SETTINGS_FILE_NAME = f"{SETTINGS_APP_NAME}.ini"
@@ -388,6 +389,10 @@ def _read_qsettings_payload(
         "identical_sample_b_pct": qs.value(
             "identical_sample_b_pct", defaults.identical_sample_b_pct
         ),
+        "scan_lane_table_column_widths": _decode_json_value(
+            qs.value("scan_lane_table_column_widths"),
+            defaults.scan_lane_table_column_widths,
+        ),
         "results_table_column_widths": _decode_json_value(
             qs.value("results_table_column_widths"),
             defaults.results_table_column_widths,
@@ -506,6 +511,10 @@ def _settings_from_raw(raw: dict[str, object], defaults: Settings) -> Settings:
         ),
         identical_sample_a_pct=identical_a,
         identical_sample_b_pct=identical_b,
+        scan_lane_table_column_widths=_normalize_column_widths(
+            raw.get("scan_lane_table_column_widths", []),
+            expected_count=SCAN_LANE_TABLE_COLUMN_COUNT,
+        ),
         results_table_column_widths=_normalize_column_widths(
             raw.get("results_table_column_widths", []),
             expected_count=RESULTS_TABLE_COLUMN_COUNT,
@@ -638,6 +647,7 @@ def default_settings() -> Settings:
         identical_block_mib=1,
         identical_sample_a_pct=23,
         identical_sample_b_pct=78,
+        scan_lane_table_column_widths=[],
         results_table_column_widths=[],
         results_table_column_visibility=[],
         saved_column_views={},

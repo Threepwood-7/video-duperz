@@ -26,6 +26,50 @@ from PySide6.QtWidgets import (
 if TYPE_CHECKING:
     from ..models import ScanIssue, ScanLaneSnapshot, ScanProgress
 
+SCAN_LANE_COL_LANE = 0
+SCAN_LANE_COL_ROOTS = 1
+SCAN_LANE_COL_STATE = 2
+SCAN_LANE_COL_DISCOVERED = 3
+SCAN_LANE_COL_QUEUED = 4
+SCAN_LANE_COL_COMPLETED = 5
+SCAN_LANE_COL_ACTIVE_FILE = 6
+SCAN_LANE_COL_WORKERS = 7
+SCAN_LANE_COL_DISC_PER_S = 8
+SCAN_LANE_COL_DISC_MIB_PER_S = 9
+SCAN_LANE_COL_ANAL_PER_S = 10
+SCAN_LANE_COL_ANAL_MIB_PER_S = 11
+SCAN_LANE_COL_PROGRESS = 12
+SCAN_LANE_HEADERS = [
+    "Lane",
+    "Roots",
+    "State",
+    "Discovered",
+    "Queued",
+    "Completed",
+    "Active File",
+    "Workers",
+    "Disc/s",
+    "Disc MiB/s",
+    "Anal/s",
+    "Anal MiB/s",
+    "Progress",
+]
+SCAN_LANE_DEFAULT_WIDTHS = [
+    56,
+    240,
+    90,
+    84,
+    72,
+    84,
+    420,
+    80,
+    72,
+    86,
+    72,
+    86,
+    180,
+]
+
 
 class _LaneProgressCell(QWidget):
     """Centered container widget for one lane progress bar."""
@@ -39,7 +83,7 @@ class _LaneProgressCell(QWidget):
         self.progress_bar.setObjectName("scan_lane_progress_bar")
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setRange(0, 0)
-        self.progress_bar.setFormat("0 / 0+")
+        self.progress_bar.setFormat("0 / 0+ (--%)")
         self.progress_bar.setFixedHeight(12)
         self.progress_bar.setStyleSheet(
             """
@@ -76,7 +120,6 @@ class ScanView(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
 
-        self.status_label = QLabel("Idle", self)
         self.stage_progress = QProgressBar(self)
         self.stage_progress.setRange(0, 100)
         self.stage_progress.setValue(0)
@@ -92,24 +135,10 @@ class ScanView(QWidget):
             " | skipped failed 0",
             self,
         )
-        self.lane_table = QTableWidget(0, 13, self)
-        self.lane_table.setHorizontalHeaderLabels(
-            [
-                "Lane",
-                "Roots",
-                "State",
-                "Discovered",
-                "Queued",
-                "Completed",
-                "Progress",
-                "Active File",
-                "Workers",
-                "Disc/s",
-                "Disc MiB/s",
-                "Anal/s",
-                "Anal MiB/s",
-            ]
-        )
+        self._column_widths: list[int] = []
+        self._applying_column_widths = False
+        self.lane_table = QTableWidget(0, len(SCAN_LANE_HEADERS), self)
+        self.lane_table.setHorizontalHeaderLabels(SCAN_LANE_HEADERS)
         self.lane_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.lane_table.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows
@@ -119,19 +148,9 @@ class ScanView(QWidget):
         lane_header = self.lane_table.horizontalHeader()
         lane_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         lane_header.setStretchLastSection(False)
-        self.lane_table.setColumnWidth(0, 56)
-        self.lane_table.setColumnWidth(1, 240)
-        self.lane_table.setColumnWidth(2, 90)
-        self.lane_table.setColumnWidth(3, 84)
-        self.lane_table.setColumnWidth(4, 72)
-        self.lane_table.setColumnWidth(5, 84)
-        self.lane_table.setColumnWidth(6, 130)
-        self.lane_table.setColumnWidth(7, 260)
-        self.lane_table.setColumnWidth(8, 80)
-        self.lane_table.setColumnWidth(9, 72)
-        self.lane_table.setColumnWidth(10, 86)
-        self.lane_table.setColumnWidth(11, 72)
-        self.lane_table.setColumnWidth(12, 86)
+        lane_header.sectionResized.connect(self._on_column_resized)
+        for index, width in enumerate(SCAN_LANE_DEFAULT_WIDTHS):
+            self.lane_table.setColumnWidth(index, width)
         self.progress_list = QListWidget(self)
         self.progress_list.setUniformItemSizes(True)
         self.progress_list.setSelectionMode(
@@ -180,8 +199,6 @@ class ScanView(QWidget):
         actions.addStretch(1)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(self.status_label)
-        layout.addWidget(QLabel("Stage Progress", self))
         layout.addWidget(self.stage_progress)
         layout.addWidget(self.eta_label)
         layout.addWidget(self.io_stats_label)
@@ -261,7 +278,6 @@ class ScanView(QWidget):
         self.path_activation_requested.emit(subject_path)
 
     def reset(self) -> None:
-        self.status_label.setText("Idle")
         self.stage_progress.setValue(0)
         self.worker_progress.setRange(0, 1)
         self.worker_progress.setValue(0)
@@ -291,22 +307,72 @@ class ScanView(QWidget):
             row = self.lane_table.rowCount()
             self.lane_table.insertRow(row)
             self._lane_rows[lane] = row
-            self.lane_table.setItem(row, 0, QTableWidgetItem(str(lane + 1)))
             self.lane_table.setItem(
-                row, 1, QTableWidgetItem(", ".join(roots) if roots else "")
+                row,
+                SCAN_LANE_COL_LANE,
+                QTableWidgetItem(str(lane + 1)),
             )
-            self.lane_table.setItem(row, 2, QTableWidgetItem("pending"))
-            self.lane_table.setItem(row, 3, QTableWidgetItem("0"))
-            self.lane_table.setItem(row, 4, QTableWidgetItem("0"))
-            self.lane_table.setItem(row, 5, QTableWidgetItem("0"))
-            self.lane_table.setCellWidget(row, 6, self._create_lane_progress_cell())
-            self.lane_table.setItem(row, 7, QTableWidgetItem(""))
-            self.lane_table.setItem(row, 8, QTableWidgetItem("0/0"))
-            self.lane_table.setItem(row, 9, QTableWidgetItem("0.00"))
-            self.lane_table.setItem(row, 10, QTableWidgetItem("0.00"))
-            self.lane_table.setItem(row, 11, QTableWidgetItem("0.00"))
-            self.lane_table.setItem(row, 12, QTableWidgetItem("0.00"))
+            self.lane_table.setItem(
+                row,
+                SCAN_LANE_COL_ROOTS,
+                QTableWidgetItem(", ".join(roots) if roots else ""),
+            )
+            self.lane_table.setItem(
+                row,
+                SCAN_LANE_COL_STATE,
+                QTableWidgetItem("pending"),
+            )
+            self.lane_table.setItem(
+                row,
+                SCAN_LANE_COL_DISCOVERED,
+                QTableWidgetItem("0"),
+            )
+            self.lane_table.setItem(row, SCAN_LANE_COL_QUEUED, QTableWidgetItem("0"))
+            self.lane_table.setItem(
+                row,
+                SCAN_LANE_COL_COMPLETED,
+                QTableWidgetItem("0"),
+            )
+            self.lane_table.setItem(
+                row,
+                SCAN_LANE_COL_ACTIVE_FILE,
+                QTableWidgetItem(""),
+            )
+            self.lane_table.setItem(
+                row,
+                SCAN_LANE_COL_WORKERS,
+                QTableWidgetItem("0/0"),
+            )
+            self.lane_table.setItem(
+                row,
+                SCAN_LANE_COL_DISC_PER_S,
+                QTableWidgetItem("0.00"),
+            )
+            self.lane_table.setItem(
+                row,
+                SCAN_LANE_COL_DISC_MIB_PER_S,
+                QTableWidgetItem("0.00"),
+            )
+            self.lane_table.setItem(
+                row,
+                SCAN_LANE_COL_ANAL_PER_S,
+                QTableWidgetItem("0.00"),
+            )
+            self.lane_table.setItem(
+                row,
+                SCAN_LANE_COL_ANAL_MIB_PER_S,
+                QTableWidgetItem("0.00"),
+            )
+            self.lane_table.setCellWidget(
+                row,
+                SCAN_LANE_COL_PROGRESS,
+                self._create_lane_progress_cell(),
+            )
             self._apply_row_background(row, "pending")
+        if self._column_widths:
+            self._set_table_column_widths(self._column_widths)
+        else:
+            self.fit_columns_to_contents()
         self._set_worker_progress(0, worker_limit)
 
     def _create_lane_progress_cell(self) -> _LaneProgressCell:
@@ -315,12 +381,80 @@ class ScanView(QWidget):
 
     def _lane_progress_bar(self, row: int) -> QProgressBar:
         """Return the lane progress-bar widget for one table row."""
-        widget = self.lane_table.cellWidget(row, 6)
+        widget = self.lane_table.cellWidget(row, SCAN_LANE_COL_PROGRESS)
         if isinstance(widget, _LaneProgressCell):
             return widget.progress_bar
         progress_cell = self._create_lane_progress_cell()
-        self.lane_table.setCellWidget(row, 6, progress_cell)
+        self.lane_table.setCellWidget(row, SCAN_LANE_COL_PROGRESS, progress_cell)
         return progress_cell.progress_bar
+
+    def _on_column_resized(self, _section: int, _old_size: int, _new_size: int) -> None:
+        """Persist live lane-table column widths when the user resizes them."""
+        if self._applying_column_widths:
+            return
+        self._column_widths = self._capture_column_widths()
+
+    def _set_table_column_widths(self, widths: list[int]) -> None:
+        """Apply one complete width payload to the lane table."""
+        if len(widths) != self.lane_table.columnCount():
+            return
+        self._applying_column_widths = True
+        try:
+            for index, width in enumerate(widths):
+                self.lane_table.setColumnWidth(index, width)
+        finally:
+            self._applying_column_widths = False
+
+    def _capture_column_widths(self) -> list[int]:
+        """Capture the current live lane-table widths."""
+        return [
+            self.lane_table.columnWidth(index)
+            for index in range(self.lane_table.columnCount())
+        ]
+
+    @staticmethod
+    def _normalize_column_widths(widths: list[int], expected_count: int) -> list[int]:
+        """Validate one persisted lane-table width payload."""
+        if len(widths) != expected_count:
+            return []
+        normalized: list[int] = []
+        for raw in widths:
+            try:
+                width = int(raw)
+            except (TypeError, ValueError):
+                return []
+            if width < 0:
+                return []
+            normalized.append(width)
+        return normalized
+
+    def set_column_widths(self, widths: list[int]) -> None:
+        """Apply persisted lane-table widths when the payload is well formed."""
+        self._column_widths = self._normalize_column_widths(
+            widths,
+            expected_count=self.lane_table.columnCount(),
+        )
+        if self._column_widths:
+            self._set_table_column_widths(self._column_widths)
+
+    def column_widths(self) -> list[int]:
+        """Return stored lane-table widths or capture them live from the table."""
+        return self._column_widths or self._capture_column_widths()
+
+    def fit_columns_to_contents(self) -> None:
+        """Auto-fit lane columns once, then keep the resulting widths."""
+        self.lane_table.resizeColumnsToContents()
+        fitted = self._capture_column_widths()
+        widened = [
+            max(width, default_width)
+            for width, default_width in zip(
+                fitted,
+                SCAN_LANE_DEFAULT_WIDTHS,
+                strict=True,
+            )
+        ]
+        self._set_table_column_widths(widened)
+        self._column_widths = self._capture_column_widths()
 
     def _set_worker_progress(self, active_workers: int, worker_limit: int) -> None:
         bounded_limit = max(0, int(worker_limit))
@@ -365,27 +499,67 @@ class ScanView(QWidget):
             if self._worker_limit
             else str(int(snapshot.workers))
         )
-        self.lane_table.setItem(row, 0, QTableWidgetItem(str(lane + 1)))
-        self.lane_table.setItem(row, 1, QTableWidgetItem(roots_text))
-        self.lane_table.setItem(row, 2, QTableWidgetItem(snapshot.state))
-        self.lane_table.setItem(row, 3, QTableWidgetItem(str(int(snapshot.discovered))))
-        self.lane_table.setItem(row, 4, QTableWidgetItem(str(int(snapshot.queued))))
-        self.lane_table.setItem(row, 5, QTableWidgetItem(str(int(snapshot.completed))))
+        self.lane_table.setItem(
+            row,
+            SCAN_LANE_COL_LANE,
+            QTableWidgetItem(str(lane + 1)),
+        )
+        self.lane_table.setItem(
+            row,
+            SCAN_LANE_COL_ROOTS,
+            QTableWidgetItem(roots_text),
+        )
+        self.lane_table.setItem(
+            row,
+            SCAN_LANE_COL_STATE,
+            QTableWidgetItem(snapshot.state),
+        )
+        self.lane_table.setItem(
+            row,
+            SCAN_LANE_COL_DISCOVERED,
+            QTableWidgetItem(str(int(snapshot.discovered))),
+        )
+        self.lane_table.setItem(
+            row,
+            SCAN_LANE_COL_QUEUED,
+            QTableWidgetItem(str(int(snapshot.queued))),
+        )
+        self.lane_table.setItem(
+            row,
+            SCAN_LANE_COL_COMPLETED,
+            QTableWidgetItem(str(int(snapshot.completed))),
+        )
         progress_bar = self._lane_progress_bar(row)
         self._update_lane_progress_bar(progress_bar, snapshot)
-        self.lane_table.setItem(row, 7, QTableWidgetItem(snapshot.active_file))
-        self.lane_table.setItem(row, 8, QTableWidgetItem(workers_text))
         self.lane_table.setItem(
-            row, 9, QTableWidgetItem(f"{float(snapshot.discovered_files_per_s):.2f}")
+            row,
+            SCAN_LANE_COL_ACTIVE_FILE,
+            QTableWidgetItem(snapshot.active_file),
         )
         self.lane_table.setItem(
-            row, 10, QTableWidgetItem(f"{float(snapshot.discovered_mib_per_s):.2f}")
+            row,
+            SCAN_LANE_COL_WORKERS,
+            QTableWidgetItem(workers_text),
         )
         self.lane_table.setItem(
-            row, 11, QTableWidgetItem(f"{float(snapshot.analyzed_files_per_s):.2f}")
+            row,
+            SCAN_LANE_COL_DISC_PER_S,
+            QTableWidgetItem(f"{float(snapshot.discovered_files_per_s):.2f}"),
         )
         self.lane_table.setItem(
-            row, 12, QTableWidgetItem(f"{float(snapshot.analyzed_mib_per_s):.2f}")
+            row,
+            SCAN_LANE_COL_DISC_MIB_PER_S,
+            QTableWidgetItem(f"{float(snapshot.discovered_mib_per_s):.2f}"),
+        )
+        self.lane_table.setItem(
+            row,
+            SCAN_LANE_COL_ANAL_PER_S,
+            QTableWidgetItem(f"{float(snapshot.analyzed_files_per_s):.2f}"),
+        )
+        self.lane_table.setItem(
+            row,
+            SCAN_LANE_COL_ANAL_MIB_PER_S,
+            QTableWidgetItem(f"{float(snapshot.analyzed_mib_per_s):.2f}"),
         )
         self._apply_row_background(row, snapshot.state)
 
@@ -397,21 +571,27 @@ class ScanView(QWidget):
         """Render one lane-progress widget from the current snapshot."""
         discovered = max(0, int(snapshot.discovered))
         completed = max(0, int(snapshot.completed))
+        percent_text = "--%"
         if not snapshot.discovery_complete and discovered <= 0:
             progress_bar.setRange(0, 0)
-            progress_bar.setFormat("0 / 0+")
+            progress_bar.setFormat("0 / 0+ (--%)")
         else:
             display_total = max(1, discovered)
             progress_bar.setRange(0, display_total)
             progress_bar.setValue(min(completed, display_total))
             suffix = "" if snapshot.discovery_complete else "+"
-            progress_bar.setFormat(f"{completed} / {discovered}{suffix}")
+            percent = int((max(0, min(completed, display_total)) / display_total) * 100)
+            percent_text = f"{percent}%"
+            progress_bar.setFormat(
+                f"{completed} / {discovered}{suffix} ({percent_text})"
+            )
         progress_bar.setToolTip(
-            "Completed {completed} of {discovered}{suffix} | "
+            "Completed {completed} of {discovered}{suffix} ({percent}) | "
             "cache {cache_hits}, fp-only {fingerprint_only}, reprobe {reprobe}".format(
                 completed=completed,
                 discovered=discovered,
                 suffix="" if snapshot.discovery_complete else "+",
+                percent=percent_text,
                 cache_hits=int(snapshot.cache_hits),
                 fingerprint_only=int(snapshot.fingerprint_only),
                 reprobe=int(snapshot.probe_and_fingerprint),
@@ -460,7 +640,6 @@ class ScanView(QWidget):
         if running:
             self._paused_loaded = False
             self._apply_mode("running")
-            self.status_label.setText("Running...")
             return
         if not self._paused_loaded:
             self._apply_mode("idle")
@@ -471,8 +650,6 @@ class ScanView(QWidget):
         if self._paused_loaded:
             self._apply_mode("paused")
             self.retry_failed_checkbox.setVisible(True)
-            if not self.status_label.text().strip():
-                self.status_label.setText("Paused")
             return
         self._set_retry_failed_state(visible=False, count=0, checked=True)
         self._apply_mode("idle")
@@ -534,9 +711,6 @@ class ScanView(QWidget):
             for snapshot in progress.lane_snapshots:
                 self._upsert_lane_snapshot(snapshot)
         self._update_io_stats(progress)
-        message = progress.message.strip() or progress.stage
-        counter_text = self._format_counter(display_current, display_total)
-        self.status_label.setText(f"{progress.stage}: {message} ({counter_text})")
         progress_row = self._progress_row_text(progress)
         if progress_row != self._last_progress_row:
             self._append_list_item(

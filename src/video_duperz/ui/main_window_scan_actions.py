@@ -179,7 +179,6 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
         if not isinstance(issue, ScanIssue):
             return
         self.scan_view.append_issue(issue)
-        self.statusBar().showMessage(f"Scan issue [{issue.stage}]: {issue.message}")
 
     def _scan_finished(self, result: ScanResult) -> None:
         """Refresh persisted results after a scan worker completes."""

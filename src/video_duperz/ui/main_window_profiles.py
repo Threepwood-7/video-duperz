@@ -475,7 +475,6 @@ class MainWindowProfilesMixin(MainWindowDriveViewMixin):
         self.scan_view.set_paused_loaded(True)
         failed_count = self.db.count_failed_files(scan_id)
         self.scan_view.set_retry_failed_file_count(failed_count)
-        self.scan_view.status_label.setText(f"Paused scan #{scan_id} loaded")
         self.scan_view.append_progress_note(
             "paused",
             (

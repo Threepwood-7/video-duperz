@@ -158,6 +158,7 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
             sample_a_pct=self.settings.identical_sample_a_pct,
             sample_b_pct=self.settings.identical_sample_b_pct,
         )
+        self.scan_view.set_column_widths(self.settings.scan_lane_table_column_widths)
         visibility = self.settings.results_table_column_visibility
         if visibility:
             self.results_view.set_column_visibility(visibility)
@@ -207,6 +208,7 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
             identical_block_mib=self.settings.identical_block_mib,
             identical_sample_a_pct=self.settings.identical_sample_a_pct,
             identical_sample_b_pct=self.settings.identical_sample_b_pct,
+            scan_lane_table_column_widths=self.scan_view.column_widths(),
             results_table_column_widths=self.results_view.column_widths(),
             results_table_column_visibility=self.results_view.column_visibility(),
             saved_column_views=self._normalized_saved_column_views(),

@@ -8,6 +8,7 @@ from PySide6.QtCore import QSettings
 from video_duperz.config import (
     MAX_DRIVE_WORKERS,
     RESULTS_TABLE_COLUMN_COUNT,
+    SCAN_LANE_TABLE_COLUMN_COUNT,
     default_settings,
     load_settings,
     save_settings,
@@ -40,6 +41,7 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     settings.identical_block_mib = 4
     settings.identical_sample_a_pct = 12
     settings.identical_sample_b_pct = 91
+    settings.scan_lane_table_column_widths = [90] * SCAN_LANE_TABLE_COLUMN_COUNT
     settings.results_table_column_widths = [80] * RESULTS_TABLE_COLUMN_COUNT
     settings.drive_worker_overrides = {"volume:a": 3}
     settings.probe_backend = "pyav"
@@ -80,6 +82,7 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     assert loaded.identical_block_mib == 4
     assert loaded.identical_sample_a_pct == 12
     assert loaded.identical_sample_b_pct == 91
+    assert loaded.scan_lane_table_column_widths == [90] * SCAN_LANE_TABLE_COLUMN_COUNT
     assert loaded.results_table_column_widths == [80] * RESULTS_TABLE_COLUMN_COUNT
     assert loaded.drive_worker_overrides == {"volume:a": 3}
     assert loaded.probe_backend == "pyav"
@@ -159,6 +162,21 @@ def test_settings_invalid_column_widths_fall_back_to_empty(
 
     loaded = load_settings()
     assert loaded.results_table_column_widths == []
+
+
+def test_settings_invalid_scan_lane_column_widths_fall_back_to_empty(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    settings = default_settings()
+    save_settings(settings)
+
+    path = settings_path()
+    _set_qsettings_value(path, "scan_lane_table_column_widths", [100, -2, 80])
+
+    loaded = load_settings()
+    assert loaded.scan_lane_table_column_widths == []
 
 
 def test_settings_thumbnail_frame_pair_normalization(
