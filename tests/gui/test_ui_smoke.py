@@ -3687,6 +3687,68 @@ def test_scan_view_progress_uses_padded_counters(tmp_path: Path) -> None:
         window.close()
 
 
+def test_scan_view_resume_eta_uses_only_real_remaining_work(tmp_path: Path) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        window.scan_view.update_progress(
+            ScanProgress(
+                stage="probe",
+                current=950,
+                total=1000,
+                message="Resumed and analyzing tail files",
+                cached_files=945,
+                analyzed_files=5,
+                elapsed_s=100.0,
+                completed_files=950,
+                total_work_files=1000,
+                total_analyze_files=20,
+            )
+        )
+        app.processEvents()
+
+        assert window.scan_view.eta_label.text().startswith("ETA: 5m | Done by ")
+        window.close()
+
+
+def test_scan_view_resume_eta_stays_hidden_without_enough_real_work(
+    tmp_path: Path,
+) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        window.scan_view.update_progress(
+            ScanProgress(
+                stage="probe",
+                current=902,
+                total=1000,
+                message="Resumed but still warming up",
+                cached_files=900,
+                analyzed_files=2,
+                elapsed_s=120.0,
+                completed_files=902,
+                total_work_files=1000,
+                total_analyze_files=20,
+            )
+        )
+        app.processEvents()
+
+        assert window.scan_view.eta_label.text() == "ETA: --"
+        window.close()
+
+
 def test_scan_view_removes_redundant_top_progress_labels(tmp_path: Path) -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QApplication.instance() or QApplication([])
@@ -3824,7 +3886,7 @@ def test_scan_view_renders_lane_snapshots_and_worker_utilization(
         app.processEvents()
 
         assert not window.scan_view.worker_progress.isVisible()
-        assert window.scan_view.eta_label.text().startswith("ETA: 3m | Done by ")
+        assert window.scan_view.eta_label.text().startswith("ETA: 5m | Done by ")
         assert window.scan_view.lane_table.rowCount() == 2
         assert window.scan_view.lane_table.columnCount() == 13
         assert [

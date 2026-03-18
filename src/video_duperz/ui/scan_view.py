@@ -229,15 +229,21 @@ class ScanView(QWidget):
 
     def _format_eta(self, progress: ScanProgress) -> str:
         """Format the ETA label from the current analysis throughput."""
-        analyzed = int(progress.completed_files or progress.analyzed_files or 0)
-        total = int(progress.total_work_files or progress.total_analyze_files or 0)
+        analyzed = int(progress.analyzed_files or 0)
+        total_analyze = int(progress.total_analyze_files or 0)
+        if total_analyze > 0:
+            completed = analyzed
+            total = total_analyze
+        else:
+            completed = int(progress.completed_files or analyzed)
+            total = int(progress.total_work_files or total_analyze or 0)
         elapsed_s = float(progress.elapsed_s or 0.0)
-        if analyzed < 3 or elapsed_s < 5.0 or total <= analyzed:
+        if completed < 3 or elapsed_s < 5.0 or total <= completed:
             return "ETA: --"
-        files_per_s = float(analyzed) / elapsed_s if elapsed_s > 0.0 else 0.0
+        files_per_s = float(completed) / elapsed_s if elapsed_s > 0.0 else 0.0
         if files_per_s <= 0.0:
             return "ETA: --"
-        remaining_files = max(0, total - analyzed)
+        remaining_files = max(0, total - completed)
         remaining_s = remaining_files / files_per_s
         remaining_minutes = max(0.0, remaining_s / 60.0)
         remaining_text = (
