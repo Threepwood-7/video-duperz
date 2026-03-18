@@ -458,10 +458,7 @@ def test_sources_tab_defaults_to_broad_extensions_preset(
         app.processEvents()
 
         assert window.extensions_preset_combo.currentText() == "broad"
-        assert (
-            window.extensions_edit.text()
-            == video_extensions_csv_for_preset("broad")
-        )
+        assert window.extensions_edit.text() == video_extensions_csv_for_preset("broad")
 
         window.close()
 
@@ -893,6 +890,10 @@ def test_results_structured_filters_and_clear_button(tmp_path: Path) -> None:
             window.results_view.filter_include_match_all_checkbox,
             QCheckBox,
         )
+        assert window.results_view.filter_include_match_all_checkbox.toolTip() == (
+            "Off: one matching file keeps the whole group visible. "
+            "On: every surviving file must match, or the group is hidden."
+        )
         assert isinstance(window.results_view.filter_min_size_spin, QDoubleSpinBox)
         assert isinstance(window.results_view.filter_max_duration_spin, QDoubleSpinBox)
         assert isinstance(window.results_view.filter_min_width_spin, QSpinBox)
@@ -1034,7 +1035,7 @@ def test_results_structured_filters_and_clear_button(tmp_path: Path) -> None:
 
 
 def test_results_filter_attribute_options_refresh_and_fallback(tmp_path: Path) -> None:
-    """Refresh codec and extension options from loaded results."""
+    """Refresh extension options from loaded results and preserve valid choices."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QApplication.instance() or QApplication([])
     with Database(tmp_path / "app.db") as db:
@@ -1058,16 +1059,19 @@ def test_results_filter_attribute_options_refresh_and_fallback(tmp_path: Path) -
         ]
         assert extension_items == ["Any", "mkv", "mp4", "webm"]
 
-        window.results_view.filter_video_codec_combo.setCurrentText("hevc")
         window.results_view.filter_extension_combo.setCurrentText("webm")
         app.processEvents()
         assert window.results_view._filter_apply_timer.isActive()
         assert window.results_view.results_table.rowCount() == 4
         window.results_view._apply_filter_inputs()
         app.processEvents()
-        assert window.results_view.results_table.rowCount() == 0
+        assert window.results_view.results_table.rowCount() == 2
+        assert all(
+            "extras" in window.results_view.results_table.item(row, 18).text().lower()
+            for row in range(window.results_view.results_table.rowCount())
+        )
 
-        replacement_groups = [
+        replacement_groups_keep_selection = [
             DuplicateGroup(
                 scan_id=1,
                 profile="balanced",
@@ -1075,7 +1079,7 @@ def test_results_filter_attribute_options_refresh_and_fallback(tmp_path: Path) -
                 items=[
                     _dup_item(
                         41,
-                        str(tmp_path / "refresh" / "refresh_av1.mp4"),
+                        str(tmp_path / "refresh" / "refresh_av1.webm"),
                         1920,
                         1080,
                         2_500_000,
@@ -1100,7 +1104,7 @@ def test_results_filter_attribute_options_refresh_and_fallback(tmp_path: Path) -
                 group_id=63,
             )
         ]
-        window.results_view.load_groups(replacement_groups)
+        window.results_view.load_groups(replacement_groups_keep_selection)
         app.processEvents()
 
         refreshed_codec_items = [
@@ -1112,8 +1116,52 @@ def test_results_filter_attribute_options_refresh_and_fallback(tmp_path: Path) -
             for index in range(window.results_view.filter_extension_combo.count())
         ]
         assert refreshed_codec_items == ["Any", "av1"]
-        assert refreshed_extension_items == ["Any", "mp4"]
+        assert refreshed_extension_items == ["Any", "mp4", "webm"]
         assert window.results_view.filter_video_codec_combo.currentText() == "Any"
+        assert window.results_view.filter_extension_combo.currentText() == "webm"
+        assert window.results_view.results_table.rowCount() == 2
+
+        replacement_groups_reset_selection = [
+            DuplicateGroup(
+                scan_id=1,
+                profile="balanced",
+                created_at="now",
+                items=[
+                    _dup_item(
+                        51,
+                        str(tmp_path / "refresh2" / "refresh2_av1.mp4"),
+                        1920,
+                        1080,
+                        2_500_000,
+                        0.97,
+                        size=18 * 1024 * 1024,
+                        duration_s=120.0,
+                        codec="av1",
+                    ),
+                    _dup_item(
+                        52,
+                        str(tmp_path / "refresh2" / "refresh2_av1_copy.mp4"),
+                        1920,
+                        1080,
+                        2_400_000,
+                        0.965,
+                        size=17 * 1024 * 1024,
+                        duration_s=118.0,
+                        codec="av1",
+                    ),
+                ],
+                total_size_bytes=(18 + 17) * 1024 * 1024,
+                group_id=64,
+            )
+        ]
+        window.results_view.load_groups(replacement_groups_reset_selection)
+        app.processEvents()
+
+        reset_extension_items = [
+            window.results_view.filter_extension_combo.itemText(index)
+            for index in range(window.results_view.filter_extension_combo.count())
+        ]
+        assert reset_extension_items == ["Any", "mp4"]
         assert window.results_view.filter_extension_combo.currentText() == "Any"
         assert window.results_view.results_table.rowCount() == 2
         window.close()
@@ -1152,6 +1200,166 @@ def test_results_filters_must_match_all_and_hide_singletons(tmp_path: Path) -> N
             "beta" in window.results_view.results_table.item(row, 18).text().lower()
             for row in range(window.results_view.results_table.rowCount())
         )
+        window.close()
+
+
+def test_results_advanced_min_size_keeps_group_until_must_match_all(
+    tmp_path: Path,
+) -> None:
+    """Keep a mixed-size group visible until all visible files must qualify."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        window.results_view.load_groups(
+            [
+                DuplicateGroup(
+                    scan_id=1,
+                    profile="balanced",
+                    created_at="now",
+                    items=[
+                        _dup_item(
+                            61,
+                            str(tmp_path / "sizes" / "big_match.mp4"),
+                            1920,
+                            1080,
+                            2_000_000,
+                            0.99,
+                            size=80 * 1024 * 1024,
+                        ),
+                        _dup_item(
+                            62,
+                            str(tmp_path / "sizes" / "small_miss.mkv"),
+                            1920,
+                            1080,
+                            1_900_000,
+                            0.98,
+                            size=5 * 1024 * 1024,
+                        ),
+                    ],
+                    total_size_bytes=85 * 1024 * 1024,
+                    group_id=65,
+                )
+            ]
+        )
+        app.processEvents()
+
+        window.results_view.filter_min_size_spin.setValue(20.0)
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 2
+
+        window.results_view.filter_include_match_all_checkbox.setChecked(True)
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 0
+        window.close()
+
+
+def test_results_extension_filter_respects_must_match_all(tmp_path: Path) -> None:
+    """Extension-only filtering follows the Must match all checkbox rule."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        window.results_view.load_groups(
+            [
+                DuplicateGroup(
+                    scan_id=1,
+                    profile="balanced",
+                    created_at="now",
+                    items=[
+                        _dup_item(
+                            71,
+                            str(tmp_path / "ext" / "match.mp4"),
+                            1920,
+                            1080,
+                            2_000_000,
+                            0.99,
+                        ),
+                        _dup_item(
+                            72,
+                            str(tmp_path / "ext" / "other.mkv"),
+                            1920,
+                            1080,
+                            1_900_000,
+                            0.98,
+                        ),
+                    ],
+                    total_size_bytes=200,
+                    group_id=66,
+                )
+            ]
+        )
+        app.processEvents()
+
+        window.results_view.filter_extension_combo.setCurrentText("mp4")
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 2
+
+        window.results_view.filter_include_match_all_checkbox.setChecked(True)
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 0
+        window.close()
+
+
+def test_results_combined_include_filters_require_one_file_to_match_all_conditions(
+    tmp_path: Path,
+) -> None:
+    """Do not qualify a group when different files satisfy different filters."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        window.results_view.load_groups(
+            [
+                DuplicateGroup(
+                    scan_id=1,
+                    profile="balanced",
+                    created_at="now",
+                    items=[
+                        _dup_item(
+                            81,
+                            str(tmp_path / "combo" / "codec_match.mkv"),
+                            1920,
+                            1080,
+                            2_000_000,
+                            0.99,
+                            codec="hevc",
+                        ),
+                        _dup_item(
+                            82,
+                            str(tmp_path / "combo" / "ext_match.webm"),
+                            1920,
+                            1080,
+                            1_900_000,
+                            0.98,
+                            codec="vp9",
+                        ),
+                    ],
+                    total_size_bytes=200,
+                    group_id=67,
+                )
+            ]
+        )
+        app.processEvents()
+
+        window.results_view.filter_video_codec_combo.setCurrentText("hevc")
+        window.results_view.filter_extension_combo.setCurrentText("webm")
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 0
         window.close()
 
 

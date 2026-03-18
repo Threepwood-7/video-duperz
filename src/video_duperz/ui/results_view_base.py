@@ -206,6 +206,10 @@ class ResultsViewBase(QWidget):
             object_name="results_filter_include_match_all_checkbox",
             widget_alias="Must Match All",
         )
+        self.filter_include_match_all_checkbox.setToolTip(
+            "Off: one matching file keeps the whole group visible. "
+            "On: every surviving file must match, or the group is hidden."
+        )
 
         ranges_card = self._create_filter_card(
             title="Ranges",
@@ -817,8 +821,8 @@ class ResultsViewBase(QWidget):
 
     def _current_filter_state(self) -> ResultsFilterState:
         """Read the live filter widgets into a normalized filter state."""
-        extension_text = self.filter_extension_combo.currentText().strip().casefold()
-        codec_text = self.filter_video_codec_combo.currentText().strip().casefold()
+        extension_value = str(self.filter_extension_combo.currentData() or "").strip()
+        codec_value = str(self.filter_video_codec_combo.currentData() or "").strip()
         hdr_mode = str(self.filter_hdr_combo.currentData() or HDR_FILTER_ANY)
         return ResultsFilterState(
             include_name_terms=self._parse_filter_terms(
@@ -841,8 +845,8 @@ class ResultsViewBase(QWidget):
             min_similarity=self._optional_double_value(self.filter_min_similarity_spin),
             min_width=self._optional_int_value(self.filter_min_width_spin),
             min_height=self._optional_int_value(self.filter_min_height_spin),
-            extension="" if extension_text == "any" else extension_text,
-            video_codec="" if codec_text == "any" else codec_text,
+            extension=extension_value.casefold(),
+            video_codec=codec_value.casefold(),
             hdr_mode=hdr_mode,
         )
 
@@ -898,8 +902,8 @@ class ResultsViewBase(QWidget):
         )
         self.filter_min_width_spin.setValue(self.filter_min_width_spin.minimum())
         self.filter_min_height_spin.setValue(self.filter_min_height_spin.minimum())
-        self.filter_extension_combo.setCurrentText("Any")
-        self.filter_video_codec_combo.setCurrentText("Any")
+        self.filter_extension_combo.setCurrentIndex(0)
+        self.filter_video_codec_combo.setCurrentIndex(0)
         self.filter_hdr_combo.setCurrentIndex(0)
         del blockers
         self._apply_filter_inputs()
@@ -912,19 +916,20 @@ class ResultsViewBase(QWidget):
     def _refresh_attribute_filter_options(
         self,
         combo: QComboBox,
-        values: list[str],
+        values: list[tuple[str, str]],
     ) -> None:
         """Refresh one attribute combo and preserve its current valid choice."""
-        current_text = combo.currentText().strip().casefold()
+        current_value = str(combo.currentData() or "").strip().casefold()
         blocker = QSignalBlocker(combo)
         try:
             combo.clear()
-            combo.addItem("Any")
-            for value in values:
-                combo.addItem(value)
-            if current_text and current_text != "any":
+            combo.addItem("Any", "")
+            for label, value in values:
+                combo.addItem(label, value)
+            if current_value:
                 for index in range(combo.count()):
-                    if combo.itemText(index).strip().casefold() == current_text:
+                    item_value = str(combo.itemData(index) or "").strip().casefold()
+                    if item_value == current_value:
                         combo.setCurrentIndex(index)
                         return
             combo.setCurrentIndex(0)
@@ -942,7 +947,10 @@ class ResultsViewBase(QWidget):
             },
             key=str.casefold,
         )
-        self._refresh_attribute_filter_options(self.filter_extension_combo, extensions)
+        self._refresh_attribute_filter_options(
+            self.filter_extension_combo,
+            [(extension, extension) for extension in extensions],
+        )
 
     def _refresh_video_codec_filter_options(self) -> None:
         """Refresh codec filter choices from the currently loaded duplicate set."""
@@ -955,4 +963,7 @@ class ResultsViewBase(QWidget):
             },
             key=str.casefold,
         )
-        self._refresh_attribute_filter_options(self.filter_video_codec_combo, codecs)
+        self._refresh_attribute_filter_options(
+            self.filter_video_codec_combo,
+            [(codec, codec.casefold()) for codec in codecs],
+        )
