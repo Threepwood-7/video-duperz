@@ -12,7 +12,7 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from fractions import Fraction
 from statistics import median
-from typing import Literal, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 import numpy as np
 from threep_commons.subprocess_helpers import (
@@ -23,7 +23,19 @@ from threep_commons.subprocess_helpers import (
 
 from .executable_paths import resolve_executable_path
 from .media_format_policy import is_problematic_media_path
-from .models import FingerprintRecord, FrameDecodeBackendId, utc_now_iso
+from .models import (
+    FingerprintRecord,
+    FrameDecodeBackendId,
+    ScanProcessCpuPriority,
+    ScanProcessIoMode,
+    utc_now_iso,
+)
+from .process_priority import (
+    apply_scan_child_process_io_mode,
+    apply_subprocess_cpu_priority_kwargs,
+    normalize_scan_cpu_priority,
+    normalize_scan_io_mode,
+)
 
 try:
     import cv2  # type: ignore
@@ -397,9 +409,11 @@ def _ffmpeg_gray_frame(
     ffmpeg_path: str,
     path: str,
     timestamp_s: float,
+    *,
+    scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
+    scan_child_io_mode: ScanProcessIoMode = "normal",
 ) -> np.ndarray | None:
     """Extract one grayscale sample frame through ffmpeg."""
-    hidden_kwargs = windows_no_window_run_kwargs()
     command = [
         ffmpeg_path,
         "-v",
@@ -426,21 +440,25 @@ def _ffmpeg_gray_frame(
         "gray",
         "pipe:1",
     ]
-    kwargs = merge_subprocess_kwargs(
-        {
-            "capture_output": True,
-            "check": True,
-        },
-        hidden_kwargs,
+    kwargs: dict[str, Any] = apply_subprocess_cpu_priority_kwargs(
+        merge_subprocess_kwargs(
+            {
+                "stdin": subprocess.DEVNULL,
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+            },
+            windows_no_window_popen_kwargs(),
+        ),
+        scan_child_cpu_priority,
     )
     try:
-        proc = cast(
-            "subprocess.CompletedProcess[bytes]",
-            subprocess.run(command, **kwargs),
-        )
-    except subprocess.CalledProcessError:
+        process = cast("subprocess.Popen[bytes]", subprocess.Popen(command, **kwargs))
+        apply_scan_child_process_io_mode(process, scan_child_io_mode)
+        stdout, _stderr = process.communicate()
+    except OSError:
         return None
-    stdout = proc.stdout
+    if process.returncode:
+        return None
     if len(stdout) < _FFMPEG_GRAY_BYTES:
         return None
     return np.frombuffer(stdout[:_FFMPEG_GRAY_BYTES], dtype=np.uint8).reshape(
@@ -453,11 +471,19 @@ def _ffmpeg_gray_samples(
     duration_s: float,
     *,
     ffmpeg_exe_path: str = "",
+    scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
+    scan_child_io_mode: ScanProcessIoMode = "normal",
 ) -> list[np.ndarray | None]:
     """Decode sampled grayscale frames through ffmpeg."""
     ffmpeg_path = ensure_ffmpeg_available(ffmpeg_exe_path)
     return [
-        _ffmpeg_gray_frame(ffmpeg_path, path, timestamp_s)
+        _ffmpeg_gray_frame(
+            ffmpeg_path,
+            path,
+            timestamp_s,
+            scan_child_cpu_priority=scan_child_cpu_priority,
+            scan_child_io_mode=scan_child_io_mode,
+        )
         for timestamp_s in sample_timestamps(duration_s)
     ]
 
@@ -468,6 +494,8 @@ def _compute_hashes_for_decoder(
     decoder_backend: FrameDecodeBackendId,
     *,
     ffmpeg_exe_path: str = "",
+    scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
+    scan_child_io_mode: ScanProcessIoMode = "normal",
 ) -> list[int]:
     """Compute hashes through one concrete decoder backend."""
     if decoder_backend == "opencv":
@@ -476,7 +504,13 @@ def _compute_hashes_for_decoder(
         return _hash_gray_frames(path, _pyav_gray_samples(path, duration_s))
     return _hash_gray_frames(
         path,
-        _ffmpeg_gray_samples(path, duration_s, ffmpeg_exe_path=ffmpeg_exe_path),
+        _ffmpeg_gray_samples(
+            path,
+            duration_s,
+            ffmpeg_exe_path=ffmpeg_exe_path,
+            scan_child_cpu_priority=scan_child_cpu_priority,
+            scan_child_io_mode=scan_child_io_mode,
+        ),
     )
 
 
@@ -638,7 +672,7 @@ def _kill_process_tree(process: subprocess.Popen[str]) -> None:
         return
     if sys.platform == "win32":
         command = ["taskkill", "/PID", str(process.pid), "/T", "/F"]
-        kwargs = merge_subprocess_kwargs(
+        kwargs: dict[str, Any] = merge_subprocess_kwargs(
             {
                 "capture_output": True,
                 "text": True,
@@ -662,6 +696,8 @@ def _run_decoder_attempt_subprocess(
     timeout_s: float,
     *,
     ffmpeg_exe_path: str = "",
+    scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
+    scan_child_io_mode: ScanProcessIoMode = "normal",
 ) -> _DecoderAttemptResult:
     """Run one decoder attempt in a killable child process."""
     payload = json.dumps(
@@ -670,19 +706,25 @@ def _run_decoder_attempt_subprocess(
             "duration_s": duration_s,
             "decoder_backend": decoder_backend,
             "ffmpeg_exe_path": ffmpeg_exe_path,
+            "scan_child_cpu_priority": scan_child_cpu_priority,
+            "scan_child_io_mode": scan_child_io_mode,
         }
     )
     command = [sys.executable, "-m", "video_duperz", "fingerprint-child"]
-    kwargs = merge_subprocess_kwargs(
-        {
-            "stdin": subprocess.PIPE,
-            "stdout": subprocess.PIPE,
-            "stderr": subprocess.PIPE,
-            "text": True,
-        },
-        windows_no_window_popen_kwargs(),
+    kwargs: dict[str, Any] = apply_subprocess_cpu_priority_kwargs(
+        merge_subprocess_kwargs(
+            {
+                "stdin": subprocess.PIPE,
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+                "text": True,
+            },
+            windows_no_window_popen_kwargs(),
+        ),
+        scan_child_cpu_priority,
     )
-    process = subprocess.Popen(command, **kwargs)
+    process: subprocess.Popen[str] = subprocess.Popen(command, **kwargs)
+    apply_scan_child_process_io_mode(process, scan_child_io_mode)
     try:
         stdout_text, stderr_text = process.communicate(
             input=payload,
@@ -719,6 +761,8 @@ def build_fingerprint_record_with_fallback(
     attempt_runner: _DecoderAttemptRunner | None = None,
     timeout_s: float = FINGERPRINT_DECODER_TIMEOUT_S,
     ffmpeg_exe_path: str = "",
+    scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
+    scan_child_io_mode: ScanProcessIoMode = "normal",
 ) -> FingerprintBuildResult:
     """Build a fingerprint record using guarded decoder fallbacks."""
 
@@ -735,6 +779,8 @@ def build_fingerprint_record_with_fallback(
             decoder_backend,
             attempt_timeout_s,
             ffmpeg_exe_path=ffmpeg_exe_path,
+            scan_child_cpu_priority=scan_child_cpu_priority,
+            scan_child_io_mode=scan_child_io_mode,
         )
 
     attempts: list[FingerprintDecoderAttempt] = []
@@ -791,6 +837,8 @@ def build_fingerprint_record(
     path: str,
     *,
     ffmpeg_exe_path: str = "",
+    scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
+    scan_child_io_mode: ScanProcessIoMode = "normal",
 ) -> FingerprintRecord:
     """Build the persisted fingerprint payload for a scanned video file."""
     return build_fingerprint_record_with_fallback(
@@ -798,6 +846,8 @@ def build_fingerprint_record(
         duration_s=duration_s,
         path=path,
         ffmpeg_exe_path=ffmpeg_exe_path,
+        scan_child_cpu_priority=scan_child_cpu_priority,
+        scan_child_io_mode=scan_child_io_mode,
     ).record
 
 
@@ -815,6 +865,10 @@ def run_fingerprint_child_from_stdio() -> int:
     if decoder_backend is None:
         raise ValueError("Fingerprint child request is missing 'decoder_backend'.")
     ffmpeg_exe_path = str(payload_map.get("ffmpeg_exe_path", "") or "")
+    scan_child_cpu_priority = str(
+        payload_map.get("scan_child_cpu_priority", "") or "normal"
+    )
+    scan_child_io_mode = str(payload_map.get("scan_child_io_mode", "") or "normal")
     duration_raw = payload_map.get("duration_s", 0.0)
     duration_s = float(duration_raw) if isinstance(duration_raw, int | float) else 0.0
     try:
@@ -823,6 +877,10 @@ def run_fingerprint_child_from_stdio() -> int:
             duration_s,
             decoder_backend,
             ffmpeg_exe_path=ffmpeg_exe_path,
+            scan_child_cpu_priority=normalize_scan_cpu_priority(
+                scan_child_cpu_priority,
+            ),
+            scan_child_io_mode=normalize_scan_io_mode(scan_child_io_mode),
         )
     except FingerprintError as exc:
         sys.stdout.write(json.dumps(_error_payload(decoder_backend, exc)))

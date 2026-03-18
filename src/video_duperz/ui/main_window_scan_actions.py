@@ -8,10 +8,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import QFileDialog, QMessageBox
+from send2trash import send2trash
 
 from ..db import Database
 from ..exporters import export_scan
 from ..models import ScanIssue
+from ..process_priority import (
+    CurrentProcessPriorityState,
+    apply_scan_priority_to_current_process,
+    restore_scan_priority_to_current_process,
+)
 from ..scanner import build_physical_drive_scan_plan
 from .main_window_core import DeleteTarget, metric_float, metric_int, payload_dict
 from .main_window_profiles import MainWindowProfilesMixin
@@ -25,6 +31,8 @@ if TYPE_CHECKING:
 
 class MainWindowScanActionMixin(MainWindowProfilesMixin):
     """Active scan lifecycle and duplicate-action helper methods."""
+
+    _scan_priority_state: CurrentProcessPriorityState | None
 
     def _start_scan(self) -> None:
         """Create and launch a new background scan worker from current settings."""
@@ -77,6 +85,7 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
         )
         self._set_scan_tab_lock(True)
         self.scan_view.set_running(True)
+        self._apply_scan_parent_priority()
         if resume_scan_id is None:
             self.statusBar().showMessage("Scan started")
         else:
@@ -95,6 +104,8 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
             probe_worker_mode=self.settings.probe_worker_mode,
             ffmpeg_exe_path=self.settings.ffmpeg_exe_path,
             ffprobe_exe_path=self.settings.ffprobe_exe_path,
+            scan_child_cpu_priority=self.settings.scan_child_cpu_priority,
+            scan_child_io_mode=self.settings.scan_child_io_mode,
             db_batch_size=self.settings.scan_db_batch_size,
             db_flush_interval_ms=self.settings.scan_db_flush_interval_ms,
             enum_queue_max=self.settings.scan_enum_queue_max,
@@ -115,6 +126,18 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
             return
         self.scan_worker.pause()
         self.statusBar().showMessage("Pausing scan...")
+
+    def _apply_scan_parent_priority(self) -> None:
+        """Apply the configured scan-time priority to the app process."""
+        self._scan_priority_state = apply_scan_priority_to_current_process(
+            self.settings.scan_parent_cpu_priority,
+            self.settings.scan_parent_io_mode,
+        )
+
+    def _restore_scan_parent_priority(self) -> None:
+        """Restore the app process priority after scan work completes."""
+        restore_scan_priority_to_current_process(self._scan_priority_state)
+        self._scan_priority_state = None
 
     def _resume_scan(self) -> None:
         """Resume the currently loaded paused scan when edits are still safe."""
@@ -161,6 +184,7 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
     def _scan_finished(self, result: ScanResult) -> None:
         """Refresh persisted results after a scan worker completes."""
         self.scan_worker = None
+        self._restore_scan_parent_priority()
         self._set_scan_tab_lock(False)
         self.scan_view.set_running(False)
         self.scan_view.set_issues(result.issues)
@@ -228,6 +252,7 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
     def _scan_error(self, details: str) -> None:
         """Handle a failed background scan worker."""
         self.scan_worker = None
+        self._restore_scan_parent_priority()
         self._set_scan_tab_lock(False)
         self.scan_view.set_running(False)
         self.statusBar().showMessage("Scan failed")
@@ -264,8 +289,46 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
                 return alt
             index += 1
 
+    def _resolve_delete_source_path(self, target: DeleteTarget) -> Path:
+        """Return the persisted file path for one delete target."""
+        file_id = int(target.get("file_id", 0))
+        if file_id <= 0:
+            raise ValueError("Delete target is missing a valid file_id")
+        stored_path = self.db.fetch_file_path(file_id)
+        return Path(stored_path)
+
+    def _apply_delete_mode(self, *, mode: str, file_id: int, source: Path) -> None:
+        """Execute one delete mode and update the database record accordingly."""
+        match mode:
+            case "rename":
+                if not source.exists():
+                    raise FileNotFoundError(f"{source} does not exist")
+                destination = self._next_zdele_path(source)
+                source.rename(destination)
+                self.db.refresh_file_after_rename(
+                    file_id=file_id,
+                    new_path=str(destination),
+                )
+            case "recycle_bin":
+                if source.exists():
+                    send2trash(str(source))
+                self.db.mark_file_missing(file_id=file_id)
+            case "permanent":
+                if source.exists():
+                    source.unlink()
+                self.db.mark_file_missing(file_id=file_id)
+            case _:
+                raise ValueError(f"Unsupported delete mode: {mode}")
+
+    @staticmethod
+    def _format_delete_summary(*, success_count: int, failure_count: int) -> str:
+        """Return the status-bar summary for one delete batch."""
+        if failure_count:
+            return f"Processed {success_count} file(s) with {failure_count} error(s)."
+        return f"Processed {success_count} file(s)."
+
     def _handle_delete_requested(self, mode: str, targets: list[DeleteTarget]) -> None:
-        """Execute rename or permanent delete actions for selected result rows."""
+        """Execute rename, recycle-bin, or permanent delete actions."""
         if self.current_scan_id is None:
             QMessageBox.warning(self, "No Scan", "Run a scan first.")
             return
@@ -276,45 +339,28 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
         failures: list[str] = []
         success_count = 0
         for target in targets:
-            file_id = int(target.get("file_id", 0))
-            if file_id <= 0:
-                continue
-            source = Path(self.db.fetch_file_path(file_id))
             try:
-                if mode == "rename":
-                    if not source.exists():
-                        raise FileNotFoundError(f"{source} does not exist")
-                    destination = self._next_zdele_path(source)
-                    source.rename(destination)
-                    self.db.refresh_file_after_rename(
-                        file_id=file_id,
-                        new_path=str(destination),
-                    )
-                elif mode == "permanent":
-                    if source.exists():
-                        source.unlink()
-                    self.db.mark_file_missing(file_id=file_id)
-                else:
-                    continue
+                file_id = int(target.get("file_id", 0))
+                if file_id <= 0:
+                    raise ValueError("Delete target is missing a valid file_id")
+                source = self._resolve_delete_source_path(target)
+                self._apply_delete_mode(mode=mode, file_id=file_id, source=source)
                 self.db.remove_file_from_duplicate_groups(file_id=file_id)
                 self.results_view.remove_file_by_id(file_id)
                 success_count += 1
             except Exception as exc:
+                source = Path(str(target.get("path", "")))
                 failures.append(f"{source}: {exc}")
 
         self.db.prune_duplicate_groups(self.current_scan_id)
         groups = self.db.load_duplicate_groups(self.current_scan_id)
         self.results_view.load_groups(groups)
-
-        if failures:
-            self.statusBar().showMessage(f"Completed with {len(failures)} errors.")
-            QMessageBox.warning(
-                self,
-                "Delete Completed with Errors",
-                "\n".join(failures[:20]),
+        self.statusBar().showMessage(
+            self._format_delete_summary(
+                success_count=success_count,
+                failure_count=len(failures),
             )
-        else:
-            self.statusBar().showMessage(f"Processed {success_count} file(s).")
+        )
 
     def _export_current_scan(self) -> None:
         """Export the currently loaded scan to CSV and JSON."""

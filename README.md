@@ -32,6 +32,7 @@ A Windows-first PySide6 app for finding perceptual duplicate videos using dhash 
 - **Thumbnail pair caching** - extracts and caches video thumbnails at configurable frame positions
 - **Duplicate group management** - decision-focused UI for bulk actions (keep best, worst, larger, smaller, newer, older)
 - **Structured results filtering** - combine case-insensitive text filters with metadata filters for size, duration, similarity, resolution, codec, and HDR
+- **Scan-time process priority controls** - configure parent-process CPU/background I/O mode and scan-child priority policy for probe and fingerprint subprocesses
 - **Export to CSV/JSON** - scan results exportable for external analysis
 - **Saved scan profiles** - save and restore source configurations and scan parameters
 - **Saved column views** - preserve result table column layouts and visibility
@@ -182,6 +183,7 @@ Runtime settings are stored via QSettings:
 | Similarity profile | balanced / conservative / aggressive |
 | Max workers | 1-16, with per-drive overrides |
 | Probe worker mode | balanced / burst |
+| Scan process priority | Parent and child CPU priority plus Normal / Background I/O mode during scans |
 | Thumbnail size | 80x45, 96x54, 128x72, 160x90 |
 | Frame extraction positions | Two percentage points for thumbnail comparison |
 | Identical file matching | Block size (1-64 MiB) and sample positions |
@@ -189,6 +191,28 @@ Runtime settings are stored via QSettings:
 | Batch size / flush intervals | Scan pipeline tuning parameters |
 | Everything path override | Optional `Everything.exe` override used by the Results shortcut |
 | Custom Results commands | INI-only `custom_command_F2/F3/F4` entries that receive the current file path and parent dir |
+
+### Scan Priority Settings
+
+The Sources tab exposes four persisted scan-time priority controls:
+
+- `scan_parent_cpu_priority`
+- `scan_parent_io_mode`
+- `scan_child_cpu_priority`
+- `scan_child_io_mode`
+
+Supported CPU choices are `Idle`, `Below Normal`, `Normal`, `Above Normal`, and `High`.
+Supported I/O choices are `Normal` and `Background`.
+
+The parent settings apply only while a scan is active and are restored when the scan finishes, pauses, fails, or is cancelled. The same parent-scan policy is also applied by the headless `video-duperz scan` command.
+
+The child settings apply only to scan-heavy subprocesses:
+
+- `ffprobe` metadata extraction
+- `ffmpeg` frame extraction used during fingerprinting
+- `video-duperz fingerprint-child`
+
+Explorer, MediaInfo, Everything, custom commands, and cleaner relaunches are intentionally unaffected.
 
 ### Recent Folders
 
@@ -198,8 +222,9 @@ Up to 20 recently scanned folders are stored for quick access. Saved scan profil
 
 | Key | Action |
 |---|---|
-| Delete | Soft delete selected files |
-| Shift+Delete | Permanently delete selected files |
+| Delete | Soft delete selected files by renaming to `.z_dele` |
+| Shift+Delete | Delete selected files to the Recycle Bin |
+| Ctrl+Shift+Delete | Permanently delete selected files |
 | Space | Toggle the current row checkbox |
 | Tab | Jump to the next visible duplicate group |
 | Shift+Tab | Jump to the previous visible duplicate group |
@@ -245,8 +270,9 @@ Up to 20 recently scanned folders are stored for quick access. Saved scan profil
 - Launch MediaInfo
 - Run Custom Command F2 / F3 / F4
 - Select all, keep best / worst / larger / smaller / newer / older
-- Delete Selected
-- Permanently Delete Selected
+- Soft Delete Selected
+- Delete to Recycle Bin
+- Permanently Delete
 
 ### INI-Only Results Actions
 
@@ -328,6 +354,7 @@ video-duperz/
   3. **Analyze** - for uncached files, run probe plus fingerprint or fingerprint-only reuse work
   4. **Match** - bucket files by metadata, compare perceptual hashes, and accept duplicate edges under the selected profile
   5. **Results** - build duplicate groups and choose a default keep candidate by quality score
+- **Scan process priority** (`process_priority.py`) applies optional parent-process CPU/background mode during active scans and child-process priority policy for scan-only subprocess launches.
 - **Physical drive mapping** (`scanner.py`) uses Windows kernel32 APIs to map volumes to physical drives and allocate I/O workers per drive.
 - **Database** (`db.py`) uses SQLite with WAL mode, aggressive PRAGMAs (mmap, cache_size, synchronous=NORMAL), and batch transaction flushing.
 - **GUI threading** uses `QThreadPool` with `QRunnable`-based workers (`ScanWorker`, `ThumbnailPairWorker`, `ExactMatchGroupWorker`) communicating via Qt signals.
@@ -604,11 +631,12 @@ python -m video_duperz clean --full-reset
 - Each physical drive gets its own processing lane with independent workers.
 - Reduce `Max workers` if disk I/O becomes a bottleneck.
 - Use `Probe worker mode: burst` for SSDs, `balanced` for HDDs.
+- Use the Sources tab `Scan Process Priority` controls when you want scans to yield more aggressively to foreground work.
 - Max 64 drive workers per scan.
 
 ### Settings migration
 
-Column width and visibility settings must match the current 19-column schema; stale payloads are ignored.
+Column width and visibility settings must match the current 20-column schema; stale payloads are ignored.
 
 ---
 

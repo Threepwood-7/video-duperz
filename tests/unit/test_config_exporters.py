@@ -51,6 +51,10 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     settings.custom_command_f2 = '"C:/Tools/F2 Runner.exe" --flag'
     settings.custom_command_f3 = '"C:/Tools/F3 Runner.exe"'
     settings.custom_command_f4 = ""
+    settings.scan_parent_cpu_priority = "below_normal"
+    settings.scan_parent_io_mode = "background"
+    settings.scan_child_cpu_priority = "high"
+    settings.scan_child_io_mode = "background"
     settings.scan_db_batch_size = 2048
     settings.scan_db_flush_interval_ms = 450
     settings.scan_enum_queue_max = 8192
@@ -87,6 +91,10 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     assert loaded.custom_command_f2 == '"C:/Tools/F2 Runner.exe" --flag'
     assert loaded.custom_command_f3 == '"C:/Tools/F3 Runner.exe"'
     assert loaded.custom_command_f4 == ""
+    assert loaded.scan_parent_cpu_priority == "below_normal"
+    assert loaded.scan_parent_io_mode == "background"
+    assert loaded.scan_child_cpu_priority == "high"
+    assert loaded.scan_child_io_mode == "background"
     assert loaded.scan_db_batch_size == 2048
     assert loaded.scan_db_flush_interval_ms == 450
     assert loaded.scan_enum_queue_max == 8192

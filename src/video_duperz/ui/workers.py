@@ -16,10 +16,11 @@ from ..exact_match import (
     normalize_exact_sample_pair,
 )
 from ..pipeline import run_scan
+from ..process_priority import normalize_scan_cpu_priority, normalize_scan_io_mode
 from .thumbnails import extract_thumbnail_pair, normalize_frame_pair
 
 if TYPE_CHECKING:
-    from ..models import ProbeBackendId
+    from ..models import ProbeBackendId, ScanProcessCpuPriority, ScanProcessIoMode
 
 
 class ScanWorkerSignals(QObject):
@@ -46,6 +47,8 @@ class ScanWorker(QRunnable):
         probe_worker_mode: str = "balanced",
         ffmpeg_exe_path: str = "",
         ffprobe_exe_path: str = "",
+        scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
+        scan_child_io_mode: ScanProcessIoMode = "normal",
         db_batch_size: int = 512,
         db_flush_interval_ms: int = 200,
         enum_queue_max: int = 4096,
@@ -68,6 +71,12 @@ class ScanWorker(QRunnable):
         self._probe_worker_mode = str(probe_worker_mode or "balanced")
         self._ffmpeg_exe_path = str(ffmpeg_exe_path or "")
         self._ffprobe_exe_path = str(ffprobe_exe_path or "")
+        self._scan_child_cpu_priority: ScanProcessCpuPriority = (
+            normalize_scan_cpu_priority(scan_child_cpu_priority)
+        )
+        self._scan_child_io_mode: ScanProcessIoMode = normalize_scan_io_mode(
+            scan_child_io_mode
+        )
         self._db_batch_size = max(32, int(db_batch_size))
         self._db_flush_interval_ms = max(50, int(db_flush_interval_ms))
         self._enum_queue_max = max(256, int(enum_queue_max))
@@ -101,6 +110,8 @@ class ScanWorker(QRunnable):
                     probe_worker_mode=self._probe_worker_mode,
                     ffmpeg_exe_path=self._ffmpeg_exe_path,
                     ffprobe_exe_path=self._ffprobe_exe_path,
+                    scan_child_cpu_priority=self._scan_child_cpu_priority,
+                    scan_child_io_mode=self._scan_child_io_mode,
                     db_batch_size=self._db_batch_size,
                     db_flush_interval_ms=self._db_flush_interval_ms,
                     enum_queue_max=self._enum_queue_max,

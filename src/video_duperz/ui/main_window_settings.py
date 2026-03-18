@@ -7,7 +7,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QFileDialog, QInputDialog, QLineEdit, QMessageBox
+from PySide6.QtWidgets import (
+    QComboBox,
+    QFileDialog,
+    QInputDialog,
+    QLineEdit,
+    QMessageBox,
+)
 from threep_commons.desktop import open_path_in_default_app
 
 from ..config import (
@@ -29,6 +35,7 @@ from ..models import (
     Settings,
     utc_now_iso,
 )
+from ..process_priority import normalize_scan_cpu_priority, normalize_scan_io_mode
 from ..scan_sets import (
     build_scan_set_key,
     normalize_extensions,
@@ -118,6 +125,22 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
         self.ffmpeg_exe_path_edit.setText(self.settings.ffmpeg_exe_path)
         self.ffprobe_exe_path_edit.setText(self.settings.ffprobe_exe_path)
         self.mediainfo_exe_path_edit.setText(self.settings.mediainfo_exe_path)
+        self._set_combo_by_data(
+            self.scan_parent_cpu_priority_combo,
+            self.settings.scan_parent_cpu_priority,
+        )
+        self._set_combo_by_data(
+            self.scan_parent_io_mode_combo,
+            self.settings.scan_parent_io_mode,
+        )
+        self._set_combo_by_data(
+            self.scan_child_cpu_priority_combo,
+            self.settings.scan_child_cpu_priority,
+        )
+        self._set_combo_by_data(
+            self.scan_child_io_mode_combo,
+            self.settings.scan_child_io_mode,
+        )
         size_key = normalize_thumbnail_size(self.settings.thumbnail_size)
         self.thumbnail_size_combo.blockSignals(True)
         for i in range(self.thumbnail_size_combo.count()):
@@ -207,6 +230,18 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
             custom_command_f2=str(self.settings.custom_command_f2 or "").strip(),
             custom_command_f3=str(self.settings.custom_command_f3 or "").strip(),
             custom_command_f4=str(self.settings.custom_command_f4 or "").strip(),
+            scan_parent_cpu_priority=normalize_scan_cpu_priority(
+                self.scan_parent_cpu_priority_combo.currentData()
+            ),
+            scan_parent_io_mode=normalize_scan_io_mode(
+                self.scan_parent_io_mode_combo.currentData()
+            ),
+            scan_child_cpu_priority=normalize_scan_cpu_priority(
+                self.scan_child_cpu_priority_combo.currentData()
+            ),
+            scan_child_io_mode=normalize_scan_io_mode(
+                self.scan_child_io_mode_combo.currentData()
+            ),
             scan_db_batch_size=self.settings.scan_db_batch_size,
             scan_db_flush_interval_ms=self.settings.scan_db_flush_interval_ms,
             scan_enum_queue_max=self.settings.scan_enum_queue_max,
@@ -235,6 +270,14 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
             command_f3=self.settings.custom_command_f3,
             command_f4=self.settings.custom_command_f4,
         )
+
+    @staticmethod
+    def _set_combo_by_data(combo: QComboBox, value: object) -> None:
+        """Set one combo box to the first item whose data matches the value."""
+        for index in range(combo.count()):
+            if str(combo.itemData(index)) == str(value):
+                combo.setCurrentIndex(index)
+                return
 
     def _on_tab_changed(self, index: int) -> None:
         """Keep the Scan tab selected while a scan is running."""

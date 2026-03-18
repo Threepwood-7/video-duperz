@@ -28,6 +28,7 @@ from ..config_video_presets import (
     DEFAULT_VIDEO_EXTENSION_PRESET,
     VIDEO_EXTENSION_PRESET_NAMES,
 )
+from ..process_priority import CPU_PRIORITY_OPTIONS, IO_MODE_OPTIONS
 from .results_view import (
     SORT_GROUP_COUNT_ASC,
     SORT_GROUP_COUNT_DESC,
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
 
     from ..db import Database
     from ..models import SavedScanProfilePayload, Settings
+    from ..process_priority import CurrentProcessPriorityState
     from .workers import ScanWorker
 
 THUMBNAIL_SIZE_OPTIONS: tuple[tuple[str, str], ...] = (
@@ -197,6 +199,7 @@ class MainWindowBase(QMainWindow):
         }
         self._drive_workers_editing = False
         self._full_reset_requested = False
+        self._scan_priority_state: CurrentProcessPriorityState | None = None
 
         self.tabs = QTabWidget(self)
         self.setCentralWidget(self.tabs)
@@ -468,6 +471,11 @@ class MainWindowMenuMixin(MainWindowBase):
         self.delete_selected_action = self.results_view.delete_selected_action
         actions_menu.addAction(self.delete_selected_action)
 
+        self.delete_selected_recycle_bin_action = (
+            self.results_view.delete_selected_recycle_bin_action
+        )
+        actions_menu.addAction(self.delete_selected_recycle_bin_action)
+
         self.delete_selected_permanent_action = (
             self.results_view.delete_selected_permanent_action
         )
@@ -620,6 +628,36 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         self.thumbnail_size_combo.currentIndexChanged.connect(
             self._thumbnail_size_changed
         )
+        self.scan_parent_cpu_priority_combo = QComboBox(self.sources_tab)
+        self._configure_named_widget(
+            self.scan_parent_cpu_priority_combo,
+            object_name="scan_parent_cpu_priority_combo",
+            widget_alias="Scan Parent CPU Priority",
+        )
+        self.scan_parent_io_mode_combo = QComboBox(self.sources_tab)
+        self._configure_named_widget(
+            self.scan_parent_io_mode_combo,
+            object_name="scan_parent_io_mode_combo",
+            widget_alias="Scan Parent IO Mode",
+        )
+        self.scan_child_cpu_priority_combo = QComboBox(self.sources_tab)
+        self._configure_named_widget(
+            self.scan_child_cpu_priority_combo,
+            object_name="scan_child_cpu_priority_combo",
+            widget_alias="Scan Child CPU Priority",
+        )
+        self.scan_child_io_mode_combo = QComboBox(self.sources_tab)
+        self._configure_named_widget(
+            self.scan_child_io_mode_combo,
+            object_name="scan_child_io_mode_combo",
+            widget_alias="Scan Child IO Mode",
+        )
+        for label, value in CPU_PRIORITY_OPTIONS:
+            self.scan_parent_cpu_priority_combo.addItem(label, value)
+            self.scan_child_cpu_priority_combo.addItem(label, value)
+        for label, value in IO_MODE_OPTIONS:
+            self.scan_parent_io_mode_combo.addItem(label, value)
+            self.scan_child_io_mode_combo.addItem(label, value)
 
     def _build_executable_override_row(
         self,
@@ -634,6 +672,31 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         row_layout.addWidget(QLabel(label_text, row_widget))
         row_layout.addWidget(path_edit, stretch=1)
         row_layout.addWidget(browse_button)
+        return row_widget
+
+    @staticmethod
+    def _configure_named_widget(
+        widget: QWidget,
+        *,
+        object_name: str,
+        widget_alias: str,
+    ) -> None:
+        """Attach stable widget naming metadata for tests and diagnostics."""
+        widget.setObjectName(object_name)
+        widget.setProperty("widget_id", object_name)
+        widget.setProperty("widget_alias", widget_alias)
+
+    def _build_labeled_combo_row(
+        self,
+        label_text: str,
+        combo: QComboBox,
+    ) -> QWidget:
+        """Build one labeled combo-box row for scan priority controls."""
+        row_widget = QWidget(self.sources_tab)
+        row_layout = QHBoxLayout(row_widget)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.addWidget(QLabel(label_text, row_widget))
+        row_layout.addWidget(combo, stretch=1)
         return row_widget
 
     def _build_sources_drive_widgets(self) -> None:
@@ -694,6 +757,31 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         layout.addWidget(self.probe_backend_combo)
         layout.addWidget(QLabel("Probe mode"))
         layout.addWidget(self.probe_mode_combo)
+        layout.addWidget(QLabel("Scan Process Priority"))
+        layout.addWidget(
+            self._build_labeled_combo_row(
+                "Parent CPU",
+                self.scan_parent_cpu_priority_combo,
+            )
+        )
+        layout.addWidget(
+            self._build_labeled_combo_row(
+                "Parent I/O",
+                self.scan_parent_io_mode_combo,
+            )
+        )
+        layout.addWidget(
+            self._build_labeled_combo_row(
+                "Child CPU",
+                self.scan_child_cpu_priority_combo,
+            )
+        )
+        layout.addWidget(
+            self._build_labeled_combo_row(
+                "Child I/O",
+                self.scan_child_io_mode_combo,
+            )
+        )
         layout.addWidget(QLabel("Executable overrides (blank = use PATH)"))
         layout.addWidget(
             self._build_executable_override_row(

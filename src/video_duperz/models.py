@@ -13,6 +13,14 @@ ProbeWorkerMode = Literal["balanced", "burst"]
 ProbeBackendId = Literal["ffprobe", "pyav"]
 FrameDecodeBackendId = Literal["opencv", "pyav", "ffmpeg"]
 ScanWorkKind = Literal["cache_hit", "fingerprint_only", "probe_and_fingerprint"]
+ScanProcessCpuPriority = Literal[
+    "idle",
+    "below_normal",
+    "normal",
+    "above_normal",
+    "high",
+]
+ScanProcessIoMode = Literal["normal", "background"]
 THUMBNAIL_SIZE_CHOICES = ("80x45", "96x54", "128x72", "160x90")
 DEFAULT_THUMBNAIL_SIZE = "96x54"
 
@@ -68,6 +76,10 @@ class Settings:
     custom_command_f2: str = ""
     custom_command_f3: str = ""
     custom_command_f4: str = ""
+    scan_parent_cpu_priority: ScanProcessCpuPriority = "normal"
+    scan_parent_io_mode: ScanProcessIoMode = "normal"
+    scan_child_cpu_priority: ScanProcessCpuPriority = "normal"
+    scan_child_io_mode: ScanProcessIoMode = "normal"
     scan_db_batch_size: int = 512
     scan_db_flush_interval_ms: int = 200
     scan_enum_queue_max: int = 4096

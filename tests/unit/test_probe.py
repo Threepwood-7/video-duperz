@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from fractions import Fraction
 from types import SimpleNamespace
 
@@ -38,24 +39,41 @@ def test_probe_video_ffprobe_uses_hidden_window_kwargs_and_resolved_executable(
         ],
     }
     recorded: dict[str, object] = {}
+    io_modes: list[object] = []
 
     monkeypatch.setattr(
         "video_duperz.probe.ensure_ffprobe_available",
         lambda: r"C:\ffmpeg\bin\ffprobe.exe",
     )
     monkeypatch.setattr(
-        "video_duperz.probe.windows_no_window_run_kwargs",
+        "video_duperz.probe.windows_no_window_popen_kwargs",
         lambda: {"creationflags": 0x08000000},
     )
+    monkeypatch.setattr(
+        "video_duperz.probe.apply_scan_child_process_io_mode",
+        lambda process, io_mode: io_modes.append((process.pid, io_mode)),
+    )
 
-    def _fake_run(cmd: list[str], **kwargs: object) -> SimpleNamespace:
+    class _FakeProcess:
+        pid = 4321
+        returncode = 0
+
+        def communicate(self) -> tuple[str, str]:
+            return (__import__("json").dumps(payload), "")
+
+    def _fake_popen(cmd: list[str], **kwargs: object) -> _FakeProcess:
         recorded["cmd"] = list(cmd)
         recorded["kwargs"] = dict(kwargs)
-        return SimpleNamespace(stdout=__import__("json").dumps(payload))
+        return _FakeProcess()
 
-    monkeypatch.setattr("video_duperz.probe.subprocess.run", _fake_run)
+    monkeypatch.setattr("video_duperz.probe.subprocess.Popen", _fake_popen)
 
-    meta = probe_video(r"C:\videos\sample.mp4", backend="ffprobe")
+    meta = probe_video(
+        r"C:\videos\sample.mp4",
+        backend="ffprobe",
+        scan_child_cpu_priority="high",
+        scan_child_io_mode="background",
+    )
 
     assert meta == VideoMeta(
         duration_s=10.5,
@@ -87,11 +105,13 @@ def test_probe_video_ffprobe_uses_hidden_window_kwargs_and_resolved_executable(
         r"C:\videos\sample.mp4",
     ]
     assert recorded["kwargs"] == {
-        "capture_output": True,
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
         "text": True,
-        "check": True,
-        "creationflags": 0x08000000,
+        "creationflags": 0x08000000 | int(subprocess.HIGH_PRIORITY_CLASS),
     }
+    assert io_modes == [(4321, "background")]
 
 
 def test_ensure_ffprobe_available_uses_path_lookup_when_override_blank(

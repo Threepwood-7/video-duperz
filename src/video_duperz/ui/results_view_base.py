@@ -124,6 +124,7 @@ class ResultsViewBase(QWidget):
         self.custom_command_f3_action: QAction
         self.custom_command_f4_action: QAction
         self.delete_selected_action: QAction
+        self.delete_selected_recycle_bin_action: QAction
         self.delete_selected_permanent_action: QAction
         self._filter_apply_timer = QTimer(self)
         self._filter_apply_timer.setSingleShot(True)
@@ -503,6 +504,8 @@ class ResultsViewBase(QWidget):
 
     def request_soft_delete_selected(self) -> None: ...
 
+    def request_recycle_bin_delete_selected(self) -> None: ...
+
     def request_permanent_delete_selected(self) -> None: ...
 
     def open_current_in_default_player(self) -> None: ...
@@ -700,13 +703,18 @@ class ResultsViewBase(QWidget):
             self.run_custom_command_f4,
         )
         self.delete_selected_action = self._create_results_action(
-            "&Delete Selected",
+            "&Soft Delete Selected",
             [QKeySequence("Delete")],
             self.request_soft_delete_selected,
         )
-        self.delete_selected_permanent_action = self._create_results_action(
-            "&Permanently Delete Selected",
+        self.delete_selected_recycle_bin_action = self._create_results_action(
+            "Delete to &Recycle Bin",
             [QKeySequence("Shift+Delete")],
+            self.request_recycle_bin_delete_selected,
+        )
+        self.delete_selected_permanent_action = self._create_results_action(
+            "&Permanently Delete",
+            [QKeySequence("Ctrl+Shift+Delete")],
             self.request_permanent_delete_selected,
         )
 

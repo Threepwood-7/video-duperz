@@ -22,9 +22,12 @@ from .models import (
     ProbeBackendId,
     ProbeWorkerMode,
     SavedScanProfilePayload,
+    ScanProcessCpuPriority,
+    ScanProcessIoMode,
     Settings,
     utc_now_iso,
 )
+from .process_priority import normalize_scan_cpu_priority, normalize_scan_io_mode
 from .scan_sets import (
     build_scan_set_key,
     normalize_extensions,
@@ -265,6 +268,22 @@ def _normalize_probe_backend(
     return default
 
 
+def _normalize_scan_process_cpu_priority(
+    value: object,
+    default: ScanProcessCpuPriority = "normal",
+) -> ScanProcessCpuPriority:
+    """Normalize one scan process CPU priority value."""
+    return normalize_scan_cpu_priority(value, default)
+
+
+def _normalize_scan_process_io_mode(
+    value: object,
+    default: ScanProcessIoMode = "normal",
+) -> ScanProcessIoMode:
+    """Normalize one scan process I/O mode value."""
+    return normalize_scan_io_mode(value, default)
+
+
 def _normalize_command_line_text(value: object) -> str:
     """Normalize one INI-only custom command string."""
     return str(value or "").strip()
@@ -412,6 +431,22 @@ def _read_qsettings_payload(
             "custom_command_F4",
             defaults.custom_command_f4,
         ),
+        "scan_parent_cpu_priority": qs.value(
+            "scan_parent_cpu_priority",
+            defaults.scan_parent_cpu_priority,
+        ),
+        "scan_parent_io_mode": qs.value(
+            "scan_parent_io_mode",
+            defaults.scan_parent_io_mode,
+        ),
+        "scan_child_cpu_priority": qs.value(
+            "scan_child_cpu_priority",
+            defaults.scan_child_cpu_priority,
+        ),
+        "scan_child_io_mode": qs.value(
+            "scan_child_io_mode",
+            defaults.scan_child_io_mode,
+        ),
         "scan_db_batch_size": qs.value(
             "scan_db_batch_size", defaults.scan_db_batch_size
         ),
@@ -519,6 +554,22 @@ def _settings_from_raw(raw: dict[str, object], defaults: Settings) -> Settings:
         custom_command_f4=_normalize_command_line_text(
             raw.get("custom_command_F4", defaults.custom_command_f4)
         ),
+        scan_parent_cpu_priority=_normalize_scan_process_cpu_priority(
+            raw.get("scan_parent_cpu_priority", defaults.scan_parent_cpu_priority),
+            defaults.scan_parent_cpu_priority,
+        ),
+        scan_parent_io_mode=_normalize_scan_process_io_mode(
+            raw.get("scan_parent_io_mode", defaults.scan_parent_io_mode),
+            defaults.scan_parent_io_mode,
+        ),
+        scan_child_cpu_priority=_normalize_scan_process_cpu_priority(
+            raw.get("scan_child_cpu_priority", defaults.scan_child_cpu_priority),
+            defaults.scan_child_cpu_priority,
+        ),
+        scan_child_io_mode=_normalize_scan_process_io_mode(
+            raw.get("scan_child_io_mode", defaults.scan_child_io_mode),
+            defaults.scan_child_io_mode,
+        ),
         scan_db_batch_size=_normalize_int_range(
             raw.get("scan_db_batch_size", defaults.scan_db_batch_size),
             defaults.scan_db_batch_size,
@@ -602,6 +653,10 @@ def default_settings() -> Settings:
         custom_command_f2="",
         custom_command_f3="",
         custom_command_f4="",
+        scan_parent_cpu_priority="normal",
+        scan_parent_io_mode="normal",
+        scan_child_cpu_priority="normal",
+        scan_child_io_mode="normal",
         scan_db_batch_size=DEFAULT_SCAN_DB_BATCH_SIZE,
         scan_db_flush_interval_ms=DEFAULT_SCAN_DB_FLUSH_INTERVAL_MS,
         scan_enum_queue_max=DEFAULT_SCAN_ENUM_QUEUE_MAX,

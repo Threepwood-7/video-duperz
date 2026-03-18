@@ -17,6 +17,8 @@ from .models import (
     FrameDecodeBackendId,
     ProbeBackendId,
     ScanIssue,
+    ScanProcessCpuPriority,
+    ScanProcessIoMode,
     ScanProgress,
     ScanResult,
     VideoMeta,
@@ -46,21 +48,14 @@ class _AnalyzeOutput:
     fingerprint_provenance_json: str = ""
 
 
-def _analyze_file(path: str, cached_meta: VideoMeta | None) -> _AnalyzeOutput:
-    """Analyze one file through the legacy ffprobe-primary path."""
-    return _analyze_file_with_probe(
-        path,
-        cached_meta,
-        probe_video_fn=partial(probe_video, backend="ffprobe"),
-    )
-
-
 def _analyze_file_with_probe(
     path: str,
     cached_meta: VideoMeta | None,
     *,
     probe_video_fn: Callable[[str], VideoMeta],
     ffmpeg_exe_path: str = "",
+    scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
+    scan_child_io_mode: ScanProcessIoMode = "normal",
 ) -> _AnalyzeOutput:
     """Probe and fingerprint one file through the configured backend."""
     if cached_meta is None:
@@ -77,12 +72,16 @@ def _analyze_file_with_probe(
             duration_s=meta.duration_s,
             path=path,
             ffmpeg_exe_path=ffmpeg_exe_path,
+            scan_child_cpu_priority=scan_child_cpu_priority,
+            scan_child_io_mode=scan_child_io_mode,
         )
     else:
         fp_result = build_fingerprint_record_with_fallback(
             file_id=0,
             duration_s=meta.duration_s,
             path=path,
+            scan_child_cpu_priority=scan_child_cpu_priority,
+            scan_child_io_mode=scan_child_io_mode,
         )
     fingerprint_s = max(0.0, time.perf_counter() - fp_started)
     return _AnalyzeOutput(
@@ -100,12 +99,16 @@ def build_analyze_file(
     *,
     ffmpeg_exe_path: str = "",
     ffprobe_exe_path: str = "",
+    scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
+    scan_child_io_mode: ScanProcessIoMode = "normal",
 ) -> Callable[[str], _AnalyzeOutput]:
     """Build a single-path analyze callable for the selected probe backend."""
     runtime_analyze = _build_runtime_analyze_file(
         probe_backend,
         ffmpeg_exe_path=ffmpeg_exe_path,
         ffprobe_exe_path=ffprobe_exe_path,
+        scan_child_cpu_priority=scan_child_cpu_priority,
+        scan_child_io_mode=scan_child_io_mode,
     )
 
     def _analyze_uncached(path: str) -> _AnalyzeOutput:
@@ -119,14 +122,15 @@ def _build_runtime_analyze_file(
     *,
     ffmpeg_exe_path: str = "",
     ffprobe_exe_path: str = "",
+    scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
+    scan_child_io_mode: ScanProcessIoMode = "normal",
 ) -> Callable[[str, VideoMeta | None], _AnalyzeOutput]:
     """Build the runtime analyze callable used by the threaded pipeline."""
     probe_video_kwargs: dict[str, str] = {}
     if ffprobe_exe_path:
         probe_video_kwargs["ffprobe_exe_path"] = ffprobe_exe_path
-    if probe_backend == "ffprobe" and not ffmpeg_exe_path and not ffprobe_exe_path:
-        return _analyze_file
-
+    probe_video_kwargs["scan_child_cpu_priority"] = scan_child_cpu_priority
+    probe_video_kwargs["scan_child_io_mode"] = scan_child_io_mode
     target_backend: ProbeBackendId = (
         "ffprobe" if probe_backend == "ffprobe" else probe_backend
     )
@@ -144,6 +148,8 @@ def _build_runtime_analyze_file(
                 **probe_video_kwargs,
             ),
             ffmpeg_exe_path=ffmpeg_exe_path,
+            scan_child_cpu_priority=scan_child_cpu_priority,
+            scan_child_io_mode=scan_child_io_mode,
         )
 
     return _analyze_with_runtime_probe
@@ -160,6 +166,8 @@ def run_scan(
     probe_worker_mode: str = "balanced",
     ffmpeg_exe_path: str = "",
     ffprobe_exe_path: str = "",
+    scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
+    scan_child_io_mode: ScanProcessIoMode = "normal",
     *,
     db_batch_size: int,
     db_flush_interval_ms: int,
@@ -174,13 +182,12 @@ def run_scan(
     retry_failed_files: bool = True,
 ) -> ScanResult:
     """Run a full scan using the default probe, fingerprint, and matcher pipeline."""
-    probe_video_kwargs: dict[str, str] = {}
-    if ffprobe_exe_path:
-        probe_video_kwargs["ffprobe_exe_path"] = ffprobe_exe_path
     analyze_file = _build_runtime_analyze_file(
         probe_backend,
         ffmpeg_exe_path=ffmpeg_exe_path,
         ffprobe_exe_path=ffprobe_exe_path,
+        scan_child_cpu_priority=scan_child_cpu_priority,
+        scan_child_io_mode=scan_child_io_mode,
     )
     if probe_backend == "ffprobe":
         ensure_available_fn = (

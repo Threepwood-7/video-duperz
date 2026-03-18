@@ -25,6 +25,10 @@ from .fingerprint import (
 )
 from .pipeline import run_scan
 from .probe import ProbeError, ensure_probe_backend_available
+from .process_priority import (
+    apply_scan_priority_to_current_process,
+    restore_scan_priority_to_current_process,
+)
 
 
 def _metrics_map(value: object) -> dict[str, object]:
@@ -249,23 +253,32 @@ def _cmd_scan(args: argparse.Namespace) -> int:
 
     extensions = settings.normalized_extensions()
     with Database() as db:
-        result = run_scan(
-            db=db,
-            roots=[str(Path(p)) for p in args.roots],
-            extensions=extensions,
-            profile=args.profile,
-            max_workers=settings.max_workers,
-            drive_worker_overrides=settings.drive_worker_overrides,
-            probe_backend=settings.probe_backend,
-            probe_worker_mode=settings.probe_worker_mode,
-            ffmpeg_exe_path=ffmpeg_exe_path,
-            ffprobe_exe_path=ffprobe_exe_path,
-            db_batch_size=settings.scan_db_batch_size,
-            db_flush_interval_ms=settings.scan_db_flush_interval_ms,
-            enum_queue_max=settings.scan_enum_queue_max,
-            progress_emit_interval_ms=settings.scan_progress_emit_interval_ms,
-            progress_emit_every_files=settings.scan_progress_emit_every_files,
+        priority_state = apply_scan_priority_to_current_process(
+            settings.scan_parent_cpu_priority,
+            settings.scan_parent_io_mode,
         )
+        try:
+            result = run_scan(
+                db=db,
+                roots=[str(Path(p)) for p in args.roots],
+                extensions=extensions,
+                profile=args.profile,
+                max_workers=settings.max_workers,
+                drive_worker_overrides=settings.drive_worker_overrides,
+                probe_backend=settings.probe_backend,
+                probe_worker_mode=settings.probe_worker_mode,
+                ffmpeg_exe_path=ffmpeg_exe_path,
+                ffprobe_exe_path=ffprobe_exe_path,
+                scan_child_cpu_priority=settings.scan_child_cpu_priority,
+                scan_child_io_mode=settings.scan_child_io_mode,
+                db_batch_size=settings.scan_db_batch_size,
+                db_flush_interval_ms=settings.scan_db_flush_interval_ms,
+                enum_queue_max=settings.scan_enum_queue_max,
+                progress_emit_interval_ms=settings.scan_progress_emit_interval_ms,
+                progress_emit_every_files=settings.scan_progress_emit_every_files,
+            )
+        finally:
+            restore_scan_priority_to_current_process(priority_state)
         print(f"scan_id={result.scan_id}")
         print(f"scanned_files={result.scanned_files}")
         print(f"cached_files={result.cached_files}")

@@ -7,10 +7,21 @@ import subprocess
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
-from threep_commons.subprocess_helpers import windows_no_window_run_kwargs
+from threep_commons.subprocess_helpers import windows_no_window_popen_kwargs
 
 from .executable_paths import resolve_executable_path
-from .models import ProbeBackendId, VideoMeta
+from .models import (
+    ProbeBackendId,
+    ScanProcessCpuPriority,
+    ScanProcessIoMode,
+    VideoMeta,
+)
+from .process_priority import (
+    apply_scan_child_process_io_mode,
+    apply_subprocess_cpu_priority_kwargs,
+    normalize_scan_cpu_priority,
+    normalize_scan_io_mode,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -103,11 +114,17 @@ def get_probe_backend(
     backend: ProbeBackendId = "pyav",
     *,
     ffprobe_exe_path: str = "",
+    scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
+    scan_child_io_mode: ScanProcessIoMode = "normal",
 ) -> ProbeBackend:
     """Return the selected probe backend implementation."""
     if backend == "pyav":
         return _PYAV_BACKEND
-    return _FfprobeBackend(ffprobe_exe_path)
+    return _FfprobeBackend(
+        ffprobe_exe_path,
+        scan_child_cpu_priority=scan_child_cpu_priority,
+        scan_child_io_mode=scan_child_io_mode,
+    )
 
 
 def probe_video(
@@ -115,11 +132,15 @@ def probe_video(
     *,
     backend: ProbeBackendId = "pyav",
     ffprobe_exe_path: str = "",
+    scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
+    scan_child_io_mode: ScanProcessIoMode = "normal",
 ) -> VideoMeta:
     """Run the selected probe backend and normalize the result into `VideoMeta`."""
     return get_probe_backend(
         backend,
         ffprobe_exe_path=ffprobe_exe_path,
+        scan_child_cpu_priority=scan_child_cpu_priority,
+        scan_child_io_mode=scan_child_io_mode,
     ).probe_video(path)
 
 
@@ -298,9 +319,21 @@ def _import_av() -> _AvModuleLike:
 class _FfprobeBackend:
     """Metadata probe backend that shells out to ffprobe."""
 
-    def __init__(self, ffprobe_exe_path: str = "") -> None:
+    def __init__(
+        self,
+        ffprobe_exe_path: str = "",
+        *,
+        scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
+        scan_child_io_mode: ScanProcessIoMode = "normal",
+    ) -> None:
         """Store one optional ffprobe override path for future launches."""
         self._ffprobe_exe_path = ffprobe_exe_path
+        self._scan_child_cpu_priority: ScanProcessCpuPriority = (
+            normalize_scan_cpu_priority(scan_child_cpu_priority)
+        )
+        self._scan_child_io_mode: ScanProcessIoMode = normalize_scan_io_mode(
+            scan_child_io_mode
+        )
 
     def ensure_available(self) -> str:
         if self._ffprobe_exe_path:
@@ -309,19 +342,6 @@ class _FfprobeBackend:
 
     def probe_video(self, path: str) -> VideoMeta:
         ffprobe_path = self.ensure_available()
-        hidden_kwargs = windows_no_window_run_kwargs()
-        creationflags_raw = hidden_kwargs.get("creationflags", 0)
-        creationflags = (
-            int(creationflags_raw)
-            if isinstance(creationflags_raw, int | float | str)
-            else 0
-        )
-        startupinfo_raw = hidden_kwargs.get("startupinfo")
-        startupinfo = (
-            startupinfo_raw
-            if isinstance(startupinfo_raw, subprocess.STARTUPINFO)
-            else None
-        )
         cmd = [
             ffprobe_path,
             "-v",
@@ -337,35 +357,24 @@ class _FfprobeBackend:
             "json",
             path,
         ]
+        popen_kwargs: dict[str, Any] = apply_subprocess_cpu_priority_kwargs(
+            {
+                **windows_no_window_popen_kwargs(),
+                "stdin": subprocess.DEVNULL,
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+                "text": True,
+            },
+            self._scan_child_cpu_priority,
+        )
         try:
-            if startupinfo is not None:
-                proc = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                    creationflags=creationflags,
-                    startupinfo=startupinfo,
-                )
-            elif creationflags:
-                proc = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                    creationflags=creationflags,
-                )
-            else:
-                proc = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-        except subprocess.CalledProcessError as exc:
-            stderr = exc.stderr if isinstance(exc.stderr, str) else ""
-            raise ProbeError(stderr.strip() or f"ffprobe failed for {path}") from exc
-        stdout = proc.stdout
+            process: subprocess.Popen[str] = subprocess.Popen(cmd, **popen_kwargs)
+            apply_scan_child_process_io_mode(process, self._scan_child_io_mode)
+            stdout, stderr = process.communicate()
+        except OSError as exc:
+            raise ProbeError(f"ffprobe failed for {path}: {exc}") from exc
+        if process.returncode:
+            raise ProbeError((stderr or "").strip() or f"ffprobe failed for {path}")
         try:
             raw_payload: object = json.loads(stdout)
         except json.JSONDecodeError as exc:

@@ -202,6 +202,10 @@ class ResultsViewActionMixin(ResultsViewThumbnailMixin):
         """Emit a rename-to-delete-bin style request for selected rows."""
         self._emit_delete_request(mode="rename")
 
+    def request_recycle_bin_delete_selected(self) -> None:
+        """Emit a recycle-bin delete request for selected rows."""
+        self._emit_delete_request(mode="recycle_bin")
+
     def request_permanent_delete_selected(self) -> None:
         """Emit a permanent-delete request for selected rows."""
         self._emit_delete_request(mode="permanent")

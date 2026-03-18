@@ -263,6 +263,84 @@ def _build_results_structured_filter_groups(tmp_path: Path) -> list[DuplicateGro
     ]
 
 
+def _load_delete_test_group(
+    window: MainWindow,
+    db: Database,
+    *,
+    file_paths: list[Path],
+) -> tuple[int, list[dict[str, object]]]:
+    """Persist one duplicate group for delete-action tests and load it into the UI."""
+    scan_id = db.create_scan(
+        profile="balanced",
+        roots=[str(file_paths[0].parent)],
+        extensions=sorted({path.suffix.lstrip(".") for path in file_paths}),
+    )
+    items: list[DuplicateItem] = []
+    total_size_bytes = 0
+    for index, path in enumerate(file_paths):
+        if not path.exists():
+            path.write_bytes(f"payload-{index}".encode())
+        stat_result = path.stat()
+        file_id = db.upsert_file(
+            path=str(path),
+            size=int(stat_result.st_size),
+            mtime_ns=int(stat_result.st_mtime_ns),
+            ctime_ns=int(stat_result.st_ctime_ns),
+            ext=path.suffix.lstrip("."),
+            scan_id=scan_id,
+        )
+        db.save_video_meta(
+            file_id,
+            VideoMeta(
+                duration_s=10.0 + index,
+                width=320,
+                height=240,
+                fps=24.0,
+                codec="h264",
+                bitrate=900_000 - (index * 10_000),
+                has_audio=True,
+                audio_codec="aac",
+                audio_bitrate=128_000,
+                audio_languages="eng",
+                subtitle_languages="eng",
+                is_hdr=False,
+            ),
+        )
+        item = _dup_item(
+            file_id,
+            str(path),
+            320,
+            240,
+            900_000 - (index * 10_000),
+            1.0 - (index * 0.01),
+            size=int(stat_result.st_size),
+            duration_s=10.0 + index,
+        )
+        items.append(item)
+        total_size_bytes += int(stat_result.st_size)
+    group_db_id = db.insert_duplicate_group(
+        scan_id=scan_id,
+        profile="balanced",
+        total_size_bytes=total_size_bytes,
+    )
+    for item in items:
+        db.insert_duplicate_item(group_db_id, item)
+    db.complete_scan(scan_id, status="done")
+    window.current_scan_id = scan_id
+    window.results_view._thumbnails_enabled = False
+    window.results_view.load_groups(db.load_duplicate_groups(scan_id))
+    targets = [
+        {
+            "row": row,
+            "file_id": item.file_id,
+            "group_db_id": group_db_id,
+            "path": item.path,
+        }
+        for row, item in enumerate(items)
+    ]
+    return scan_id, targets
+
+
 def _results_menu_actions(window: MainWindow) -> list[QAction]:
     """Return the actions currently exposed by the top-level Actions menu."""
     assert window.actions_menu is not None
@@ -1701,7 +1779,13 @@ def test_results_actions_menu_shortcuts_and_row_double_click(
         assert window.custom_command_f3_action in menu_actions
         assert window.custom_command_f4_action in menu_actions
         assert window.delete_selected_action in menu_actions
+        assert window.delete_selected_recycle_bin_action in menu_actions
         assert window.delete_selected_permanent_action in menu_actions
+        assert window.delete_selected_action.text() == "&Soft Delete Selected"
+        assert (
+            window.delete_selected_recycle_bin_action.text() == "Delete to &Recycle Bin"
+        )
+        assert window.delete_selected_permanent_action.text() == "&Permanently Delete"
 
         assert {
             sequence.toString()
@@ -1744,8 +1828,12 @@ def test_results_actions_menu_shortcuts_and_row_double_click(
         } == {"Del"}
         assert {
             sequence.toString()
-            for sequence in window.delete_selected_permanent_action.shortcuts()
+            for sequence in window.delete_selected_recycle_bin_action.shortcuts()
         } == {"Shift+Del"}
+        assert {
+            sequence.toString()
+            for sequence in window.delete_selected_permanent_action.shortcuts()
+        } == {"Ctrl+Shift+Del"}
 
         opened: list[Path] = []
         explored: list[Path] = []
@@ -1898,6 +1986,167 @@ def test_results_table_keyboard_navigation_and_extra_actions(
             ],
         ]
         assert opened_urls == ["https://www.google.com/search?q=alpha"]
+        window.close()
+
+
+def test_results_delete_actions_emit_expected_modes(tmp_path: Path) -> None:
+    """Map the three delete actions to the expected request modes."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        group = DuplicateGroup(
+            scan_id=1,
+            profile="balanced",
+            created_at="now",
+            items=[
+                _dup_item(41, str(tmp_path / "delete_me.mp4"), 320, 240, 1000, 1.0),
+                _dup_item(
+                    42,
+                    str(tmp_path / "delete_me_copy.mp4"),
+                    320,
+                    240,
+                    900,
+                    0.98,
+                ),
+            ],
+            total_size_bytes=200,
+            group_id=77,
+        )
+        window.results_view.load_groups([group])
+        window.results_view.results_table.setCurrentCell(0, COL_FILE_NAME)
+        window.results_view.results_table.setFocus()
+        app.processEvents()
+
+        emitted: list[tuple[str, int]] = []
+        window.results_view.delete_requested.disconnect(window._handle_delete_requested)
+        window.results_view.delete_requested.connect(
+            lambda mode, targets: emitted.append((str(mode), len(list(targets))))
+        )
+
+        window.results_view.delete_selected_action.trigger()
+        window.results_view.delete_selected_recycle_bin_action.trigger()
+        window.results_view.delete_selected_permanent_action.trigger()
+        app.processEvents()
+
+        assert emitted == [
+            ("rename", 1),
+            ("recycle_bin", 1),
+            ("permanent", 1),
+        ]
+        window.close()
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_status"),
+    [
+        ("rename", "Processed 1 file(s)."),
+        ("recycle_bin", "Processed 1 file(s)."),
+        ("permanent", "Processed 1 file(s)."),
+    ],
+)
+def test_handle_delete_requested_supports_all_delete_modes_without_popups(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    expected_status: str,
+) -> None:
+    """Execute each delete mode and report only through the status bar."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        file_a = tmp_path / f"{mode}_a.mp4"
+        file_b = tmp_path / f"{mode}_b.mp4"
+        _, targets = _load_delete_test_group(
+            window,
+            db,
+            file_paths=[file_a, file_b],
+        )
+
+        warnings: list[tuple[str, str]] = []
+        recycle_bin_calls: list[str] = []
+        monkeypatch.setattr(
+            "video_duperz.ui.main_window_scan_actions.QMessageBox.warning",
+            lambda _parent, title, text: warnings.append((str(title), str(text))),
+        )
+        monkeypatch.setattr(
+            "video_duperz.ui.main_window_scan_actions.send2trash",
+            lambda path: recycle_bin_calls.append(str(path)),
+        )
+
+        window._handle_delete_requested(mode, [targets[0]])
+        app.processEvents()
+
+        assert warnings == []
+        assert window.statusBar().currentMessage() == expected_status
+        assert window.results_view.results_table.rowCount() == 0
+
+        if mode == "rename":
+            assert not file_a.exists()
+            assert (tmp_path / f"{file_a.name}.z_dele").exists()
+            assert db.fetch_file_path(int(targets[0]["file_id"])) == str(
+                tmp_path / f"{file_a.name}.z_dele"
+            )
+            assert recycle_bin_calls == []
+        elif mode == "recycle_bin":
+            assert recycle_bin_calls == [str(file_a)]
+            assert file_a.exists()
+        else:
+            assert recycle_bin_calls == []
+            assert not file_a.exists()
+
+        window.close()
+
+
+def test_handle_delete_requested_partial_failure_uses_status_bar_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep delete failures non-blocking and avoid warning popups."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        file_a = tmp_path / "partial_ok.mp4"
+        file_b = tmp_path / "partial_missing.mp4"
+        _, targets = _load_delete_test_group(
+            window,
+            db,
+            file_paths=[file_a, file_b],
+        )
+        file_b.unlink()
+
+        warnings: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            "video_duperz.ui.main_window_scan_actions.QMessageBox.warning",
+            lambda _parent, title, text: warnings.append((str(title), str(text))),
+        )
+
+        window._handle_delete_requested("rename", targets)
+        app.processEvents()
+
+        assert warnings == []
+        assert window.statusBar().currentMessage() == (
+            "Processed 1 file(s) with 1 error(s)."
+        )
+        assert not file_a.exists()
+        assert (tmp_path / f"{file_a.name}.z_dele").exists()
+        assert window.results_view.results_table.rowCount() == 0
         window.close()
 
 
@@ -2605,6 +2854,10 @@ def test_sources_tab_drive_workers_and_probe_mode_persist_across_reload(
         spin_b.setValue(2)
         window.probe_backend_combo.setCurrentText("pyav")
         window.probe_mode_combo.setCurrentText("burst")
+        window.scan_parent_cpu_priority_combo.setCurrentIndex(1)
+        window.scan_parent_io_mode_combo.setCurrentIndex(1)
+        window.scan_child_cpu_priority_combo.setCurrentIndex(4)
+        window.scan_child_io_mode_combo.setCurrentIndex(1)
         window.ffmpeg_exe_path_edit.setText(r"C:\tools\ffmpeg.exe")
         window.ffprobe_exe_path_edit.setText(r"C:\tools\ffprobe.exe")
         window.mediainfo_exe_path_edit.setText(r"C:\tools\mediainfo.exe")
@@ -2618,6 +2871,10 @@ def test_sources_tab_drive_workers_and_probe_mode_persist_across_reload(
     assert loaded.drive_worker_overrides == {"volume:a": 4, "volume:b": 2}
     assert loaded.probe_backend == "pyav"
     assert loaded.probe_worker_mode == "burst"
+    assert loaded.scan_parent_cpu_priority == "below_normal"
+    assert loaded.scan_parent_io_mode == "background"
+    assert loaded.scan_child_cpu_priority == "high"
+    assert loaded.scan_child_io_mode == "background"
     assert loaded.ffmpeg_exe_path == r"C:\tools\ffmpeg.exe"
     assert loaded.ffprobe_exe_path == r"C:\tools\ffprobe.exe"
     assert loaded.mediainfo_exe_path == r"C:\tools\mediainfo.exe"
@@ -2629,6 +2886,18 @@ def test_sources_tab_drive_workers_and_probe_mode_persist_across_reload(
 
         assert reloaded_window.probe_backend_combo.currentText() == "pyav"
         assert reloaded_window.probe_mode_combo.currentText() == "burst"
+        assert str(reloaded_window.scan_parent_cpu_priority_combo.currentData()) == (
+            "below_normal"
+        )
+        assert str(reloaded_window.scan_parent_io_mode_combo.currentData()) == (
+            "background"
+        )
+        assert str(reloaded_window.scan_child_cpu_priority_combo.currentData()) == (
+            "high"
+        )
+        assert str(reloaded_window.scan_child_io_mode_combo.currentData()) == (
+            "background"
+        )
         assert reloaded_window.ffmpeg_exe_path_edit.text() == r"C:\tools\ffmpeg.exe"
         assert reloaded_window.ffprobe_exe_path_edit.text() == r"C:\tools\ffprobe.exe"
         assert (
@@ -2664,6 +2933,39 @@ def test_sources_tab_executable_browse_populates_target_edit(
         app.processEvents()
 
         assert window.ffmpeg_exe_path_edit.text() == r"C:\tools\ffmpeg.exe"
+        window.close()
+
+
+def test_sources_tab_scan_priority_controls_exist(tmp_path: Path) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        assert (
+            window.findChild(QComboBox, "scan_parent_cpu_priority_combo")
+            is window.scan_parent_cpu_priority_combo
+        )
+        assert (
+            window.findChild(QComboBox, "scan_parent_io_mode_combo")
+            is window.scan_parent_io_mode_combo
+        )
+        assert (
+            window.findChild(QComboBox, "scan_child_cpu_priority_combo")
+            is window.scan_child_cpu_priority_combo
+        )
+        assert (
+            window.findChild(QComboBox, "scan_child_io_mode_combo")
+            is window.scan_child_io_mode_combo
+        )
+        assert str(window.scan_parent_cpu_priority_combo.currentData()) == "normal"
+        assert str(window.scan_parent_io_mode_combo.currentData()) == "normal"
+        assert str(window.scan_child_cpu_priority_combo.currentData()) == "normal"
+        assert str(window.scan_child_io_mode_combo.currentData()) == "normal"
         window.close()
 
 
@@ -2848,6 +3150,17 @@ def test_scan_running_locks_ui_to_scan_tab_until_finished(
                 effective_total_workers=max_workers,
             ),
         )
+        priority_calls: list[str] = []
+        monkeypatch.setattr(
+            "video_duperz.ui.main_window_scan_actions.apply_scan_priority_to_current_process",
+            lambda cpu_priority, io_mode: (
+                priority_calls.append(f"apply:{cpu_priority}:{io_mode}") or object()
+            ),
+        )
+        monkeypatch.setattr(
+            "video_duperz.ui.main_window_scan_actions.restore_scan_priority_to_current_process",
+            lambda state: priority_calls.append(f"restore:{state is not None}"),
+        )
         monkeypatch.setattr(window.thread_pool, "start", lambda worker: None)
 
         window.tabs.setCurrentWidget(window.sources_tab)
@@ -2866,6 +3179,7 @@ def test_scan_running_locks_ui_to_scan_tab_until_finished(
         assert not window.scan_view.start_btn.isEnabled()
         assert not window.scan_view.rescan_btn.isEnabled()
         assert window.scan_view.cancel_btn.isEnabled()
+        assert priority_calls == ["apply:normal:normal"]
 
         window.tabs.setCurrentWidget(window.sources_tab)
         app.processEvents()
@@ -2886,6 +3200,7 @@ def test_scan_running_locks_ui_to_scan_tab_until_finished(
         assert window.scan_view.start_btn.isEnabled()
         assert window.scan_view.rescan_btn.isEnabled()
         assert not window.scan_view.cancel_btn.isEnabled()
+        assert priority_calls == ["apply:normal:normal", "restore:True"]
         window.close()
 
 
@@ -2899,6 +3214,13 @@ def test_scan_finished_cancelled_does_not_switch_to_results_tab(tmp_path: Path) 
         window = MainWindow(db=db, settings=settings)
         window.show()
         app.processEvents()
+        restore_calls: list[bool] = []
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(
+            "video_duperz.ui.main_window_scan_actions.restore_scan_priority_to_current_process",
+            lambda state: restore_calls.append(state is not None),
+        )
+        window._scan_priority_state = object()
 
         cancelled_scan_id = db.create_scan(
             profile="balanced", roots=[str(tmp_path)], extensions=["mp4"]
@@ -2913,6 +3235,43 @@ def test_scan_finished_cancelled_does_not_switch_to_results_tab(tmp_path: Path) 
         assert window.tabs.currentWidget() == window.scan_view
         assert window.current_scan_id is None
         assert "cancelled" in window.statusBar().currentMessage().lower()
+        assert restore_calls == [True]
+        monkeypatch.undo()
+        window.close()
+
+
+def test_scan_finished_paused_restores_scan_process_priority(tmp_path: Path) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        settings.extensions = ["mp4"]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        paused_scan_id = db.create_scan(
+            profile="balanced", roots=[str(tmp_path)], extensions=["mp4"]
+        )
+        db.complete_scan(paused_scan_id, status="paused")
+        restore_calls: list[bool] = []
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(
+            "video_duperz.ui.main_window_scan_actions.restore_scan_priority_to_current_process",
+            lambda state: restore_calls.append(state is not None),
+        )
+        window._scan_priority_state = object()
+
+        window._scan_finished(SimpleNamespace(scan_id=paused_scan_id, issues=[]))
+        app.processEvents()
+
+        assert restore_calls == [True]
+        assert (
+            window.scan_view.isVisible()
+            or window.tabs.currentWidget() == window.scan_view
+        )
+        monkeypatch.undo()
         window.close()
 
 
@@ -2941,6 +3300,38 @@ def test_cancel_scan_confirmation_decline_does_not_cancel(
         app.processEvents()
 
         assert calls["cancel"] == 0
+        window.close()
+
+
+def test_scan_error_restores_scan_process_priority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        restore_calls: list[bool] = []
+        critical_calls: list[tuple[str, str]] = []
+        window._scan_priority_state = object()
+        monkeypatch.setattr(
+            "video_duperz.ui.main_window_scan_actions.restore_scan_priority_to_current_process",
+            lambda state: restore_calls.append(state is not None),
+        )
+        monkeypatch.setattr(
+            "video_duperz.ui.main_window_scan_actions.QMessageBox.critical",
+            lambda _parent, title, text: critical_calls.append((str(title), str(text))),
+        )
+
+        window._scan_error("boom")
+        app.processEvents()
+
+        assert restore_calls == [True]
+        assert critical_calls == [("Scan Error", "boom")]
         window.close()
 
 

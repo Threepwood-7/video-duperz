@@ -263,3 +263,95 @@ def test_cmd_gui_reports_fingerprint_backend_failures(monkeypatch) -> None:
 
     assert rc == 2
     assert critical_calls == [("Scan Backend Unavailable", "ffmpeg missing")]
+
+
+def test_cmd_scan_applies_and_restores_scan_process_priority(
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setattr(
+        app_main,
+        "load_settings",
+        lambda: types.SimpleNamespace(
+            probe_backend="pyav",
+            normalized_extensions=lambda: ["mp4"],
+            max_workers=2,
+            drive_worker_overrides={},
+            probe_worker_mode="balanced",
+            ffmpeg_exe_path="",
+            ffprobe_exe_path="",
+            scan_child_cpu_priority="high",
+            scan_child_io_mode="background",
+            scan_parent_cpu_priority="below_normal",
+            scan_parent_io_mode="background",
+            scan_db_batch_size=512,
+            scan_db_flush_interval_ms=200,
+            scan_enum_queue_max=4096,
+            scan_progress_emit_interval_ms=200,
+            scan_progress_emit_every_files=100,
+        ),
+    )
+    monkeypatch.setattr(
+        app_main, "ensure_probe_backend_available", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        app_main, "ensure_fingerprint_fallback_chain_available", lambda *_a, **_k: None
+    )
+
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        app_main,
+        "apply_scan_priority_to_current_process",
+        lambda cpu_priority, io_mode: (
+            calls.append(f"apply:{cpu_priority}:{io_mode}") or "state"
+        ),
+    )
+    monkeypatch.setattr(
+        app_main,
+        "restore_scan_priority_to_current_process",
+        lambda state: calls.append(f"restore:{state}"),
+    )
+
+    class _FakeDb:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _exc_type, _exc, _tb):
+            return False
+
+    monkeypatch.setattr(app_main, "Database", lambda: _FakeDb())
+    monkeypatch.setattr(
+        app_main,
+        "run_scan",
+        lambda **kwargs: (
+            calls.append(
+                "child:"
+                f"{kwargs['scan_child_cpu_priority']}:{kwargs['scan_child_io_mode']}"
+            )
+            or types.SimpleNamespace(
+                scan_id=7,
+                scanned_files=2,
+                cached_files=0,
+                fingerprinted_files=2,
+                groups=[],
+                issues=[],
+                metrics={},
+            )
+        ),
+    )
+
+    rc = app_main._cmd_scan(
+        argparse.Namespace(
+            roots=["D:/Videos"],
+            profile="balanced",
+        )
+    )
+
+    assert rc == 0
+    assert calls == [
+        "apply:below_normal:background",
+        "child:high:background",
+        "restore:state",
+    ]
+    assert "scan_id=7" in capsys.readouterr().out

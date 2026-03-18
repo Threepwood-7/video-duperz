@@ -38,7 +38,7 @@ def test_normalized_distance_bounds() -> None:
 def test_ffmpeg_gray_samples_use_explicit_override_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    seen: list[tuple[str, str, float]] = []
+    seen: list[tuple[str, str, float, str, str]] = []
 
     monkeypatch.setattr(
         "video_duperz.fingerprint.ensure_ffmpeg_available",
@@ -46,8 +46,17 @@ def test_ffmpeg_gray_samples_use_explicit_override_path(
     )
     monkeypatch.setattr(
         "video_duperz.fingerprint._ffmpeg_gray_frame",
-        lambda ffmpeg_path, path, timestamp_s: (
-            seen.append((ffmpeg_path, path, timestamp_s)) or None
+        lambda ffmpeg_path, path, timestamp_s, **kwargs: (
+            seen.append(
+                (
+                    ffmpeg_path,
+                    path,
+                    timestamp_s,
+                    str(kwargs["scan_child_cpu_priority"]),
+                    str(kwargs["scan_child_io_mode"]),
+                )
+            )
+            or None
         ),
     )
 
@@ -55,10 +64,18 @@ def test_ffmpeg_gray_samples_use_explicit_override_path(
         "D:/Videos/clip.mp4",
         10.0,
         ffmpeg_exe_path=r"C:\ffmpeg\bin\ffmpeg.exe",
+        scan_child_cpu_priority="below_normal",
+        scan_child_io_mode="background",
     )
 
     assert seen == [
-        (r"C:\ffmpeg\bin\ffmpeg.exe", "D:/Videos/clip.mp4", timestamp_s)
+        (
+            r"C:\ffmpeg\bin\ffmpeg.exe",
+            "D:/Videos/clip.mp4",
+            timestamp_s,
+            "below_normal",
+            "background",
+        )
         for timestamp_s in sample_timestamps(10.0)
     ]
 
@@ -107,10 +124,14 @@ def test_decoder_subprocess_payload_includes_ffmpeg_override(
         duration_s=10.0,
         path="D:/Videos/risky.asf",
         ffmpeg_exe_path=r"C:\ffmpeg\bin\ffmpeg.exe",
+        scan_child_cpu_priority="above_normal",
+        scan_child_io_mode="background",
     )
 
     payload = json.loads(str(captured["input"]))
     assert payload["ffmpeg_exe_path"] == r"C:\ffmpeg\bin\ffmpeg.exe"
+    assert payload["scan_child_cpu_priority"] == "above_normal"
+    assert payload["scan_child_io_mode"] == "background"
     assert result.decoder_backend == "ffmpeg"
 
 
@@ -290,7 +311,7 @@ def test_full_decoder_chain_failure_raises_fingerprint_error() -> None:
 def test_fingerprint_child_reports_success(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "video_duperz.fingerprint._compute_hashes_for_decoder",
-        lambda path, duration_s, decoder_backend, ffmpeg_exe_path="": [11, 22, 33],
+        lambda path, duration_s, decoder_backend, **_kwargs: [11, 22, 33],
     )
     payload = json.dumps(
         {
@@ -318,9 +339,9 @@ def test_fingerprint_child_reports_structured_fingerprint_errors(
         path: str,
         duration_s: float,
         decoder_backend: str,
-        ffmpeg_exe_path: str = "",
+        **_kwargs: object,
     ) -> list[int]:
-        _ = path, duration_s, decoder_backend, ffmpeg_exe_path
+        _ = path, duration_s, decoder_backend
         raise FingerprintError("decoder failed")
 
     monkeypatch.setattr("video_duperz.fingerprint._compute_hashes_for_decoder", _raise)
