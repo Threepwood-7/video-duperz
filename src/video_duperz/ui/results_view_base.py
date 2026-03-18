@@ -846,7 +846,7 @@ class ResultsViewBase(QWidget):
             min_width=self._optional_int_value(self.filter_min_width_spin),
             min_height=self._optional_int_value(self.filter_min_height_spin),
             extension=extension_value.casefold(),
-            video_codec=codec_value.casefold(),
+            video_codec=self._normalized_codec_value(codec_value),
             hdr_mode=hdr_mode,
         )
 
@@ -913,6 +913,11 @@ class ResultsViewBase(QWidget):
         """Return one normalized lowercase extension without a leading dot."""
         return normalize_media_suffix(path).lstrip(".")
 
+    @staticmethod
+    def _normalized_codec_value(codec: str) -> str:
+        """Return one normalized lowercase codec label for filter comparisons."""
+        return str(codec or "").strip().casefold()
+
     def _refresh_attribute_filter_options(
         self,
         combo: QComboBox,
@@ -965,5 +970,5 @@ class ResultsViewBase(QWidget):
         )
         self._refresh_attribute_filter_options(
             self.filter_video_codec_combo,
-            [(codec, codec.casefold()) for codec in codecs],
+            [(codec, self._normalized_codec_value(codec)) for codec in codecs],
         )

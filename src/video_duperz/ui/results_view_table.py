@@ -415,7 +415,7 @@ class ResultsViewTableMixin(ResultsViewBase):
             return False
         if (
             filter_state.video_codec
-            and item.codec.casefold() != filter_state.video_codec
+            and self._normalized_codec_value(item.codec) != filter_state.video_codec
         ):
             return False
         if filter_state.hdr_mode == HDR_FILTER_ONLY and not item.is_hdr:

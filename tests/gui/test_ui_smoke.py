@@ -13,7 +13,7 @@ from video_duperz.db import Database
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
@@ -260,6 +260,14 @@ def _results_menu_actions(window: MainWindow) -> list[QAction]:
     """Return the actions currently exposed by the top-level Actions menu."""
     assert window.actions_menu is not None
     return list(window.actions_menu.actions())
+
+
+def _visible_result_paths(window: MainWindow) -> list[str]:
+    """Return the currently visible full-result paths from the results table."""
+    return [
+        window.results_view.results_table.item(row, 18).text()
+        for row in range(window.results_view.results_table.rowCount())
+    ]
 
 
 def _wait_until_table_text(
@@ -682,6 +690,25 @@ def test_view_columns_menu_toggle_and_saved_view(tmp_path: Path, monkeypatch) ->
             len(window._column_toggle_actions)
             == window.results_view.results_table.columnCount()
         )
+        assert window._columns_menu is not None
+        window._columns_menu.popup(window.mapToGlobal(QPoint(32, 32)))
+        app.processEvents()
+        assert window._columns_menu.isVisible()
+        toggle_rect = window._columns_menu.actionGeometry(
+            window._column_toggle_actions[18]
+        )
+        QTest.mouseClick(
+            window._columns_menu,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            toggle_rect.center(),
+        )
+        app.processEvents()
+        assert window._columns_menu.isVisible()
+        assert window.results_view.results_table.isColumnHidden(18)
+        window._columns_menu.close()
+        app.processEvents()
+
         window._column_toggle_actions[18].setChecked(False)
         app.processEvents()
         assert window.results_view.results_table.isColumnHidden(18)
@@ -982,6 +1009,12 @@ def test_results_structured_filters_and_clear_button(tmp_path: Path) -> None:
         window.results_view._apply_filter_inputs()
         app.processEvents()
         assert window.results_view.results_table.rowCount() == 2
+        assert sorted(_visible_result_paths(window)) == sorted(
+            [
+                str(tmp_path / "core" / "feature_cut_h264.mp4"),
+                str(tmp_path / "core" / "feature_cut_hevc_hdr.mkv"),
+            ]
+        )
 
         window.results_view.filter_video_codec_combo.setCurrentText("h264")
         app.processEvents()
@@ -990,6 +1023,12 @@ def test_results_structured_filters_and_clear_button(tmp_path: Path) -> None:
         window.results_view._apply_filter_inputs()
         app.processEvents()
         assert window.results_view.results_table.rowCount() == 2
+        assert sorted(_visible_result_paths(window)) == sorted(
+            [
+                str(tmp_path / "core" / "feature_cut_h264.mp4"),
+                str(tmp_path / "core" / "feature_cut_hevc_hdr.mkv"),
+            ]
+        )
 
         window.results_view.clear_filters_button.click()
         app.processEvents()
@@ -1000,6 +1039,12 @@ def test_results_structured_filters_and_clear_button(tmp_path: Path) -> None:
         window.results_view._apply_filter_inputs()
         app.processEvents()
         assert window.results_view.results_table.rowCount() == 2
+        assert sorted(_visible_result_paths(window)) == sorted(
+            [
+                str(tmp_path / "core" / "feature_cut_h264.mp4"),
+                str(tmp_path / "core" / "feature_cut_hevc_hdr.mkv"),
+            ]
+        )
 
         window.results_view.filter_include_match_all_checkbox.setChecked(True)
         app.processEvents()
@@ -1357,6 +1402,143 @@ def test_results_combined_include_filters_require_one_file_to_match_all_conditio
 
         window.results_view.filter_video_codec_combo.setCurrentText("hevc")
         window.results_view.filter_extension_combo.setCurrentText("webm")
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 0
+        window.close()
+
+
+def test_results_attribute_filters_and_include_text_share_one_item_predicate(
+    tmp_path: Path,
+) -> None:
+    """Require one file to satisfy both text and attribute includes together."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        window.results_view.load_groups(
+            [
+                DuplicateGroup(
+                    scan_id=1,
+                    profile="balanced",
+                    created_at="now",
+                    items=[
+                        _dup_item(
+                            91,
+                            str(tmp_path / "core" / "feature_cut_h264.mp4"),
+                            1920,
+                            1080,
+                            4_500_000,
+                            0.991,
+                            size=25 * 1024 * 1024,
+                            duration_s=180.0,
+                            codec=" h264 ",
+                            is_hdr=False,
+                        ),
+                        _dup_item(
+                            92,
+                            str(tmp_path / "core" / "feature_cut_hevc_hdr.mkv"),
+                            3840,
+                            2160,
+                            8_200_000,
+                            0.997,
+                            size=80 * 1024 * 1024,
+                            duration_s=240.0,
+                            codec="hevc",
+                            is_hdr=True,
+                        ),
+                    ],
+                    total_size_bytes=(25 + 80) * 1024 * 1024,
+                    group_id=68,
+                ),
+                DuplicateGroup(
+                    scan_id=1,
+                    profile="balanced",
+                    created_at="now",
+                    items=[
+                        _dup_item(
+                            93,
+                            str(tmp_path / "extras" / "extras_vp9_low.webm"),
+                            1280,
+                            720,
+                            1_700_000,
+                            0.945,
+                            size=12 * 1024 * 1024,
+                            duration_s=95.0,
+                            codec="vp9",
+                            is_hdr=False,
+                        ),
+                        _dup_item(
+                            94,
+                            str(tmp_path / "extras" / "extras_h264_short.mp4"),
+                            854,
+                            480,
+                            900_000,
+                            0.905,
+                            size=6 * 1024 * 1024,
+                            duration_s=40.0,
+                            codec="h264",
+                            is_hdr=False,
+                        ),
+                    ],
+                    total_size_bytes=(12 + 6) * 1024 * 1024,
+                    group_id=69,
+                ),
+            ]
+        )
+        app.processEvents()
+
+        expected_core_paths = sorted(
+            [
+                str(tmp_path / "core" / "feature_cut_h264.mp4"),
+                str(tmp_path / "core" / "feature_cut_hevc_hdr.mkv"),
+            ]
+        )
+
+        window.results_view.filter_include_path_edit.setText("core")
+        window.results_view.filter_video_codec_combo.setCurrentText("h264")
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert sorted(_visible_result_paths(window)) == expected_core_paths
+
+        window.results_view.filter_include_match_all_checkbox.setChecked(True)
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 0
+
+        window.results_view.clear_filters_button.click()
+        app.processEvents()
+        window.results_view.filter_include_path_edit.setText("core")
+        window.results_view.filter_extension_combo.setCurrentText("mkv")
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert sorted(_visible_result_paths(window)) == expected_core_paths
+
+        window.results_view.filter_include_match_all_checkbox.setChecked(True)
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 0
+
+        window.results_view.clear_filters_button.click()
+        app.processEvents()
+        window.results_view.filter_include_path_edit.setText("core")
+        window.results_view.filter_hdr_combo.setCurrentText("HDR only")
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert sorted(_visible_result_paths(window)) == expected_core_paths
+
+        window.results_view.filter_include_match_all_checkbox.setChecked(True)
+        window.results_view._apply_filter_inputs()
+        app.processEvents()
+        assert window.results_view.results_table.rowCount() == 0
+
+        window.results_view.clear_filters_button.click()
+        app.processEvents()
+        window.results_view.filter_include_name_edit.setText("hdr")
+        window.results_view.filter_video_codec_combo.setCurrentText("h264")
         window.results_view._apply_filter_inputs()
         app.processEvents()
         assert window.results_view.results_table.rowCount() == 0

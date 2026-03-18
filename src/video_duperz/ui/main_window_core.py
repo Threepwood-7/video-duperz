@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, TypedDict, cast
 
 from PySide6.QtCore import Qt, QThreadPool
-from PySide6.QtGui import QAction, QActionGroup, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QKeyEvent, QKeySequence, QMouseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -55,6 +55,38 @@ THUMBNAIL_SIZE_OPTIONS: tuple[tuple[str, str], ...] = (
     ("Large (160x90)", "160x90"),
 )
 MAX_DRIVE_WORKERS = 64
+
+
+class PersistentCheckMenu(QMenu):
+    """Keep checkable actions open while the user toggles them."""
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        """Toggle checkable actions without closing the menu."""
+        action = self.activeAction()
+        if self._should_keep_open(action):
+            action.trigger()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        """Toggle checkable actions from the keyboard without closing the menu."""
+        action = self.activeAction()
+        if self._should_keep_open(action) and event.key() in {
+            Qt.Key.Key_Return,
+            Qt.Key.Key_Enter,
+            Qt.Key.Key_Space,
+            Qt.Key.Key_Select,
+        }:
+            action.trigger()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    @staticmethod
+    def _should_keep_open(action: QAction | None) -> bool:
+        """Return whether one action should toggle without closing the menu."""
+        return bool(action is not None and action.isEnabled() and action.isCheckable())
 
 
 class DeleteTarget(TypedDict):
@@ -153,6 +185,7 @@ class MainWindowBase(QMainWindow):
             settings.saved_scan_profiles
         )
         self._column_toggle_actions: list[QAction] = []
+        self._columns_menu: QMenu | None = None
         self._saved_views_menu: QMenu | None = None
         self._sort_action_group: QActionGroup | None = None
         self._sort_actions: dict[str, QAction] = {}
@@ -299,7 +332,9 @@ class MainWindowMenuMixin(MainWindowBase):
 
     def _build_view_menu(self) -> None:
         view_menu = self.menuBar().addMenu("&View")
-        columns_menu = view_menu.addMenu("&Columns")
+        columns_menu = PersistentCheckMenu("&Columns", view_menu)
+        view_menu.addMenu(columns_menu)
+        self._columns_menu = columns_menu
 
         self.fit_columns_action = QAction("&Fit Columns", self)
         self.fit_columns_action.triggered.connect(self._fit_columns)
