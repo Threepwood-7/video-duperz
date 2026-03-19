@@ -67,6 +67,17 @@ class FailedFileRow(TypedDict):
     updated_at: str
 
 
+class ScanFileSnapshotRow(TypedDict):
+    """Persisted file snapshot row for one completed scan."""
+
+    file_id: int
+    path: str
+    size: int
+    mtime_ns: int
+    ctime_ns: int
+    ext: str
+
+
 class DatabaseArtifactMixin:
     """Scan-row, cached-artifact, and fingerprint persistence helpers."""
 
@@ -416,6 +427,354 @@ class DatabaseArtifactMixin:
             if str(row["normalized_path"] or "")
         }
 
+    def load_scan_file_snapshot(
+        self,
+        scan_id: int,
+    ) -> dict[str, ScanFileSnapshotRow]:
+        """Load live file snapshot rows for one completed scan keyed by path."""
+        rows = self.conn.execute(
+            """
+            SELECT id, path, size, mtime_ns, ctime_ns, ext
+            FROM files
+            WHERE scan_id = ? AND exists_flag = 1
+            ORDER BY path
+            """,
+            (int(scan_id),),
+        ).fetchall()
+        return {
+            str(row["path"]): ScanFileSnapshotRow(
+                file_id=int(row["id"]),
+                path=str(row["path"]),
+                size=int(row["size"]),
+                mtime_ns=int(row["mtime_ns"]),
+                ctime_ns=int(row["ctime_ns"]),
+                ext=str(row["ext"] or ""),
+            )
+            for row in rows
+        }
+
+    def clone_failed_files_for_paths(
+        self,
+        *,
+        source_scan_id: int,
+        target_scan_id: int,
+        paths: set[str],
+    ) -> int:
+        """Clone persisted failed-file markers for unchanged paths."""
+        if not paths:
+            return 0
+        normalized_paths = sorted(
+            {path_key(path) for path in paths if path_key(path)}
+        )
+        if not normalized_paths:
+            return 0
+        copied = 0
+        for chunk in self._iter_chunks(normalized_paths):
+            placeholders = ",".join("?" for _ in chunk)
+            rows = self.conn.execute(
+                f"""
+                SELECT normalized_path, display_path, stage, message,
+                       created_at, updated_at
+                FROM scan_failed_files
+                WHERE scan_id = ? AND normalized_path IN ({placeholders})
+                """,
+                (int(source_scan_id), *chunk),
+            ).fetchall()
+            if not rows:
+                continue
+            payload = [
+                (
+                    int(target_scan_id),
+                    str(row["normalized_path"]),
+                    str(row["display_path"]),
+                    str(row["stage"]),
+                    str(row["message"]),
+                    str(row["created_at"]),
+                    str(row["updated_at"]),
+                )
+                for row in rows
+            ]
+            self.conn.executemany(
+                """
+                INSERT INTO scan_failed_files(
+                  scan_id, normalized_path, display_path, stage, message,
+                  created_at, updated_at
+                )
+                VALUES(?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(scan_id, normalized_path) DO UPDATE SET
+                  display_path = excluded.display_path,
+                  stage = excluded.stage,
+                  message = excluded.message,
+                  updated_at = excluded.updated_at
+                """,
+                payload,
+            )
+            copied += len(payload)
+        self._commit_if_needed()
+        return copied
+
+    def clone_scan_files_with_artifacts(
+        self,
+        *,
+        source_scan_id: int,
+        target_scan_id: int,
+        paths: set[str],
+        probe_backend: ProbeBackendId = "pyav",
+        algo_version: int,
+        include_audio_fingerprint: bool = False,
+    ) -> dict[str, int]:
+        """Clone file rows and cached artifacts from one scan into another."""
+        if not paths:
+            return {}
+        source_paths = sorted(str(path) for path in paths if str(path).strip())
+        if not source_paths:
+            return {}
+        source_rows: list[sqlite3.Row] = []
+        for chunk in self._iter_chunks(source_paths):
+            placeholders = ",".join("?" for _ in chunk)
+            source_rows.extend(
+                self.conn.execute(
+                    f"""
+                    SELECT id, path, size, mtime_ns, ctime_ns, ext
+                    FROM files
+                    WHERE scan_id = ? AND exists_flag = 1
+                      AND path IN ({placeholders})
+                    ORDER BY path
+                    """,
+                    (int(source_scan_id), *chunk),
+                ).fetchall()
+            )
+        if not source_rows:
+            return {}
+        file_payload = [
+            (
+                str(row["path"]),
+                int(row["size"]),
+                int(row["mtime_ns"]),
+                int(row["ctime_ns"]),
+                str(row["ext"] or ""),
+                int(target_scan_id),
+            )
+            for row in source_rows
+        ]
+        self.conn.executemany(
+            """
+            INSERT INTO files(path, size, mtime_ns, ctime_ns, ext, scan_id, exists_flag)
+            VALUES(?, ?, ?, ?, ?, ?, 1)
+            ON CONFLICT(scan_id, path) DO UPDATE SET
+              size = excluded.size,
+              mtime_ns = excluded.mtime_ns,
+              ctime_ns = excluded.ctime_ns,
+              ext = excluded.ext,
+              exists_flag = 1
+            """,
+            file_payload,
+        )
+        inserted = self.conn.execute(
+            "SELECT id, path FROM files WHERE scan_id = ?",
+            (int(target_scan_id),),
+        ).fetchall()
+        target_file_ids = {str(row["path"]): int(row["id"]) for row in inserted}
+        source_to_target = {
+            int(row["id"]): target_file_ids[str(row["path"])] for row in source_rows
+        }
+        source_file_ids = sorted(source_to_target)
+        meta_rows: list[sqlite3.Row] = []
+        fingerprint_rows: list[sqlite3.Row] = []
+        provenance_rows: list[sqlite3.Row] = []
+        audio_rows: list[sqlite3.Row] = []
+        for chunk in self._iter_chunks([str(file_id) for file_id in source_file_ids]):
+            placeholders = ",".join("?" for _ in chunk)
+            meta_rows.extend(
+                self.conn.execute(
+                    f"""
+                    SELECT file_id, probed_at, source_size, source_mtime_ns, duration_s,
+                           width, height, fps, bit_depth, hdr_format, codec, bitrate,
+                           has_audio, audio_codec, audio_bitrate, audio_languages,
+                           subtitle_languages, probe_error
+                    FROM video_meta
+                    WHERE probe_backend = ? AND file_id IN ({placeholders})
+                    """,
+                    (str(probe_backend), *chunk),
+                ).fetchall()
+            )
+            fingerprint_rows.extend(
+                self.conn.execute(
+                    f"""
+                    SELECT file_id, source_size, source_mtime_ns,
+                           frame_count, hash_blob, created_at
+                    FROM fingerprints
+                    WHERE probe_backend = ? AND algo_version = ?
+                      AND file_id IN ({placeholders})
+                    """,
+                    (str(probe_backend), int(algo_version), *chunk),
+                ).fetchall()
+            )
+            provenance_rows.extend(
+                self.conn.execute(
+                    f"""
+                    SELECT file_id, decoder_backend, attempts_json, created_at
+                    FROM fingerprint_decoder_provenance
+                    WHERE probe_backend = ? AND algo_version = ?
+                      AND file_id IN ({placeholders})
+                    """,
+                    (str(probe_backend), int(algo_version), *chunk),
+                ).fetchall()
+            )
+            if include_audio_fingerprint:
+                audio_rows.extend(
+                    self.conn.execute(
+                        f"""
+                        SELECT file_id, source_size, source_mtime_ns, fingerprint_text,
+                               created_at
+                        FROM audio_fingerprints
+                        WHERE file_id IN ({placeholders})
+                        """,
+                        tuple(chunk),
+                    ).fetchall()
+                )
+        if meta_rows:
+            self.conn.executemany(
+                """
+                INSERT INTO video_meta(
+                  file_id, probe_backend, probed_at, source_size, source_mtime_ns,
+                  duration_s, width, height, fps, bit_depth, hdr_format,
+                  codec, bitrate, has_audio, audio_codec, audio_bitrate,
+                  audio_languages, subtitle_languages, probe_error
+                )
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(file_id, probe_backend) DO UPDATE SET
+                  probed_at = excluded.probed_at,
+                  source_size = excluded.source_size,
+                  source_mtime_ns = excluded.source_mtime_ns,
+                  duration_s = excluded.duration_s,
+                  width = excluded.width,
+                  height = excluded.height,
+                  fps = excluded.fps,
+                  bit_depth = excluded.bit_depth,
+                  hdr_format = excluded.hdr_format,
+                  codec = excluded.codec,
+                  bitrate = excluded.bitrate,
+                  has_audio = excluded.has_audio,
+                  audio_codec = excluded.audio_codec,
+                  audio_bitrate = excluded.audio_bitrate,
+                  audio_languages = excluded.audio_languages,
+                  subtitle_languages = excluded.subtitle_languages,
+                  probe_error = excluded.probe_error
+                """,
+                [
+                    (
+                        source_to_target[int(row["file_id"])],
+                        str(probe_backend),
+                        str(row["probed_at"]),
+                        int(row["source_size"]),
+                        int(row["source_mtime_ns"]),
+                        float(row["duration_s"]),
+                        int(row["width"]),
+                        int(row["height"]),
+                        float(row["fps"]),
+                        int(row["bit_depth"] or 8),
+                        str(row["hdr_format"] or ""),
+                        str(row["codec"] or ""),
+                        int(row["bitrate"]),
+                        int(row["has_audio"]),
+                        str(row["audio_codec"] or ""),
+                        int(row["audio_bitrate"] or 0),
+                        str(row["audio_languages"] or ""),
+                        str(row["subtitle_languages"] or ""),
+                        row["probe_error"],
+                    )
+                    for row in meta_rows
+                    if int(row["file_id"]) in source_to_target
+                ],
+            )
+        if fingerprint_rows:
+            self.conn.executemany(
+                """
+                INSERT INTO fingerprints(
+                  file_id, probe_backend, algo_version, source_size, source_mtime_ns,
+                  frame_count, hash_blob, created_at
+                )
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(file_id, probe_backend, algo_version) DO UPDATE SET
+                  source_size = excluded.source_size,
+                  source_mtime_ns = excluded.source_mtime_ns,
+                  frame_count = excluded.frame_count,
+                  hash_blob = excluded.hash_blob,
+                  created_at = excluded.created_at
+                """,
+                [
+                    (
+                        source_to_target[int(row["file_id"])],
+                        str(probe_backend),
+                        int(algo_version),
+                        int(row["source_size"]),
+                        int(row["source_mtime_ns"]),
+                        int(row["frame_count"]),
+                        row["hash_blob"],
+                        str(row["created_at"]),
+                    )
+                    for row in fingerprint_rows
+                    if int(row["file_id"]) in source_to_target
+                ],
+            )
+        if provenance_rows:
+            self.conn.executemany(
+                """
+                INSERT INTO fingerprint_decoder_provenance(
+                  file_id, probe_backend, algo_version, decoder_backend,
+                  attempts_json, created_at
+                )
+                VALUES(?, ?, ?, ?, ?, ?)
+                ON CONFLICT(file_id, probe_backend, algo_version) DO UPDATE SET
+                  decoder_backend = excluded.decoder_backend,
+                  attempts_json = excluded.attempts_json,
+                  created_at = excluded.created_at
+                """,
+                [
+                    (
+                        source_to_target[int(row["file_id"])],
+                        str(probe_backend),
+                        int(algo_version),
+                        str(row["decoder_backend"] or ""),
+                        str(row["attempts_json"] or "[]"),
+                        str(row["created_at"]),
+                    )
+                    for row in provenance_rows
+                    if int(row["file_id"]) in source_to_target
+                ],
+            )
+        if audio_rows:
+            self.conn.executemany(
+                """
+                INSERT INTO audio_fingerprints(
+                  file_id, source_size, source_mtime_ns, fingerprint_text,
+                  created_at
+                )
+                VALUES(?, ?, ?, ?, ?)
+                ON CONFLICT(file_id) DO UPDATE SET
+                  source_size = excluded.source_size,
+                  source_mtime_ns = excluded.source_mtime_ns,
+                  fingerprint_text = excluded.fingerprint_text,
+                  created_at = excluded.created_at
+                """,
+                [
+                    (
+                        source_to_target[int(row["file_id"])],
+                        int(row["source_size"]),
+                        int(row["source_mtime_ns"]),
+                        str(row["fingerprint_text"] or ""),
+                        str(row["created_at"]),
+                    )
+                    for row in audio_rows
+                    if int(row["file_id"]) in source_to_target
+                ],
+            )
+        self._commit_if_needed()
+        return {
+            str(row["path"]): source_to_target[int(row["id"])] for row in source_rows
+        }
+
     def upsert_file(
         self,
         path: str,
@@ -447,11 +806,12 @@ class DatabaseArtifactMixin:
         if not files:
             return {}
         rows: list[tuple[str, int, int, int, str, int]] = []
-        ordered_paths: list[str] = []
+        ordered_by_scan: dict[int, list[str]] = {}
         for file in files:
             path = str(file.get("path", "")).strip()
             if not path:
                 continue
+            scan_id = coerce_int(file.get("scan_id", 0))
             rows.append(
                 (
                     path,
@@ -459,36 +819,40 @@ class DatabaseArtifactMixin:
                     coerce_int(file.get("mtime_ns", 0)),
                     coerce_int(file.get("ctime_ns", 0)),
                     str(file.get("ext", "")),
-                    coerce_int(file.get("scan_id", 0)),
+                    scan_id,
                 )
             )
-            ordered_paths.append(path)
+            ordered_by_scan.setdefault(scan_id, []).append(path)
         if not rows:
             return {}
         self.conn.executemany(
             """
             INSERT INTO files(path, size, mtime_ns, ctime_ns, ext, scan_id, exists_flag)
             VALUES(?, ?, ?, ?, ?, ?, 1)
-            ON CONFLICT(path) DO UPDATE SET
+            ON CONFLICT(scan_id, path) DO UPDATE SET
               size = excluded.size,
               mtime_ns = excluded.mtime_ns,
               ctime_ns = excluded.ctime_ns,
               ext = excluded.ext,
-              scan_id = excluded.scan_id,
               exists_flag = 1
             """,
             rows,
         )
         path_to_id: dict[str, int] = {}
-        unique_paths = sorted(set(ordered_paths))
-        for chunk in self._iter_chunks(unique_paths):
-            placeholders = ",".join("?" for _ in chunk)
-            fetched = self.conn.execute(
-                f"SELECT id, path FROM files WHERE path IN ({placeholders})",
-                tuple(chunk),
-            ).fetchall()
-            for row in fetched:
-                path_to_id[str(row["path"])] = int(row["id"])
+        for scan_id, ordered_paths in ordered_by_scan.items():
+            unique_paths = sorted(set(ordered_paths))
+            for chunk in self._iter_chunks(unique_paths):
+                placeholders = ",".join("?" for _ in chunk)
+                fetched = self.conn.execute(
+                    f"""
+                    SELECT id, path
+                    FROM files
+                    WHERE scan_id = ? AND path IN ({placeholders})
+                    """,
+                    (int(scan_id), *chunk),
+                ).fetchall()
+                for row in fetched:
+                    path_to_id[str(row["path"])] = int(row["id"])
         self._commit_if_needed()
         return path_to_id
 
@@ -627,11 +991,14 @@ class DatabaseArtifactMixin:
                 LEFT JOIN audio_fingerprints af
                   ON af.file_id = f.id
                 WHERE f.path IN ({placeholders}) AND f.exists_flag = 1
+                ORDER BY f.scan_id DESC, f.id DESC
                 """,
                 (str(probe_backend), str(probe_backend), int(algo_version), *chunk),
             ).fetchall()
             for row in rows:
                 path = str(row["path"])
+                if path in out:
+                    continue
                 expected = requested.get(path)
                 if expected is None:
                     continue

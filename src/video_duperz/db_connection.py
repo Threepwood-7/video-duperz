@@ -1,26 +1,217 @@
-"""SQLite connection and migration helpers for the application database."""
+"""SQLite connection, schema setup, and transaction lifecycle helpers."""
 
 from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import TYPE_CHECKING, Self
+from typing import Self
 
 from .config import db_path
-from .db_shared import decode_string_list_json
-from .scan_sets import (
-    build_scan_set_key,
-    normalize_cross_resolution_mode,
-    normalize_custom_similarity_threshold,
-    normalize_extensions,
-    normalize_roots_for_display,
-    normalize_similarity_profile,
-)
 
-if TYPE_CHECKING:
-    from collections.abc import Iterable
+SCHEMA_VERSION = 15
 
-SCHEMA_VERSION = 14
+
+_DROP_SCHEMA_SQL = """
+DROP TABLE IF EXISTS action_items;
+DROP TABLE IF EXISTS action_runs;
+DROP TABLE IF EXISTS duplicate_group_items;
+DROP TABLE IF EXISTS duplicate_groups;
+DROP TABLE IF EXISTS fingerprint_decoder_provenance;
+DROP TABLE IF EXISTS audio_fingerprints;
+DROP TABLE IF EXISTS fingerprints;
+DROP TABLE IF EXISTS video_meta;
+DROP TABLE IF EXISTS scan_failed_files;
+DROP TABLE IF EXISTS scan_issues;
+DROP TABLE IF EXISTS scan_links;
+DROP TABLE IF EXISTS files;
+DROP TABLE IF EXISTS scans;
+"""
+
+
+_CREATE_SCHEMA_SQL = """
+CREATE TABLE scans(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at TEXT NOT NULL,
+  profile TEXT NOT NULL,
+  roots_json TEXT NOT NULL,
+  extensions_json TEXT NOT NULL DEFAULT '[]',
+  custom_similarity_threshold REAL NOT NULL DEFAULT 0.18,
+  scene_aware_sampling INTEGER NOT NULL DEFAULT 0,
+  audio_fingerprint_enabled INTEGER NOT NULL DEFAULT 0,
+  cross_resolution_mode TEXT NOT NULL DEFAULT 'off',
+  probe_backend TEXT NOT NULL DEFAULT 'pyav',
+  scan_set_key TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL
+);
+CREATE INDEX idx_scans_set_status ON scans(scan_set_key, status, id DESC);
+
+CREATE TABLE files(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  path TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  mtime_ns INTEGER NOT NULL,
+  ctime_ns INTEGER NOT NULL,
+  ext TEXT NOT NULL,
+  scan_id INTEGER NOT NULL,
+  exists_flag INTEGER NOT NULL DEFAULT 1,
+  UNIQUE(scan_id, path),
+  FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_files_scan_id ON files(scan_id);
+CREATE INDEX idx_files_scan_exists ON files(scan_id, exists_flag);
+CREATE INDEX idx_files_path_stat ON files(path, size, mtime_ns);
+CREATE INDEX idx_files_path_stat_exists ON files(path, size, mtime_ns, exists_flag);
+CREATE INDEX idx_files_path_scan ON files(path, scan_id);
+
+CREATE TABLE video_meta(
+  file_id INTEGER NOT NULL,
+  probe_backend TEXT NOT NULL DEFAULT 'pyav',
+  probed_at TEXT NOT NULL,
+  source_size INTEGER NOT NULL,
+  source_mtime_ns INTEGER NOT NULL,
+  duration_s REAL NOT NULL,
+  width INTEGER NOT NULL,
+  height INTEGER NOT NULL,
+  fps REAL NOT NULL,
+  bit_depth INTEGER NOT NULL DEFAULT 8,
+  hdr_format TEXT NOT NULL DEFAULT '',
+  codec TEXT NOT NULL,
+  bitrate INTEGER NOT NULL,
+  has_audio INTEGER NOT NULL,
+  audio_codec TEXT NOT NULL DEFAULT '',
+  audio_bitrate INTEGER NOT NULL DEFAULT 0,
+  audio_languages TEXT NOT NULL DEFAULT '',
+  subtitle_languages TEXT NOT NULL DEFAULT '',
+  probe_error TEXT,
+  PRIMARY KEY(file_id, probe_backend),
+  FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_video_meta_file_backend
+  ON video_meta(file_id, probe_backend);
+
+CREATE TABLE fingerprints(
+  file_id INTEGER NOT NULL,
+  probe_backend TEXT NOT NULL DEFAULT 'pyav',
+  algo_version INTEGER NOT NULL,
+  source_size INTEGER NOT NULL,
+  source_mtime_ns INTEGER NOT NULL,
+  frame_count INTEGER NOT NULL,
+  hash_blob BLOB NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(file_id, probe_backend, algo_version),
+  FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_fingerprints_algo ON fingerprints(algo_version);
+CREATE INDEX idx_fingerprints_file_backend
+  ON fingerprints(file_id, probe_backend, algo_version);
+
+CREATE TABLE fingerprint_decoder_provenance(
+  file_id INTEGER NOT NULL,
+  probe_backend TEXT NOT NULL DEFAULT 'pyav',
+  algo_version INTEGER NOT NULL,
+  decoder_backend TEXT NOT NULL,
+  attempts_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(file_id, probe_backend, algo_version),
+  FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_fingerprint_decoder_provenance_file_backend
+  ON fingerprint_decoder_provenance(file_id, probe_backend, algo_version);
+
+CREATE TABLE audio_fingerprints(
+  file_id INTEGER NOT NULL,
+  source_size INTEGER NOT NULL,
+  source_mtime_ns INTEGER NOT NULL,
+  fingerprint_text TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(file_id),
+  FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_audio_fingerprints_file ON audio_fingerprints(file_id);
+
+CREATE TABLE duplicate_groups(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scan_id INTEGER NOT NULL,
+  profile TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  total_size_bytes INTEGER NOT NULL,
+  FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_duplicate_groups_scan ON duplicate_groups(scan_id);
+
+CREATE TABLE duplicate_group_items(
+  group_id INTEGER NOT NULL,
+  file_id INTEGER NOT NULL,
+  similarity_score REAL NOT NULL,
+  keep_default INTEGER NOT NULL,
+  match_reason TEXT NOT NULL DEFAULT 'perceptual',
+  match_duration_delta_s REAL NOT NULL DEFAULT 0.0,
+  selected_action TEXT NOT NULL,
+  PRIMARY KEY(group_id, file_id),
+  FOREIGN KEY(group_id) REFERENCES duplicate_groups(id) ON DELETE CASCADE,
+  FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_group_items_file ON duplicate_group_items(file_id);
+
+CREATE TABLE action_runs(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scan_id INTEGER NOT NULL,
+  mode TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  status TEXT NOT NULL,
+  FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
+);
+
+CREATE TABLE action_items(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id INTEGER NOT NULL,
+  file_id INTEGER NOT NULL,
+  source_path TEXT NOT NULL,
+  target_path TEXT,
+  result TEXT NOT NULL,
+  error_text TEXT,
+  FOREIGN KEY(run_id) REFERENCES action_runs(id) ON DELETE CASCADE,
+  FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+);
+
+CREATE TABLE scan_issues(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scan_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  path TEXT NOT NULL,
+  message TEXT NOT NULL,
+  FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_scan_issues_scan_id ON scan_issues(scan_id, id);
+
+CREATE TABLE scan_failed_files(
+  scan_id INTEGER NOT NULL,
+  normalized_path TEXT NOT NULL,
+  display_path TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  message TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(scan_id, normalized_path),
+  FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_scan_failed_files_scan_id
+  ON scan_failed_files(scan_id, normalized_path);
+
+CREATE TABLE scan_links(
+  scan_id INTEGER NOT NULL,
+  link_kind TEXT NOT NULL,
+  link_path TEXT NOT NULL,
+  target_original_path TEXT NOT NULL,
+  target_exists_flag INTEGER NOT NULL DEFAULT 0,
+  source_root TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY(scan_id, link_path),
+  FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_scan_links_scan_kind_path
+  ON scan_links(scan_id, link_kind, link_path);
+"""
 
 
 class DatabaseConnectionMixin:
@@ -68,16 +259,17 @@ class DatabaseConnectionMixin:
             try:
                 self.conn.execute(f"PRAGMA {key} = {value}")
             except sqlite3.DatabaseError:
-                # Keep the connection usable on limited filesystems or runtimes.
                 continue
 
     @staticmethod
-    def _iter_chunks(values: list[str], chunk_size: int = 300) -> Iterable[list[str]]:
+    def _iter_chunks(values: list[str], chunk_size: int = 300) -> list[list[str]]:
         """Yield fixed-size chunks from a list of string values."""
         if chunk_size <= 0:
             chunk_size = 300
-        for idx in range(0, len(values), chunk_size):
-            yield values[idx : idx + chunk_size]
+        return [
+            values[idx : idx + chunk_size]
+            for idx in range(0, len(values), chunk_size)
+        ]
 
     def _commit_if_needed(self) -> None:
         """Commit immediately when no scan transaction is open."""
@@ -106,793 +298,11 @@ class DatabaseConnectionMixin:
         self._scan_tx_active = False
 
     def migrate(self) -> None:
-        """Create or migrate the SQLite schema to the current version."""
+        """Reset legacy databases and create the canonical snapshot schema."""
         current = int(self.conn.execute("PRAGMA user_version").fetchone()[0])
-        if current >= SCHEMA_VERSION:
+        if current == SCHEMA_VERSION:
             return
-
-        self.conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS scans(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              created_at TEXT NOT NULL,
-              profile TEXT NOT NULL,
-              roots_json TEXT NOT NULL,
-              extensions_json TEXT NOT NULL DEFAULT '[]',
-              custom_similarity_threshold REAL NOT NULL DEFAULT 0.18,
-              scene_aware_sampling INTEGER NOT NULL DEFAULT 0,
-              audio_fingerprint_enabled INTEGER NOT NULL DEFAULT 0,
-              cross_resolution_mode TEXT NOT NULL DEFAULT 'off',
-              probe_backend TEXT NOT NULL DEFAULT 'pyav',
-              scan_set_key TEXT NOT NULL DEFAULT '',
-              status TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS files(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              path TEXT NOT NULL UNIQUE,
-              size INTEGER NOT NULL,
-              mtime_ns INTEGER NOT NULL,
-              ctime_ns INTEGER NOT NULL,
-              ext TEXT NOT NULL,
-              scan_id INTEGER NOT NULL,
-              exists_flag INTEGER NOT NULL DEFAULT 1,
-              FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_files_scan_id ON files(scan_id);
-            CREATE INDEX IF NOT EXISTS idx_files_path_stat
-              ON files(path, size, mtime_ns);
-            CREATE INDEX IF NOT EXISTS idx_files_scan_exists
-              ON files(scan_id, exists_flag);
-            CREATE INDEX IF NOT EXISTS idx_files_path_stat_exists
-              ON files(path, size, mtime_ns, exists_flag);
-
-            CREATE TABLE IF NOT EXISTS video_meta(
-              file_id INTEGER NOT NULL,
-              probe_backend TEXT NOT NULL DEFAULT 'pyav',
-              probed_at TEXT NOT NULL,
-              source_size INTEGER NOT NULL,
-              source_mtime_ns INTEGER NOT NULL,
-              duration_s REAL NOT NULL,
-              width INTEGER NOT NULL,
-              height INTEGER NOT NULL,
-              fps REAL NOT NULL,
-              bit_depth INTEGER NOT NULL DEFAULT 8,
-              hdr_format TEXT NOT NULL DEFAULT '',
-              codec TEXT NOT NULL,
-              bitrate INTEGER NOT NULL,
-              has_audio INTEGER NOT NULL,
-              audio_codec TEXT NOT NULL DEFAULT '',
-              audio_bitrate INTEGER NOT NULL DEFAULT 0,
-              audio_languages TEXT NOT NULL DEFAULT '',
-              subtitle_languages TEXT NOT NULL DEFAULT '',
-              probe_error TEXT,
-              PRIMARY KEY(file_id, probe_backend),
-              FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_video_meta_file_backend
-              ON video_meta(file_id, probe_backend);
-
-            CREATE TABLE IF NOT EXISTS fingerprints(
-              file_id INTEGER NOT NULL,
-              probe_backend TEXT NOT NULL DEFAULT 'pyav',
-              algo_version INTEGER NOT NULL,
-              source_size INTEGER NOT NULL,
-              source_mtime_ns INTEGER NOT NULL,
-              frame_count INTEGER NOT NULL,
-              hash_blob BLOB NOT NULL,
-              created_at TEXT NOT NULL,
-              PRIMARY KEY(file_id, probe_backend, algo_version),
-              FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_fingerprints_algo
-              ON fingerprints(algo_version);
-            CREATE INDEX IF NOT EXISTS idx_fingerprints_file_backend
-              ON fingerprints(file_id, probe_backend, algo_version);
-
-            CREATE TABLE IF NOT EXISTS fingerprint_decoder_provenance(
-              file_id INTEGER NOT NULL,
-              probe_backend TEXT NOT NULL DEFAULT 'pyav',
-              algo_version INTEGER NOT NULL,
-              decoder_backend TEXT NOT NULL,
-              attempts_json TEXT NOT NULL DEFAULT '[]',
-              created_at TEXT NOT NULL,
-              PRIMARY KEY(file_id, probe_backend, algo_version),
-              FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_fingerprint_decoder_provenance_file_backend
-              ON fingerprint_decoder_provenance(file_id, probe_backend, algo_version);
-
-            CREATE TABLE IF NOT EXISTS audio_fingerprints(
-              file_id INTEGER NOT NULL,
-              source_size INTEGER NOT NULL,
-              source_mtime_ns INTEGER NOT NULL,
-              fingerprint_text TEXT NOT NULL,
-              created_at TEXT NOT NULL,
-              PRIMARY KEY(file_id),
-              FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_audio_fingerprints_file
-              ON audio_fingerprints(file_id);
-
-            CREATE TABLE IF NOT EXISTS duplicate_groups(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              scan_id INTEGER NOT NULL,
-              profile TEXT NOT NULL,
-              created_at TEXT NOT NULL,
-              total_size_bytes INTEGER NOT NULL,
-              FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_duplicate_groups_scan
-              ON duplicate_groups(scan_id);
-
-            CREATE TABLE IF NOT EXISTS duplicate_group_items(
-              group_id INTEGER NOT NULL,
-              file_id INTEGER NOT NULL,
-              similarity_score REAL NOT NULL,
-              keep_default INTEGER NOT NULL,
-              match_reason TEXT NOT NULL DEFAULT 'perceptual',
-              match_duration_delta_s REAL NOT NULL DEFAULT 0.0,
-              selected_action TEXT NOT NULL,
-              PRIMARY KEY(group_id, file_id),
-              FOREIGN KEY(group_id) REFERENCES duplicate_groups(id) ON DELETE CASCADE,
-              FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_group_items_file
-              ON duplicate_group_items(file_id);
-
-            CREATE TABLE IF NOT EXISTS action_runs(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              scan_id INTEGER NOT NULL,
-              mode TEXT NOT NULL,
-              created_at TEXT NOT NULL,
-              status TEXT NOT NULL,
-              FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
-            );
-
-            CREATE TABLE IF NOT EXISTS action_items(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              run_id INTEGER NOT NULL,
-              file_id INTEGER NOT NULL,
-              source_path TEXT NOT NULL,
-              target_path TEXT,
-              result TEXT NOT NULL,
-              error_text TEXT,
-              FOREIGN KEY(run_id) REFERENCES action_runs(id) ON DELETE CASCADE,
-              FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
-            );
-
-            CREATE TABLE IF NOT EXISTS scan_issues(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              scan_id INTEGER NOT NULL,
-              created_at TEXT NOT NULL,
-              stage TEXT NOT NULL,
-              path TEXT NOT NULL,
-              message TEXT NOT NULL,
-              FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_scan_issues_scan_id
-              ON scan_issues(scan_id, id);
-
-            CREATE TABLE IF NOT EXISTS scan_failed_files(
-              scan_id INTEGER NOT NULL,
-              normalized_path TEXT NOT NULL,
-              display_path TEXT NOT NULL,
-              stage TEXT NOT NULL,
-              message TEXT NOT NULL,
-              created_at TEXT NOT NULL,
-              updated_at TEXT NOT NULL,
-              PRIMARY KEY(scan_id, normalized_path),
-              FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_scan_failed_files_scan_id
-              ON scan_failed_files(scan_id, normalized_path);
-
-            CREATE TABLE IF NOT EXISTS scan_links(
-              scan_id INTEGER NOT NULL,
-              link_kind TEXT NOT NULL,
-              link_path TEXT NOT NULL,
-              target_original_path TEXT NOT NULL,
-              target_exists_flag INTEGER NOT NULL DEFAULT 0,
-              source_root TEXT NOT NULL DEFAULT '',
-              PRIMARY KEY(scan_id, link_path),
-              FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_scan_links_scan_kind_path
-              ON scan_links(scan_id, link_kind, link_path);
-            """
-        )
-        self._ensure_backend_scoped_cache_tables()
-        self._ensure_video_meta_columns()
-        self._ensure_fingerprint_decoder_provenance_table()
-        self._ensure_audio_fingerprint_table()
-        self._ensure_duplicate_group_item_columns()
-        self._ensure_scan_columns()
-        self._ensure_scan_issue_table()
-        self._ensure_scan_failed_files_table()
-        self._ensure_scan_links_table()
-        self._backfill_scan_set_keys()
+        self.conn.executescript(_DROP_SCHEMA_SQL)
+        self.conn.executescript(_CREATE_SCHEMA_SQL)
         self.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         self.conn.commit()
-
-    def _ensure_fingerprint_decoder_provenance_table(self) -> None:
-        """Create the quiet fingerprint decoder provenance table when absent."""
-        self.conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS fingerprint_decoder_provenance(
-              file_id INTEGER NOT NULL,
-              probe_backend TEXT NOT NULL DEFAULT 'pyav',
-              algo_version INTEGER NOT NULL,
-              decoder_backend TEXT NOT NULL,
-              attempts_json TEXT NOT NULL DEFAULT '[]',
-              created_at TEXT NOT NULL,
-              PRIMARY KEY(file_id, probe_backend, algo_version),
-              FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_fingerprint_decoder_provenance_file_backend
-              ON fingerprint_decoder_provenance(file_id, probe_backend, algo_version);
-            """
-        )
-
-    def _ensure_audio_fingerprint_table(self) -> None:
-        """Create the persisted audio-fingerprint table when absent."""
-        self.conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS audio_fingerprints(
-              file_id INTEGER NOT NULL,
-              source_size INTEGER NOT NULL,
-              source_mtime_ns INTEGER NOT NULL,
-              fingerprint_text TEXT NOT NULL,
-              created_at TEXT NOT NULL,
-              PRIMARY KEY(file_id),
-              FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_audio_fingerprints_file
-              ON audio_fingerprints(file_id);
-            """
-        )
-
-    def _ensure_backend_scoped_cache_tables(self) -> None:
-        """Rebuild cache tables so every probe backend can store rows per file."""
-        video_meta_rows = self.conn.execute("PRAGMA table_info(video_meta)").fetchall()
-        video_meta_pk = {str(row["name"]): int(row["pk"]) for row in video_meta_rows}
-        video_meta_columns = {str(row["name"]) for row in video_meta_rows}
-        expected_video_meta_columns = {
-            "file_id",
-            "probe_backend",
-            "probed_at",
-            "source_size",
-            "source_mtime_ns",
-            "duration_s",
-            "width",
-            "height",
-            "fps",
-            "bit_depth",
-            "hdr_format",
-            "codec",
-            "bitrate",
-            "has_audio",
-            "audio_codec",
-            "audio_bitrate",
-            "audio_languages",
-            "subtitle_languages",
-            "probe_error",
-        }
-        if (
-            video_meta_pk.get("file_id") != 1
-            or video_meta_pk.get("probe_backend") != 2
-            or video_meta_columns != expected_video_meta_columns
-        ):
-            probe_backend_expr = (
-                "CASE "
-                "WHEN TRIM(COALESCE(probe_backend, '')) = '' THEN 'ffprobe' "
-                "ELSE probe_backend END"
-                if "probe_backend" in video_meta_columns
-                else "'ffprobe'"
-            )
-            probed_at_expr = (
-                "CASE "
-                "WHEN TRIM(COALESCE(probed_at, '')) = '' THEN CURRENT_TIMESTAMP "
-                "ELSE probed_at END"
-                if "probed_at" in video_meta_columns
-                else "CURRENT_TIMESTAMP"
-            )
-            source_size_expr = (
-                "source_size" if "source_size" in video_meta_columns else "0"
-            )
-            source_mtime_expr = (
-                "source_mtime_ns" if "source_mtime_ns" in video_meta_columns else "0"
-            )
-            duration_expr = "duration_s" if "duration_s" in video_meta_columns else "0"
-            width_expr = "width" if "width" in video_meta_columns else "0"
-            height_expr = "height" if "height" in video_meta_columns else "0"
-            fps_expr = "fps" if "fps" in video_meta_columns else "0"
-            bit_depth_expr = (
-                "CASE WHEN bit_depth > 0 THEN bit_depth ELSE 8 END"
-                if "bit_depth" in video_meta_columns
-                else "8"
-            )
-            hdr_format_expr = (
-                "TRIM(COALESCE(hdr_format, ''))"
-                if "hdr_format" in video_meta_columns
-                else "''"
-            )
-            codec_expr = "codec" if "codec" in video_meta_columns else "''"
-            bitrate_expr = "bitrate" if "bitrate" in video_meta_columns else "0"
-            has_audio_expr = "has_audio" if "has_audio" in video_meta_columns else "0"
-            audio_codec_expr = (
-                "audio_codec" if "audio_codec" in video_meta_columns else "''"
-            )
-            audio_bitrate_expr = (
-                "audio_bitrate" if "audio_bitrate" in video_meta_columns else "0"
-            )
-            audio_languages_expr = (
-                "audio_languages" if "audio_languages" in video_meta_columns else "''"
-            )
-            subtitle_languages_expr = (
-                "subtitle_languages"
-                if "subtitle_languages" in video_meta_columns
-                else "''"
-            )
-            probe_error_expr = (
-                "probe_error" if "probe_error" in video_meta_columns else "NULL"
-            )
-            self.conn.executescript(
-                f"""
-                CREATE TABLE video_meta_new(
-                  file_id INTEGER NOT NULL,
-                  probe_backend TEXT NOT NULL DEFAULT 'pyav',
-                  probed_at TEXT NOT NULL,
-                  source_size INTEGER NOT NULL,
-                  source_mtime_ns INTEGER NOT NULL,
-                  duration_s REAL NOT NULL,
-                  width INTEGER NOT NULL,
-                  height INTEGER NOT NULL,
-                  fps REAL NOT NULL,
-                  bit_depth INTEGER NOT NULL DEFAULT 8,
-                  hdr_format TEXT NOT NULL DEFAULT '',
-                  codec TEXT NOT NULL,
-                  bitrate INTEGER NOT NULL,
-                  has_audio INTEGER NOT NULL,
-                  audio_codec TEXT NOT NULL DEFAULT '',
-                  audio_bitrate INTEGER NOT NULL DEFAULT 0,
-                  audio_languages TEXT NOT NULL DEFAULT '',
-                  subtitle_languages TEXT NOT NULL DEFAULT '',
-                  probe_error TEXT,
-                  PRIMARY KEY(file_id, probe_backend),
-                  FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
-                );
-                INSERT INTO video_meta_new(
-                  file_id, probe_backend, probed_at, source_size, source_mtime_ns,
-                  duration_s, width, height, fps, bit_depth, hdr_format,
-                  codec, bitrate, has_audio, audio_codec, audio_bitrate,
-                  audio_languages,
-                  subtitle_languages, probe_error
-                )
-                SELECT
-                  file_id,
-                  {probe_backend_expr},
-                  {probed_at_expr},
-                  {source_size_expr},
-                  {source_mtime_expr},
-                  {duration_expr},
-                  {width_expr},
-                  {height_expr},
-                  {fps_expr},
-                  {bit_depth_expr},
-                  {hdr_format_expr},
-                  {codec_expr},
-                  {bitrate_expr},
-                  {has_audio_expr},
-                  {audio_codec_expr},
-                  {audio_bitrate_expr},
-                  {audio_languages_expr},
-                  {subtitle_languages_expr},
-                  {probe_error_expr}
-                FROM video_meta;
-                DROP TABLE video_meta;
-                ALTER TABLE video_meta_new RENAME TO video_meta;
-                CREATE INDEX idx_video_meta_file_backend
-                  ON video_meta(file_id, probe_backend);
-                """
-            )
-
-        fingerprints_pk = {
-            str(row["name"]): int(row["pk"])
-            for row in self.conn.execute("PRAGMA table_info(fingerprints)").fetchall()
-        }
-        if (
-            fingerprints_pk.get("file_id") != 1
-            or fingerprints_pk.get("probe_backend") != 2
-            or fingerprints_pk.get("algo_version") != 3
-        ):
-            self.conn.executescript(
-                """
-                CREATE TABLE fingerprints_new(
-                  file_id INTEGER NOT NULL,
-                  probe_backend TEXT NOT NULL DEFAULT 'pyav',
-                  algo_version INTEGER NOT NULL,
-                  source_size INTEGER NOT NULL,
-                  source_mtime_ns INTEGER NOT NULL,
-                  frame_count INTEGER NOT NULL,
-                  hash_blob BLOB NOT NULL,
-                  created_at TEXT NOT NULL,
-                  PRIMARY KEY(file_id, probe_backend, algo_version),
-                  FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
-                );
-                INSERT INTO fingerprints_new(
-                  file_id, probe_backend, algo_version, source_size, source_mtime_ns,
-                  frame_count,
-                  hash_blob, created_at
-                )
-                SELECT
-                  file_id,
-                  CASE
-                    WHEN TRIM(COALESCE(probe_backend, '')) = '' THEN 'ffprobe'
-                    ELSE probe_backend
-                  END,
-                  algo_version,
-                  source_size,
-                  source_mtime_ns,
-                  frame_count,
-                  hash_blob,
-                  created_at
-                FROM fingerprints;
-                DROP TABLE fingerprints;
-                ALTER TABLE fingerprints_new RENAME TO fingerprints;
-                CREATE INDEX idx_fingerprints_algo
-                  ON fingerprints(algo_version);
-                CREATE INDEX idx_fingerprints_file_backend
-                  ON fingerprints(file_id, probe_backend, algo_version);
-                """
-            )
-        provenance_pk = {
-            str(row["name"]): int(row["pk"])
-            for row in self.conn.execute(
-                "PRAGMA table_info(fingerprint_decoder_provenance)"
-            ).fetchall()
-        }
-        if (
-            provenance_pk.get("file_id") != 1
-            or provenance_pk.get("probe_backend") != 2
-            or provenance_pk.get("algo_version") != 3
-        ):
-            self.conn.executescript(
-                """
-                CREATE TABLE fingerprint_decoder_provenance_new(
-                  file_id INTEGER NOT NULL,
-                  probe_backend TEXT NOT NULL DEFAULT 'pyav',
-                  algo_version INTEGER NOT NULL,
-                  decoder_backend TEXT NOT NULL,
-                  attempts_json TEXT NOT NULL DEFAULT '[]',
-                  created_at TEXT NOT NULL,
-                  PRIMARY KEY(file_id, probe_backend, algo_version),
-                  FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
-                );
-                INSERT INTO fingerprint_decoder_provenance_new(
-                  file_id, probe_backend, algo_version, decoder_backend,
-                  attempts_json, created_at
-                )
-                SELECT
-                  file_id,
-                  CASE
-                    WHEN TRIM(COALESCE(probe_backend, '')) = '' THEN 'ffprobe'
-                    ELSE probe_backend
-                  END,
-                  1,
-                  decoder_backend,
-                  attempts_json,
-                  created_at
-                FROM fingerprint_decoder_provenance;
-                DROP TABLE fingerprint_decoder_provenance;
-                ALTER TABLE fingerprint_decoder_provenance_new
-                  RENAME TO fingerprint_decoder_provenance;
-                CREATE INDEX idx_fingerprint_decoder_provenance_file_backend
-                  ON fingerprint_decoder_provenance(
-                    file_id,
-                    probe_backend,
-                    algo_version
-                  );
-                """
-            )
-
-    def _ensure_video_meta_columns(self) -> None:
-        """Add newly introduced video metadata columns to legacy databases."""
-        columns = {
-            str(row["name"])
-            for row in self.conn.execute("PRAGMA table_info(video_meta)").fetchall()
-        }
-        if "probe_backend" not in columns:
-            self.conn.execute(
-                "ALTER TABLE video_meta ADD COLUMN probe_backend TEXT NOT NULL "
-                "DEFAULT 'ffprobe'"
-            )
-        if "probed_at" not in columns:
-            self.conn.execute(
-                "ALTER TABLE video_meta ADD COLUMN probed_at TEXT NOT NULL DEFAULT ''"
-            )
-        if "source_size" not in columns:
-            self.conn.execute(
-                "ALTER TABLE video_meta ADD COLUMN source_size INTEGER NOT NULL "
-                "DEFAULT 0"
-            )
-        if "source_mtime_ns" not in columns:
-            self.conn.execute(
-                "ALTER TABLE video_meta ADD COLUMN source_mtime_ns INTEGER NOT NULL "
-                "DEFAULT 0"
-            )
-        self.conn.execute(
-            "UPDATE video_meta SET probe_backend = 'ffprobe' "
-            "WHERE TRIM(COALESCE(probe_backend, '')) = ''"
-        )
-        self.conn.execute(
-            "UPDATE video_meta SET probed_at = CURRENT_TIMESTAMP "
-            "WHERE TRIM(COALESCE(probed_at, '')) = ''"
-        )
-        self.conn.execute(
-            """
-            UPDATE video_meta
-            SET source_size = (
-              SELECT f.size FROM files f WHERE f.id = video_meta.file_id
-            )
-            WHERE source_size = 0
-            """
-        )
-        self.conn.execute(
-            """
-            UPDATE video_meta
-            SET source_mtime_ns = (
-              SELECT f.mtime_ns FROM files f WHERE f.id = video_meta.file_id
-            )
-            WHERE source_mtime_ns = 0
-            """
-        )
-        if "audio_codec" not in columns:
-            self.conn.execute(
-                "ALTER TABLE video_meta ADD COLUMN audio_codec TEXT NOT NULL DEFAULT ''"
-            )
-        if "audio_bitrate" not in columns:
-            self.conn.execute(
-                "ALTER TABLE video_meta ADD COLUMN audio_bitrate INTEGER "
-                "NOT NULL DEFAULT 0"
-            )
-        if "audio_languages" not in columns:
-            self.conn.execute(
-                "ALTER TABLE video_meta ADD COLUMN audio_languages TEXT "
-                "NOT NULL DEFAULT ''"
-            )
-        if "subtitle_languages" not in columns:
-            self.conn.execute(
-                "ALTER TABLE video_meta ADD COLUMN subtitle_languages TEXT "
-                "NOT NULL DEFAULT ''"
-            )
-        if "bit_depth" not in columns:
-            self.conn.execute(
-                "ALTER TABLE video_meta ADD COLUMN bit_depth INTEGER NOT NULL DEFAULT 8"
-            )
-        if "hdr_format" not in columns:
-            self.conn.execute(
-                "ALTER TABLE video_meta ADD COLUMN hdr_format TEXT NOT NULL DEFAULT ''"
-            )
-        fp_columns = {
-            str(row["name"])
-            for row in self.conn.execute("PRAGMA table_info(fingerprints)").fetchall()
-        }
-        if "probe_backend" not in fp_columns:
-            self.conn.execute(
-                "ALTER TABLE fingerprints "
-                "ADD COLUMN probe_backend TEXT NOT NULL DEFAULT 'ffprobe'"
-            )
-        if "algo_version" not in fp_columns:
-            self.conn.execute(
-                "ALTER TABLE fingerprints ADD COLUMN algo_version INTEGER NOT NULL "
-                "DEFAULT 1"
-            )
-        if "source_size" not in fp_columns:
-            self.conn.execute(
-                "ALTER TABLE fingerprints ADD COLUMN source_size INTEGER NOT NULL "
-                "DEFAULT 0"
-            )
-        if "source_mtime_ns" not in fp_columns:
-            self.conn.execute(
-                "ALTER TABLE fingerprints ADD COLUMN source_mtime_ns "
-                "INTEGER NOT NULL DEFAULT 0"
-            )
-        self.conn.execute(
-            "UPDATE fingerprints SET probe_backend = 'ffprobe' "
-            "WHERE TRIM(COALESCE(probe_backend, '')) = ''"
-        )
-        self.conn.execute(
-            """
-            UPDATE fingerprints
-            SET source_size = (
-              SELECT f.size FROM files f WHERE f.id = fingerprints.file_id
-            )
-            WHERE source_size = 0
-            """
-        )
-        self.conn.execute(
-            """
-            UPDATE fingerprints
-            SET source_mtime_ns = (
-              SELECT f.mtime_ns FROM files f WHERE f.id = fingerprints.file_id
-            )
-            WHERE source_mtime_ns = 0
-            """
-        )
-
-    def _ensure_scan_columns(self) -> None:
-        """Add newly introduced scan columns and indexes to legacy databases."""
-        columns = {
-            str(row["name"])
-            for row in self.conn.execute("PRAGMA table_info(scans)").fetchall()
-        }
-        if "extensions_json" not in columns:
-            self.conn.execute(
-                "ALTER TABLE scans ADD COLUMN extensions_json TEXT "
-                "NOT NULL DEFAULT '[]'"
-            )
-        if "custom_similarity_threshold" not in columns:
-            self.conn.execute(
-                "ALTER TABLE scans ADD COLUMN custom_similarity_threshold REAL "
-                "NOT NULL DEFAULT 0.18"
-            )
-        if "scene_aware_sampling" not in columns:
-            self.conn.execute(
-                "ALTER TABLE scans ADD COLUMN scene_aware_sampling INTEGER "
-                "NOT NULL DEFAULT 0"
-            )
-        if "audio_fingerprint_enabled" not in columns:
-            self.conn.execute(
-                "ALTER TABLE scans ADD COLUMN audio_fingerprint_enabled INTEGER "
-                "NOT NULL DEFAULT 0"
-            )
-        if "cross_resolution_mode" not in columns:
-            self.conn.execute(
-                "ALTER TABLE scans ADD COLUMN cross_resolution_mode TEXT "
-                "NOT NULL DEFAULT 'off'"
-            )
-        if "probe_backend" not in columns:
-            self.conn.execute(
-                "ALTER TABLE scans ADD COLUMN probe_backend TEXT NOT NULL "
-                "DEFAULT 'ffprobe'"
-            )
-        if "scan_set_key" not in columns:
-            self.conn.execute(
-                "ALTER TABLE scans ADD COLUMN scan_set_key TEXT NOT NULL DEFAULT ''"
-            )
-        self.conn.execute(
-            "UPDATE scans SET probe_backend = 'ffprobe' "
-            "WHERE TRIM(COALESCE(probe_backend, '')) = ''"
-        )
-        self.conn.execute(
-            "UPDATE scans SET custom_similarity_threshold = 0.18 "
-            "WHERE custom_similarity_threshold IS NULL"
-        )
-        self.conn.execute(
-            "UPDATE scans SET cross_resolution_mode = 'off' "
-            "WHERE TRIM(COALESCE(cross_resolution_mode, '')) = ''"
-        )
-        self.conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_scans_set_status "
-            "ON scans(scan_set_key, status, id DESC)"
-        )
-
-    def _ensure_duplicate_group_item_columns(self) -> None:
-        """Add persisted duplicate-match metadata columns to legacy databases."""
-        columns = {
-            str(row["name"])
-            for row in self.conn.execute(
-                "PRAGMA table_info(duplicate_group_items)"
-            ).fetchall()
-        }
-        if "match_reason" not in columns:
-            self.conn.execute(
-                "ALTER TABLE duplicate_group_items ADD COLUMN match_reason "
-                "TEXT NOT NULL DEFAULT 'perceptual'"
-            )
-        if "match_duration_delta_s" not in columns:
-            self.conn.execute(
-                "ALTER TABLE duplicate_group_items ADD COLUMN "
-                "match_duration_delta_s REAL NOT NULL DEFAULT 0.0"
-            )
-        self.conn.execute(
-            "UPDATE duplicate_group_items SET match_reason = 'perceptual' "
-            "WHERE TRIM(COALESCE(match_reason, '')) = ''"
-        )
-        self.conn.execute(
-            "UPDATE duplicate_group_items SET match_duration_delta_s = 0.0 "
-            "WHERE match_duration_delta_s IS NULL"
-        )
-
-    def _ensure_scan_issue_table(self) -> None:
-        """Create the persisted per-scan issue table when absent."""
-        self.conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS scan_issues(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              scan_id INTEGER NOT NULL,
-              created_at TEXT NOT NULL,
-              stage TEXT NOT NULL,
-              path TEXT NOT NULL,
-              message TEXT NOT NULL,
-              FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_scan_issues_scan_id
-              ON scan_issues(scan_id, id);
-            """
-        )
-
-    def _ensure_scan_failed_files_table(self) -> None:
-        """Create the explicit paused-scan failed-file table when absent."""
-        self.conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS scan_failed_files(
-              scan_id INTEGER NOT NULL,
-              normalized_path TEXT NOT NULL,
-              display_path TEXT NOT NULL,
-              stage TEXT NOT NULL,
-              message TEXT NOT NULL,
-              created_at TEXT NOT NULL,
-              updated_at TEXT NOT NULL,
-              PRIMARY KEY(scan_id, normalized_path),
-              FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_scan_failed_files_scan_id
-              ON scan_failed_files(scan_id, normalized_path);
-            """
-        )
-
-    def _ensure_scan_links_table(self) -> None:
-        """Create the persisted scan-links table when absent."""
-        self.conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS scan_links(
-              scan_id INTEGER NOT NULL,
-              link_kind TEXT NOT NULL,
-              link_path TEXT NOT NULL,
-              target_original_path TEXT NOT NULL,
-              target_exists_flag INTEGER NOT NULL DEFAULT 0,
-              source_root TEXT NOT NULL DEFAULT '',
-              PRIMARY KEY(scan_id, link_path),
-              FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS idx_scan_links_scan_kind_path
-              ON scan_links(scan_id, link_kind, link_path);
-            """
-        )
-
-    def _backfill_scan_set_keys(self) -> None:
-        """Populate scan-set keys for legacy rows that predate that column."""
-        rows = self.conn.execute(
-            """
-            SELECT id, roots_json, profile, extensions_json,
-                   custom_similarity_threshold, scene_aware_sampling,
-                   audio_fingerprint_enabled, cross_resolution_mode, scan_set_key
-            FROM scans
-            WHERE scan_set_key = '' OR scan_set_key IS NULL
-            """
-        ).fetchall()
-        for row in rows:
-            raw_roots = row["roots_json"]
-            raw_extensions = row["extensions_json"]
-            roots = normalize_roots_for_display(decode_string_list_json(raw_roots))
-            extensions = normalize_extensions(decode_string_list_json(raw_extensions))
-            profile = normalize_similarity_profile(str(row["profile"] or "balanced"))
-            scan_set_key = build_scan_set_key(
-                roots=roots,
-                similarity_profile=profile,
-                extensions=extensions,
-                custom_similarity_threshold=normalize_custom_similarity_threshold(
-                    row["custom_similarity_threshold"]
-                ),
-                scene_aware_sampling=bool(row["scene_aware_sampling"]),
-                audio_fingerprint_enabled=bool(row["audio_fingerprint_enabled"]),
-                cross_resolution_mode=normalize_cross_resolution_mode(
-                    row["cross_resolution_mode"]
-                ),
-            )
-            self.conn.execute(
-                "UPDATE scans SET scan_set_key = ? WHERE id = ?",
-                (scan_set_key, int(row["id"])),
-            )

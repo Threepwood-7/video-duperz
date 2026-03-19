@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def test_db_migration_backfills_scan_set_columns(tmp_path: Path) -> None:
+def test_db_migration_resets_legacy_schema_to_snapshot_model(tmp_path: Path) -> None:
     db_file = tmp_path / "legacy.db"
     conn = sqlite3.connect(db_file)
     conn.executescript(
@@ -24,6 +24,15 @@ def test_db_migration_backfills_scan_set_columns(tmp_path: Path) -> None:
           roots_json TEXT NOT NULL,
           status TEXT NOT NULL
         );
+        CREATE TABLE files(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          path TEXT NOT NULL UNIQUE,
+          size INTEGER NOT NULL,
+          mtime_ns INTEGER NOT NULL,
+          ctime_ns INTEGER NOT NULL,
+          ext TEXT NOT NULL,
+          scan_id INTEGER NOT NULL
+        );
         INSERT INTO scans(created_at, profile, roots_json, status)
         VALUES('2026-01-01T10:00:00+00:00', 'balanced', '["D:/Videos"]', 'done');
         PRAGMA user_version = 2;
@@ -33,32 +42,20 @@ def test_db_migration_backfills_scan_set_columns(tmp_path: Path) -> None:
     conn.close()
 
     with Database(db_file) as db:
-        cols = {
-            str(row["name"])
-            for row in db.conn.execute("PRAGMA table_info(scans)").fetchall()
-        }
-        assert "extensions_json" in cols
-        assert "probe_backend" in cols
-        assert "scan_set_key" in cols
-        row = db.conn.execute(
-            "SELECT scan_set_key, extensions_json, probe_backend "
-            "FROM scans WHERE id = 1"
-        ).fetchone()
-        assert str(row["scan_set_key"])
-        assert str(row["extensions_json"]) == "[]"
-        assert str(row["probe_backend"]) == "ffprobe"
-        video_meta_cols = {
-            str(row["name"])
-            for row in db.conn.execute("PRAGMA table_info(video_meta)").fetchall()
-        }
-        assert "probed_at" in video_meta_cols
-        failed_cols = {
+        indexes = db.conn.execute("PRAGMA index_list(files)").fetchall()
+        unique_indexes = [row for row in indexes if int(row["unique"]) == 1]
+
+        assert db.latest_scan_id() is None
+        assert "idx_files_scan_exists" in {str(row["name"]) for row in indexes}
+        assert len(unique_indexes) == 1
+        unique_columns = [
             str(row["name"])
             for row in db.conn.execute(
-                "PRAGMA table_info(scan_failed_files)"
+                f"PRAGMA index_info({unique_indexes[0]['name']})"
             ).fetchall()
-        }
-        assert "normalized_path" in failed_cols
+        ]
+        assert unique_columns == ["scan_id", "path"]
+        assert int(db.conn.execute("PRAGMA user_version").fetchone()[0]) >= 15
 
 
 def test_latest_scan_queries_by_scan_set() -> None:
@@ -558,6 +555,133 @@ def test_scan_batch_methods_roundtrip() -> None:
         assert groups[0].items[0].match_duration_delta_s == 5.0
         assert groups[0].items[1].match_reason == "perceptual"
         assert groups[0].items[1].match_duration_delta_s == 0.0
+
+
+def test_files_are_snapshot_scoped_per_scan() -> None:
+    with Database(":memory:") as db:
+        scan_a = db.create_scan(
+            profile="balanced",
+            roots=["D:/Videos"],
+            extensions=["mp4"],
+        )
+        scan_b = db.create_scan(
+            profile="balanced",
+            roots=["D:/Videos"],
+            extensions=["mp4"],
+        )
+
+        file_a = db.upsert_file(
+            path="D:/Videos/a.mp4",
+            size=10,
+            mtime_ns=11,
+            ctime_ns=11,
+            ext="mp4",
+            scan_id=scan_a,
+        )
+        file_b = db.upsert_file(
+            path="D:/Videos/a.mp4",
+            size=10,
+            mtime_ns=11,
+            ctime_ns=11,
+            ext="mp4",
+            scan_id=scan_b,
+        )
+
+        assert file_a != file_b
+        rows = db.conn.execute(
+            "SELECT scan_id, path FROM files ORDER BY scan_id"
+        ).fetchall()
+        assert [(int(row["scan_id"]), str(row["path"])) for row in rows] == [
+            (scan_a, "D:/Videos/a.mp4"),
+            (scan_b, "D:/Videos/a.mp4"),
+        ]
+
+
+def test_clone_scan_files_with_artifacts_roundtrips_to_new_snapshot() -> None:
+    with Database(":memory:") as db:
+        source_scan_id = db.create_scan(
+            profile="balanced",
+            roots=["D:/Videos"],
+            extensions=["mp4"],
+            audio_fingerprint_enabled=True,
+        )
+        source_file_id = db.upsert_file(
+            path="D:/Videos/a.mp4",
+            size=123,
+            mtime_ns=456,
+            ctime_ns=456,
+            ext="mp4",
+            scan_id=source_scan_id,
+        )
+        meta = VideoMeta(
+            duration_s=10.0,
+            width=320,
+            height=240,
+            fps=24.0,
+            codec="h264",
+            bitrate=1000,
+            has_audio=True,
+            audio_codec="aac",
+            audio_bitrate=128000,
+            audio_languages="eng",
+            subtitle_languages="",
+            hdr_format="",
+        )
+        db.save_video_meta(source_file_id, meta)
+        db.save_fingerprint(
+            source_file_id,
+            algo_version=ALGO_VERSION,
+            hashes=[1, 2, 3],
+        )
+        db.save_fingerprint_provenance_batch(
+            [(source_file_id, ALGO_VERSION, "pyav", '{"decoder_backend":"pyav"}')]
+        )
+        db.save_audio_fingerprints_batch([(source_file_id, 123, 456, "audio:abc")])
+        db.upsert_failed_file(
+            source_scan_id,
+            ScanIssue(
+                stage="probe",
+                path="D:/Videos/a.mp4",
+                message="transient failure",
+            ),
+        )
+        db.complete_scan(source_scan_id, status="done")
+
+        target_scan_id = db.create_scan(
+            profile="balanced",
+            roots=["D:/Videos"],
+            extensions=["mp4"],
+            audio_fingerprint_enabled=True,
+        )
+        cloned = db.clone_scan_files_with_artifacts(
+            source_scan_id=source_scan_id,
+            target_scan_id=target_scan_id,
+            paths={"D:/Videos/a.mp4"},
+            algo_version=ALGO_VERSION,
+            include_audio_fingerprint=True,
+        )
+        copied_failed = db.clone_failed_files_for_paths(
+            source_scan_id=source_scan_id,
+            target_scan_id=target_scan_id,
+            paths={"D:/Videos/a.mp4"},
+        )
+
+        assert copied_failed == 1
+        cloned_file_id = int(cloned["D:/Videos/a.mp4"])
+        assert cloned_file_id != source_file_id
+
+        cached = db.get_cached_artifacts(
+            "D:/Videos/a.mp4",
+            size=123,
+            mtime_ns=456,
+            include_audio_fingerprint=True,
+        )
+        assert cached is not None
+        assert cached["file_id"] == cloned_file_id
+        assert cached["meta"].duration_s == 10.0
+        assert cached["fingerprint"]["hashes"] == [1, 2, 3]
+        assert cached["audio_fingerprint"] == "audio:abc"
+        assert db.count_failed_files(target_scan_id) == 1
 
 
 def test_cached_artifacts_are_probe_backend_specific() -> None:
