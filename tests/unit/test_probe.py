@@ -82,7 +82,7 @@ def test_probe_video_ffprobe_uses_hidden_window_kwargs_and_resolved_executable(
         fps=30000 / 1001,
         codec="h264",
         bitrate=123456,
-        has_audio=True,
+        audio_stream_count=1,
         audio_codec="aac",
         audio_bitrate=64000,
         audio_languages="eng",
@@ -96,10 +96,10 @@ def test_probe_video_ffprobe_uses_hidden_window_kwargs_and_resolved_executable(
         "error",
         "-show_entries",
         (
-            "format=duration,bit_rate:"
-            "stream=index,codec_type,codec_name,width,height,r_frame_rate,bit_rate,"
-            "color_transfer,color_primaries,color_space,pix_fmt,"
-            "bits_per_raw_sample,side_data_list:"
+            "format=duration,bit_rate,format_name:"
+            "stream=index,codec_type,codec_name,profile,level,width,height,"
+            "r_frame_rate,bit_rate,field_order,color_transfer,color_primaries,"
+            "color_space,pix_fmt,bits_per_raw_sample,side_data_list:"
             "stream_tags=language"
         ),
         "-of",
@@ -240,7 +240,7 @@ def test_probe_video_pyav_maps_metadata(monkeypatch: pytest.MonkeyPatch) -> None
         fps=24000 / 1001,
         codec="hevc",
         bitrate=8_000_000,
-        has_audio=True,
+        audio_stream_count=2,
         audio_codec="eac3",
         audio_bitrate=768000,
         audio_languages="deu,eng",

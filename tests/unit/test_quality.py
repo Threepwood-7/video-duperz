@@ -14,6 +14,9 @@ def _item(
     path: str,
     *,
     bit_depth: int = 8,
+    codec_profile: str = "",
+    codec_level: str = "",
+    is_interlaced: bool = False,
 ) -> MatchItem:
     return MatchItem(
         file_id=file_id,
@@ -27,12 +30,16 @@ def _item(
         fps=30.0,
         codec=codec,
         bitrate=bitrate,
+        audio_stream_count=1,
         audio_codec="aac",
         audio_bitrate=128000,
         audio_languages="eng",
         subtitle_languages="",
         hashes=[0] * 12,
         bit_depth=bit_depth,
+        codec_profile=codec_profile,
+        codec_level=codec_level,
+        is_interlaced=is_interlaced,
     )
 
 
@@ -67,3 +74,55 @@ def test_quality_score_prefers_twelve_bit_over_ten_bit() -> None:
         bit_depth=12,
     )
     assert quality_score(twelve_bit) > quality_score(ten_bit)
+
+
+def test_quality_score_prefers_higher_codec_profile_when_other_specs_match() -> None:
+    main = _item(
+        1,
+        1920,
+        1080,
+        2_000_000,
+        "h264",
+        10,
+        "a.mp4",
+        codec_profile="Main",
+    )
+    high = _item(
+        2,
+        1920,
+        1080,
+        2_000_000,
+        "h264",
+        20,
+        "b.mp4",
+        codec_profile="High",
+    )
+    assert quality_score(high) > quality_score(main)
+
+
+def test_choose_keep_prefers_progressive_when_other_specs_match() -> None:
+    interlaced = _item(
+        1,
+        1920,
+        1080,
+        2_000_000,
+        "h264",
+        10,
+        "a.mp4",
+        codec_profile="High",
+        codec_level="4.1",
+        is_interlaced=True,
+    )
+    progressive = _item(
+        2,
+        1920,
+        1080,
+        2_000_000,
+        "h264",
+        20,
+        "b.mp4",
+        codec_profile="High",
+        codec_level="4.1",
+        is_interlaced=False,
+    )
+    assert choose_keep_file_id([interlaced, progressive]) == 2

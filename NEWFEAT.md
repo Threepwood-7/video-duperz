@@ -21,20 +21,20 @@ The current `is_hdr: bool` flag collapses HDR10, HDR10+, HLG, Dolby Vision into 
 Replace with `hdr_format: str` (e.g. `"HDR10"`, `"DV"`, `"HLG"`, `""`) derived from
 `color_trc` / `color_primaries` / side-data already inspected in `probe.py`.
 
-### [Medium] Codec profile and level
+### [Medium][DONE] Codec profile and level
 Capture `codec_profile: str` and `codec_level: str` from the stream (e.g. `"High"` / `"5.1"`)
 and add them to `VideoMeta`.  Surface in a tooltip or expandable row in the results table so
 the user can see why two H.264 files are rated differently.
 
-### [Medium] Container format column
+### [Medium][DONE] Container format column
 Add `container: str` to `VideoMeta` (e.g. `"mkv"`, `"mp4"`, `"avi"`), derived from the
 probed format name rather than inferred from the file extension.  Display as a column.
 
-### [Medium] Audio stream count
+### [Medium][DONE] Audio stream count
 Replace the `has_audio: bool` field with `audio_stream_count: int`.  Useful when one copy
 has multiple audio tracks (e.g. original + dub) and the other does not.
 
-### [Low] Interlaced video detection
+### [Low][DONE] Interlaced video detection
 Add `is_interlaced: bool` to `VideoMeta`.  Flag interlaced copies in the results view;
 prefer progressive when all else is equal in quality scoring.
 

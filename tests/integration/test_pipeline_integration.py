@@ -108,7 +108,7 @@ def _fake_meta() -> VideoMeta:
         fps=24.0,
         codec="h264",
         bitrate=1000,
-        has_audio=True,
+        audio_stream_count=1,
         audio_codec="aac",
         audio_bitrate=128000,
         audio_languages="eng",

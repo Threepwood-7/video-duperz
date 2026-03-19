@@ -60,11 +60,15 @@ from video_duperz.ui.results_view import (
 )
 from video_duperz.ui.results_view_shared import (
     COL_BIT_DEPTH,
+    COL_CODEC_LEVEL,
+    COL_CODEC_PROFILE,
+    COL_CONTAINER,
     COL_CHECK,
     COL_FILE_NAME,
     COL_FPS,
     COL_FULL_PATH,
     COL_HDR_FORMAT,
+    COL_INTERLACED,
     COL_MATCH,
     COL_PARENT_DIR,
     COL_SIZE,
@@ -103,6 +107,10 @@ def _dup_item(
     fps: float = 30.0,
     bit_depth: int = 8,
     hdr_format: str = "",
+    container: str = "",
+    codec_profile: str = "",
+    codec_level: str = "",
+    is_interlaced: bool = False,
     match_reason: str = "perceptual",
     match_duration_delta_s: float = 0.0,
 ) -> DuplicateItem:
@@ -118,8 +126,13 @@ def _dup_item(
         fps=fps,
         bit_depth=bit_depth,
         hdr_format=hdr_format,
+        container=container,
+        codec_profile=codec_profile,
+        codec_level=codec_level,
+        is_interlaced=is_interlaced,
         bitrate=bitrate,
         codec=codec,
+        audio_stream_count=1,
         audio_codec="aac",
         audio_bitrate=128000,
         audio_languages="eng",
@@ -335,7 +348,7 @@ def _load_delete_test_group(
                 fps=24.0,
                 codec="h264",
                 bitrate=900_000 - (index * 10_000),
-                has_audio=True,
+                audio_stream_count=1,
                 audio_codec="aac",
                 audio_bitrate=128_000,
                 audio_languages="eng",
@@ -451,7 +464,7 @@ def test_main_window_launches_with_new_results_table(tmp_path: Path) -> None:
 
         assert window.thumbnail_size_combo.count() == 4
         assert window.add_recent_root_btn.text() == "Add Recent Folder"
-        assert window.results_view.results_table.columnCount() == 23
+        assert window.results_view.results_table.columnCount() == 28
         assert window.results_view.results_table.horizontalHeaderItem(2).text() == "="
         assert (
             window.results_view.results_table.horizontalHeaderItem(3).text()
@@ -466,6 +479,12 @@ def test_main_window_launches_with_new_results_table(tmp_path: Path) -> None:
             == "FPS"
         )
         assert (
+            window.results_view.results_table.horizontalHeaderItem(
+                COL_INTERLACED
+            ).text()
+            == "Interlaced"
+        )
+        assert (
             window.results_view.results_table.horizontalHeaderItem(COL_BIT_DEPTH).text()
             == "Bit Depth"
         )
@@ -476,7 +495,23 @@ def test_main_window_launches_with_new_results_table(tmp_path: Path) -> None:
             == "HDR Format"
         )
         assert (
-            window.results_view.results_table.horizontalHeaderItem(13).text()
+            window.results_view.results_table.horizontalHeaderItem(
+                COL_CODEC_PROFILE
+            ).text()
+            == "Codec Profile"
+        )
+        assert (
+            window.results_view.results_table.horizontalHeaderItem(
+                COL_CODEC_LEVEL
+            ).text()
+            == "Codec Level"
+        )
+        assert (
+            window.results_view.results_table.horizontalHeaderItem(COL_CONTAINER).text()
+            == "Container"
+        )
+        assert (
+            window.results_view.results_table.horizontalHeaderItem(18).text()
             == "Audio Codec"
         )
         assert (
@@ -499,6 +534,10 @@ def test_main_window_launches_with_new_results_table(tmp_path: Path) -> None:
                     fps=23.976,
                     bit_depth=10,
                     hdr_format="HDR10",
+                    container="mkv",
+                    codec_profile="High",
+                    codec_level="4.1",
+                    is_interlaced=True,
                     match_reason="audio_match",
                 ),
                 _dup_item(
@@ -526,6 +565,18 @@ def test_main_window_launches_with_new_results_table(tmp_path: Path) -> None:
         )
         assert (
             window.results_view.results_table.item(0, COL_HDR_FORMAT).text() == "HDR10"
+        )
+        assert window.results_view.results_table.item(0, COL_CONTAINER).text() == "mkv"
+        assert window.results_view.results_table.item(0, COL_INTERLACED).text() == "Yes"
+        assert (
+            window.results_view.results_table.item(0, COL_CODEC_PROFILE).text()
+            == "High"
+        )
+        assert (
+            window.results_view.results_table.item(0, COL_CODEC_LEVEL).text() == "4.1"
+        )
+        assert "Scan Type: Interlaced" in (
+            window.results_view.results_table.item(0, COL_CODEC_PROFILE).toolTip()
         )
         assert "Audio fingerprint rescue match" in (
             window.results_view.results_table.item(0, COL_MATCH).toolTip()
@@ -2879,7 +2930,7 @@ def test_saved_scan_profiles_save_load_and_delete(tmp_path: Path, monkeypatch) -
                 fps=30.0,
                 codec="h264",
                 bitrate=1000,
-                has_audio=True,
+                audio_stream_count=1,
                 audio_codec="aac",
                 audio_bitrate=128000,
                 audio_languages="eng",
@@ -2896,7 +2947,7 @@ def test_saved_scan_profiles_save_load_and_delete(tmp_path: Path, monkeypatch) -
                 fps=30.0,
                 codec="h264",
                 bitrate=900,
-                has_audio=True,
+                audio_stream_count=1,
                 audio_codec="aac",
                 audio_bitrate=128000,
                 audio_languages="eng",

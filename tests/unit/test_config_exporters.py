@@ -595,7 +595,7 @@ def test_export_scan_outputs_duplicates_and_links(tmp_path: Path) -> None:
                 fps=30.0,
                 codec="h264",
                 bitrate=1000,
-                has_audio=True,
+                audio_stream_count=1,
                 audio_codec="aac",
                 audio_bitrate=128000,
                 audio_languages="eng",
@@ -612,7 +612,7 @@ def test_export_scan_outputs_duplicates_and_links(tmp_path: Path) -> None:
                 fps=30.0,
                 codec="h264",
                 bitrate=900,
-                has_audio=True,
+                audio_stream_count=1,
                 audio_codec="aac",
                 audio_bitrate=128000,
                 audio_languages="eng",
@@ -639,6 +639,7 @@ def test_export_scan_outputs_duplicates_and_links(tmp_path: Path) -> None:
                 height=1080,
                 bitrate=1000,
                 codec="h264",
+                audio_stream_count=1,
                 audio_codec="aac",
                 audio_bitrate=128000,
                 audio_languages="eng",
@@ -662,6 +663,7 @@ def test_export_scan_outputs_duplicates_and_links(tmp_path: Path) -> None:
                 height=1080,
                 bitrate=900,
                 codec="h264",
+                audio_stream_count=1,
                 audio_codec="aac",
                 audio_bitrate=128000,
                 audio_languages="eng",
@@ -696,6 +698,12 @@ def test_export_scan_outputs_duplicates_and_links(tmp_path: Path) -> None:
         assert data["scan_id"] == scan_id
         assert data["profile"] == "balanced"
         assert len(data["groups"]) == 1
+        exported_item = data["groups"][0]["items"][0]
+        assert exported_item["audio_stream_count"] == 1
+        assert exported_item["container"] == ""
+        assert exported_item["codec_profile"] == ""
+        assert exported_item["codec_level"] == ""
+        assert exported_item["is_interlaced"] is False
         links_data = json.loads(export_paths.links_json.read_text(encoding="utf-8"))
         assert links_data["scan_id"] == scan_id
         assert len(links_data["links"]) == 1

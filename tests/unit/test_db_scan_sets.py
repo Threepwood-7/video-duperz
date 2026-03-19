@@ -163,7 +163,7 @@ def test_list_match_items_for_scan_orders_by_path() -> None:
             fps=24.0,
             codec="h264",
             bitrate=1000,
-            has_audio=True,
+            audio_stream_count=1,
             audio_codec="aac",
             audio_bitrate=128000,
             audio_languages="eng",
@@ -178,6 +178,7 @@ def test_list_match_items_for_scan_orders_by_path() -> None:
         items = db.list_match_items_for_scan(scan_id=scan_id, algo_version=ALGO_VERSION)
 
         assert [item.path for item in items] == ["D:/Videos/a.mp4", "D:/Videos/b.mp4"]
+        assert all(item.audio_stream_count == 1 for item in items)
 
 
 def test_scan_issue_rows_persist_and_list_for_paused_scans() -> None:
@@ -257,7 +258,7 @@ def test_cached_artifacts_can_include_audio_fingerprints() -> None:
                 fps=24.0,
                 codec="h264",
                 bitrate=1000,
-                has_audio=True,
+                audio_stream_count=1,
                 audio_codec="aac",
                 audio_bitrate=128000,
                 audio_languages="eng",
@@ -453,7 +454,7 @@ def test_scan_batch_methods_roundtrip() -> None:
                         fps=30.0,
                         codec="h264",
                         bitrate=1000,
-                        has_audio=True,
+                        audio_stream_count=1,
                         audio_codec="aac",
                         audio_bitrate=128000,
                         audio_languages="eng",
@@ -486,6 +487,7 @@ def test_scan_batch_methods_roundtrip() -> None:
                     height=1080,
                     bitrate=1000,
                     codec="h264",
+                    audio_stream_count=1,
                     audio_codec="aac",
                     audio_bitrate=128000,
                     audio_languages="eng",
@@ -507,6 +509,7 @@ def test_scan_batch_methods_roundtrip() -> None:
                     height=0,
                     bitrate=0,
                     codec="",
+                    audio_stream_count=0,
                     audio_codec="",
                     audio_bitrate=0,
                     audio_languages="",
@@ -620,7 +623,7 @@ def test_clone_scan_files_with_artifacts_roundtrips_to_new_snapshot() -> None:
             fps=24.0,
             codec="h264",
             bitrate=1000,
-            has_audio=True,
+            audio_stream_count=1,
             audio_codec="aac",
             audio_bitrate=128000,
             audio_languages="eng",
@@ -679,6 +682,7 @@ def test_clone_scan_files_with_artifacts_roundtrips_to_new_snapshot() -> None:
         assert cached is not None
         assert cached["file_id"] == cloned_file_id
         assert cached["meta"].duration_s == 10.0
+        assert cached["meta"].audio_stream_count == 1
         assert cached["fingerprint"]["hashes"] == [1, 2, 3]
         assert cached["audio_fingerprint"] == "audio:abc"
         assert db.count_failed_files(target_scan_id) == 1
@@ -704,7 +708,7 @@ def test_cached_artifacts_are_probe_backend_specific() -> None:
             fps=30.0,
             codec="h264",
             bitrate=1000,
-            has_audio=True,
+            audio_stream_count=1,
             audio_codec="aac",
             audio_bitrate=128000,
             audio_languages="eng",
@@ -727,7 +731,7 @@ def test_cached_artifacts_are_probe_backend_specific() -> None:
                 fps=60.0,
                 codec="hevc",
                 bitrate=2000,
-                has_audio=False,
+                audio_stream_count=0,
                 audio_codec="",
                 audio_bitrate=0,
                 audio_languages="",

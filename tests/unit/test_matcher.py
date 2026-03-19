@@ -26,6 +26,7 @@ def _item(
         fps=30.0,
         codec="h264",
         bitrate=2_000_000,
+        audio_stream_count=1,
         audio_codec="aac",
         audio_bitrate=192000,
         audio_languages="eng",
