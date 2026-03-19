@@ -179,13 +179,17 @@ class VideoMeta:
     fps: float
     codec: str
     bitrate: int
-    has_audio: bool
+    audio_stream_count: int
     audio_codec: str
     audio_bitrate: int
     audio_languages: str
     subtitle_languages: str
     bit_depth: int = 8
     hdr_format: str = ""
+    container: str = ""
+    codec_profile: str = ""
+    codec_level: str = ""
+    is_interlaced: bool = False
 
 
 @dataclass(slots=True)
@@ -308,6 +312,7 @@ class MatchItem:
     fps: float
     codec: str
     bitrate: int
+    audio_stream_count: int
     audio_codec: str
     audio_bitrate: int
     audio_languages: str
@@ -315,6 +320,10 @@ class MatchItem:
     hashes: list[int]
     bit_depth: int = 8
     hdr_format: str = ""
+    container: str = ""
+    codec_profile: str = ""
+    codec_level: str = ""
+    is_interlaced: bool = False
     audio_fingerprint: str = ""
 
 
@@ -332,6 +341,7 @@ class DuplicateItem:
     height: int
     bitrate: int
     codec: str
+    audio_stream_count: int
     audio_codec: str
     audio_bitrate: int
     audio_languages: str
@@ -341,6 +351,10 @@ class DuplicateItem:
     fps: float = 0.0
     bit_depth: int = 8
     hdr_format: str = ""
+    container: str = ""
+    codec_profile: str = ""
+    codec_level: str = ""
+    is_interlaced: bool = False
     match_reason: MatchReason = "perceptual"
     match_duration_delta_s: float = 0.0
     selected_action: ActionKind = "keep"

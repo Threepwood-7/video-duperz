@@ -8,7 +8,7 @@ from typing import Self
 
 from .config import db_path
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 
 _DROP_SCHEMA_SQL = """
@@ -75,9 +75,13 @@ CREATE TABLE video_meta(
   fps REAL NOT NULL,
   bit_depth INTEGER NOT NULL DEFAULT 8,
   hdr_format TEXT NOT NULL DEFAULT '',
+  container TEXT NOT NULL DEFAULT '',
+  codec_profile TEXT NOT NULL DEFAULT '',
+  codec_level TEXT NOT NULL DEFAULT '',
+  is_interlaced INTEGER NOT NULL DEFAULT 0,
   codec TEXT NOT NULL,
   bitrate INTEGER NOT NULL,
-  has_audio INTEGER NOT NULL,
+  audio_stream_count INTEGER NOT NULL DEFAULT 0,
   audio_codec TEXT NOT NULL DEFAULT '',
   audio_bitrate INTEGER NOT NULL DEFAULT 0,
   audio_languages TEXT NOT NULL DEFAULT '',

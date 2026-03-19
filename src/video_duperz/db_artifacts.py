@@ -589,9 +589,11 @@ class DatabaseArtifactMixin:
                 self.conn.execute(
                     f"""
                     SELECT file_id, probed_at, source_size, source_mtime_ns, duration_s,
-                           width, height, fps, bit_depth, hdr_format, codec, bitrate,
-                           has_audio, audio_codec, audio_bitrate, audio_languages,
-                           subtitle_languages, probe_error
+                           width, height, fps, bit_depth, hdr_format, container,
+                           codec_profile, codec_level, is_interlaced,
+                           codec, bitrate, audio_stream_count, audio_codec,
+                           audio_bitrate, audio_languages, subtitle_languages,
+                           probe_error
                     FROM video_meta
                     WHERE probe_backend = ? AND file_id IN ({placeholders})
                     """,
@@ -639,10 +641,13 @@ class DatabaseArtifactMixin:
                 INSERT INTO video_meta(
                   file_id, probe_backend, probed_at, source_size, source_mtime_ns,
                   duration_s, width, height, fps, bit_depth, hdr_format,
-                  codec, bitrate, has_audio, audio_codec, audio_bitrate,
-                  audio_languages, subtitle_languages, probe_error
+                  container, codec_profile, codec_level, is_interlaced,
+                  codec, bitrate, audio_stream_count, audio_codec,
+                  audio_bitrate, audio_languages, subtitle_languages, probe_error
                 )
-                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES(
+                  ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
                 ON CONFLICT(file_id, probe_backend) DO UPDATE SET
                   probed_at = excluded.probed_at,
                   source_size = excluded.source_size,
@@ -653,9 +658,13 @@ class DatabaseArtifactMixin:
                   fps = excluded.fps,
                   bit_depth = excluded.bit_depth,
                   hdr_format = excluded.hdr_format,
+                  container = excluded.container,
+                  codec_profile = excluded.codec_profile,
+                  codec_level = excluded.codec_level,
+                  is_interlaced = excluded.is_interlaced,
                   codec = excluded.codec,
                   bitrate = excluded.bitrate,
-                  has_audio = excluded.has_audio,
+                  audio_stream_count = excluded.audio_stream_count,
                   audio_codec = excluded.audio_codec,
                   audio_bitrate = excluded.audio_bitrate,
                   audio_languages = excluded.audio_languages,
@@ -675,9 +684,13 @@ class DatabaseArtifactMixin:
                         float(row["fps"]),
                         int(row["bit_depth"] or 8),
                         str(row["hdr_format"] or ""),
+                        str(row["container"] or ""),
+                        str(row["codec_profile"] or ""),
+                        str(row["codec_level"] or ""),
+                        int(row["is_interlaced"] or 0),
                         str(row["codec"] or ""),
                         int(row["bitrate"]),
-                        int(row["has_audio"]),
+                        int(row["audio_stream_count"] or 0),
                         str(row["audio_codec"] or ""),
                         int(row["audio_bitrate"] or 0),
                         str(row["audio_languages"] or ""),
@@ -889,9 +902,13 @@ class DatabaseArtifactMixin:
                 fps=float(row["fps"]),
                 bit_depth=int(row["bit_depth"] or 8),
                 hdr_format=str(row["hdr_format"] or ""),
+                container=str(row["container"] or ""),
+                codec_profile=str(row["codec_profile"] or ""),
+                codec_level=str(row["codec_level"] or ""),
+                is_interlaced=bool(row["is_interlaced"]),
                 codec=str(row["codec"]),
                 bitrate=int(row["bitrate"]),
-                has_audio=bool(row["has_audio"]),
+                audio_stream_count=int(row["audio_stream_count"] or 0),
                 audio_codec=str(row["audio_codec"] or ""),
                 audio_bitrate=int(row["audio_bitrate"] or 0),
                 audio_languages=str(row["audio_languages"] or ""),
@@ -971,8 +988,9 @@ class DatabaseArtifactMixin:
                        vm.source_size AS meta_source_size,
                        vm.source_mtime_ns AS meta_source_mtime_ns,
                        vm.duration_s, vm.width, vm.height, vm.fps,
-                       vm.bit_depth, vm.hdr_format,
-                       vm.codec, vm.bitrate, vm.has_audio,
+                       vm.bit_depth, vm.hdr_format, vm.container,
+                       vm.codec_profile, vm.codec_level, vm.is_interlaced,
+                       vm.codec, vm.bitrate, vm.audio_stream_count,
                        vm.audio_codec, vm.audio_bitrate,
                        vm.audio_languages, vm.subtitle_languages,
                        fp.source_size AS fp_source_size,
@@ -1074,28 +1092,7 @@ class DatabaseArtifactMixin:
         if not rows:
             return
         probed_at = utc_now_iso()
-        payload: list[
-            tuple[
-                int,
-                str,
-                str,
-                int,
-                int,
-                float,
-                int,
-                int,
-                float,
-                int,
-                str,
-                str,
-                int,
-                int,
-                str,
-                int,
-                str,
-                str,
-            ]
-        ] = []
+        payload: list[tuple[object, ...]] = []
         for file_id, source_size, source_mtime_ns, meta in rows:
             payload.append(
                 (
@@ -1110,9 +1107,13 @@ class DatabaseArtifactMixin:
                     float(meta.fps),
                     int(meta.bit_depth),
                     str(meta.hdr_format),
+                    str(meta.container),
+                    str(meta.codec_profile),
+                    str(meta.codec_level),
+                    1 if meta.is_interlaced else 0,
                     str(meta.codec),
                     int(meta.bitrate),
-                    1 if meta.has_audio else 0,
+                    int(meta.audio_stream_count),
                     str(meta.audio_codec),
                     int(meta.audio_bitrate),
                     str(meta.audio_languages),
@@ -1124,10 +1125,13 @@ class DatabaseArtifactMixin:
             INSERT INTO video_meta(
               file_id, probe_backend, probed_at, source_size, source_mtime_ns,
               duration_s, width, height, fps, bit_depth, hdr_format,
-              codec, bitrate, has_audio, audio_codec, audio_bitrate, audio_languages,
-              subtitle_languages, probe_error
+              container, codec_profile, codec_level, is_interlaced,
+              codec, bitrate, audio_stream_count, audio_codec, audio_bitrate,
+              audio_languages, subtitle_languages, probe_error
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+            VALUES(
+              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL
+            )
             ON CONFLICT(file_id, probe_backend) DO UPDATE SET
               probed_at = excluded.probed_at,
               source_size = excluded.source_size,
@@ -1138,9 +1142,13 @@ class DatabaseArtifactMixin:
               fps = excluded.fps,
               bit_depth = excluded.bit_depth,
               hdr_format = excluded.hdr_format,
+              container = excluded.container,
+              codec_profile = excluded.codec_profile,
+              codec_level = excluded.codec_level,
+              is_interlaced = excluded.is_interlaced,
               codec = excluded.codec,
               bitrate = excluded.bitrate,
-              has_audio = excluded.has_audio,
+              audio_stream_count = excluded.audio_stream_count,
               audio_codec = excluded.audio_codec,
               audio_bitrate = excluded.audio_bitrate,
               audio_languages = excluded.audio_languages,
@@ -1177,10 +1185,13 @@ class DatabaseArtifactMixin:
             INSERT INTO video_meta(
               file_id, probe_backend, probed_at, source_size, source_mtime_ns,
               duration_s, width, height, fps, bit_depth, hdr_format,
-              codec, bitrate, has_audio, audio_codec, audio_bitrate, audio_languages,
-              subtitle_languages, probe_error
+              container, codec_profile, codec_level, is_interlaced,
+              codec, bitrate, audio_stream_count, audio_codec, audio_bitrate,
+              audio_languages, subtitle_languages, probe_error
             )
-            VALUES(?, ?, ?, ?, ?, 0, 0, 0, 0, 8, '', '', 0, 0, '', 0, '', '', ?)
+            VALUES(
+              ?, ?, ?, ?, ?, 0, 0, 0, 0, 8, '', '', '', '', 0, '', 0, 0, '', 0, '', '', ?
+            )
             ON CONFLICT(file_id, probe_backend) DO UPDATE SET
               probed_at = excluded.probed_at,
               source_size = excluded.source_size,

@@ -117,7 +117,7 @@ def _analyze_file_with_probe(
     fingerprint_s = max(0.0, time.perf_counter() - fp_started)
     audio_fingerprint = ""
     audio_fingerprint_error = ""
-    if audio_fingerprint_enabled and meta.has_audio:
+    if audio_fingerprint_enabled and meta.audio_stream_count > 0:
         try:
             audio_fingerprint = compute_audio_fingerprint(
                 path,

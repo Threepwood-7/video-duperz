@@ -388,6 +388,60 @@ def _hdr_format_from_metadata(
     return ""
 
 
+def _normalize_container_name(value: object) -> str:
+    """Normalize one probed container/format string to a compact display token."""
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return ""
+    return raw.split(",", maxsplit=1)[0].strip()
+
+
+def _normalize_codec_profile(value: object) -> str:
+    """Normalize one codec-profile value into stable display text."""
+    profile = str(value or "").strip()
+    if not profile:
+        return ""
+    if profile.casefold() in {"unknown", "n/a", "none"}:
+        return ""
+    return profile
+
+
+def _normalize_codec_level(value: object) -> str:
+    """Normalize one codec-level value into a human-friendly display string."""
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if "." in raw:
+        return raw
+    match = re.fullmatch(r"\d+", raw)
+    if match is None:
+        return raw
+    parsed = _positive_int(raw)
+    if parsed <= 0:
+        return ""
+    if parsed >= 10:
+        return f"{parsed // 10}.{parsed % 10}"
+    return str(parsed)
+
+
+def _field_order_is_interlaced(value: object) -> bool:
+    """Return whether one field-order value indicates interlaced video."""
+    field_order = str(value or "").strip().lower()
+    if not field_order or field_order in {"unknown", "progressive"}:
+        return False
+    return field_order in {
+        "tt",
+        "bb",
+        "tb",
+        "bt",
+        "tff",
+        "bff",
+        "top_field_first",
+        "bottom_field_first",
+        "interlaced",
+    }
+
+
 def _ffprobe_bit_depth(video: dict[str, object]) -> int:
     """Return one normalized ffprobe bit depth for a video stream payload."""
     bits_per_raw_sample = _positive_int(video.get("bits_per_raw_sample"))
@@ -454,6 +508,47 @@ def _pyav_hdr_format(stream: Any) -> str:
     )
 
 
+def _pyav_container_name(container: Any) -> str:
+    """Return one normalized container name from a PyAV container."""
+    format_obj = getattr(container, "format", None)
+    return _normalize_container_name(getattr(format_obj, "name", ""))
+
+
+def _pyav_codec_profile(stream: Any) -> str:
+    """Return one normalized codec-profile string from a PyAV stream."""
+    codec_context = getattr(stream, "codec_context", None)
+    for candidate in (
+        getattr(stream, "profile", ""),
+        getattr(codec_context, "profile", ""),
+    ):
+        profile = _normalize_codec_profile(candidate)
+        if profile:
+            return profile
+    return ""
+
+
+def _pyav_codec_level(stream: Any) -> str:
+    """Return one normalized codec-level string from a PyAV stream."""
+    codec_context = getattr(stream, "codec_context", None)
+    for candidate in (
+        getattr(stream, "level", ""),
+        getattr(codec_context, "level", ""),
+    ):
+        level = _normalize_codec_level(candidate)
+        if level:
+            return level
+    return ""
+
+
+def _pyav_is_interlaced(stream: Any) -> bool:
+    """Return whether one PyAV stream appears to be interlaced."""
+    codec_context = getattr(stream, "codec_context", None)
+    return _field_order_is_interlaced(
+        getattr(stream, "field_order", "")
+        or getattr(codec_context, "field_order", "")
+    )
+
+
 def _import_av() -> _AvModuleLike:
     try:
         import av
@@ -497,10 +592,10 @@ class _FfprobeBackend:
             "error",
             "-show_entries",
             (
-                "format=duration,bit_rate:"
-                "stream=index,codec_type,codec_name,width,height,r_frame_rate,bit_rate,"
-                "color_transfer,color_primaries,color_space,pix_fmt,"
-                "bits_per_raw_sample,side_data_list:"
+                "format=duration,bit_rate,format_name:"
+                "stream=index,codec_type,codec_name,profile,level,width,height,"
+                "r_frame_rate,bit_rate,field_order,color_transfer,color_primaries,"
+                "color_space,pix_fmt,bits_per_raw_sample,side_data_list:"
                 "stream_tags=language"
             ),
             "-of",
@@ -537,15 +632,19 @@ class _FfprobeBackend:
             raise ProbeError("No video stream found")
         audio_streams = [s for s in streams if s.get("codec_type") == "audio"]
         subtitle_streams = [s for s in streams if s.get("codec_type") == "subtitle"]
-        has_audio = bool(audio_streams)
+        audio_stream_count = len(audio_streams)
 
         fmt = _string_object_dict(payload.get("format"))
         duration_s = _positive_float(fmt.get("duration"))
         bitrate = _positive_int(fmt.get("bit_rate"))
+        container = _normalize_container_name(fmt.get("format_name"))
         width = _positive_int(video.get("width"))
         height = _positive_int(video.get("height"))
         fps = _parse_fps(str(video.get("r_frame_rate", "0/0")))
         codec = str(video.get("codec_name") or "").lower()
+        codec_profile = _normalize_codec_profile(video.get("profile"))
+        codec_level = _normalize_codec_level(video.get("level"))
+        is_interlaced = _field_order_is_interlaced(video.get("field_order"))
         audio_codec = (
             str(audio_streams[0].get("codec_name") or "").lower()
             if audio_streams
@@ -608,9 +707,13 @@ class _FfprobeBackend:
             fps=fps,
             bit_depth=bit_depth,
             hdr_format=hdr_format,
+            container=container,
+            codec_profile=codec_profile,
+            codec_level=codec_level,
+            is_interlaced=is_interlaced,
             codec=codec,
             bitrate=bitrate,
-            has_audio=has_audio,
+            audio_stream_count=audio_stream_count,
             audio_codec=audio_codec,
             audio_bitrate=audio_bitrate,
             audio_languages=audio_languages,
@@ -654,7 +757,11 @@ class _PyAvBackend:
                     _positive_int(getattr(container, "bit_rate", 0)),
                     _stream_bitrate(video_stream),
                 )
-                has_audio = bool(audio_streams)
+                container_name = _pyav_container_name(container)
+                codec_profile = _pyav_codec_profile(video_stream)
+                codec_level = _pyav_codec_level(video_stream)
+                is_interlaced = _pyav_is_interlaced(video_stream)
+                audio_stream_count = len(audio_streams)
                 audio_codec = _codec_name(audio_streams[0]) if audio_streams else ""
                 audio_bitrate = sum(_stream_bitrate(stream) for stream in audio_streams)
                 audio_languages = _sorted_languages(audio_streams)
@@ -672,9 +779,13 @@ class _PyAvBackend:
                     fps=fps,
                     bit_depth=bit_depth,
                     hdr_format=hdr_format,
+                    container=container_name,
+                    codec_profile=codec_profile,
+                    codec_level=codec_level,
+                    is_interlaced=is_interlaced,
                     codec=codec,
                     bitrate=bitrate,
-                    has_audio=has_audio,
+                    audio_stream_count=audio_stream_count,
                     audio_codec=audio_codec,
                     audio_bitrate=audio_bitrate,
                     audio_languages=audio_languages,
