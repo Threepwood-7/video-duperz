@@ -544,8 +544,7 @@ def _pyav_is_interlaced(stream: Any) -> bool:
     """Return whether one PyAV stream appears to be interlaced."""
     codec_context = getattr(stream, "codec_context", None)
     return _field_order_is_interlaced(
-        getattr(stream, "field_order", "")
-        or getattr(codec_context, "field_order", "")
+        getattr(stream, "field_order", "") or getattr(codec_context, "field_order", "")
     )
 
 

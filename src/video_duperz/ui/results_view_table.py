@@ -247,9 +247,7 @@ class ResultsViewTableMixin(ResultsViewBase):
             COL_SIZE: QTableWidgetItem(f"{item.size:,}"),
             COL_RESOLUTION: QTableWidgetItem(f"{item.width}x{item.height}"),
             COL_FPS: QTableWidgetItem(self._fmt_fps(item.fps)),
-            COL_INTERLACED: QTableWidgetItem(
-                self._fmt_interlaced(item.is_interlaced)
-            ),
+            COL_INTERLACED: QTableWidgetItem(self._fmt_interlaced(item.is_interlaced)),
             COL_BIT_DEPTH: QTableWidgetItem(self._fmt_bit_depth(item.bit_depth)),
             COL_HDR_FORMAT: QTableWidgetItem(item.hdr_format),
             COL_DURATION: QTableWidgetItem(f"{item.duration_s:.1f}s"),

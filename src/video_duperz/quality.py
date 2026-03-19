@@ -95,9 +95,7 @@ def quality_score_from_fields(
 ) -> float:
     """Score one video using the shared keep-best heuristic."""
     pixels = float(width * height)
-    base_score = (
-        0.65 * pixels + 0.25 * float(bitrate) + 0.10 * codec_rank(codec)
-    )
+    base_score = 0.65 * pixels + 0.25 * float(bitrate) + 0.10 * codec_rank(codec)
     return (
         base_score
         * bit_depth_bonus(bit_depth)

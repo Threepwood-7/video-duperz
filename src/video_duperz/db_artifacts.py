@@ -463,9 +463,7 @@ class DatabaseArtifactMixin:
         """Clone persisted failed-file markers for unchanged paths."""
         if not paths:
             return 0
-        normalized_paths = sorted(
-            {path_key(path) for path in paths if path_key(path)}
-        )
+        normalized_paths = sorted({path_key(path) for path in paths if path_key(path)})
         if not normalized_paths:
             return 0
         copied = 0
@@ -1190,7 +1188,8 @@ class DatabaseArtifactMixin:
               audio_languages, subtitle_languages, probe_error
             )
             VALUES(
-              ?, ?, ?, ?, ?, 0, 0, 0, 0, 8, '', '', '', '', 0, '', 0, 0, '', 0, '', '', ?
+              ?, ?, ?, ?, ?,
+              0, 0, 0, 0, 8, '', '', '', '', 0, '', 0, 0, '', 0, '', '', ?
             )
             ON CONFLICT(file_id, probe_backend) DO UPDATE SET
               probed_at = excluded.probed_at,

@@ -60,10 +60,10 @@ from video_duperz.ui.results_view import (
 )
 from video_duperz.ui.results_view_shared import (
     COL_BIT_DEPTH,
+    COL_CHECK,
     COL_CODEC_LEVEL,
     COL_CODEC_PROFILE,
     COL_CONTAINER,
-    COL_CHECK,
     COL_FILE_NAME,
     COL_FPS,
     COL_FULL_PATH,

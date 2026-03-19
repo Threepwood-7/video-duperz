@@ -271,8 +271,7 @@ class DatabaseConnectionMixin:
         if chunk_size <= 0:
             chunk_size = 300
         return [
-            values[idx : idx + chunk_size]
-            for idx in range(0, len(values), chunk_size)
+            values[idx : idx + chunk_size] for idx in range(0, len(values), chunk_size)
         ]
 
     def _commit_if_needed(self) -> None:
