@@ -125,6 +125,8 @@ def test_pipeline_detects_reencoded_duplicates(tmp_path: Path) -> None:
             roots=[str(tmp_path)],
             extensions=["mp4"],
             profile="balanced",
+            probe_backend="ffprobe",
+            scan_size_mib_min=0,
             db_batch_size=512,
             db_flush_interval_ms=200,
             enum_queue_max=4096,

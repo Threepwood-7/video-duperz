@@ -20,7 +20,7 @@ from .scan_sets import (
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 
 class DatabaseConnectionMixin:
@@ -157,6 +157,8 @@ class DatabaseConnectionMixin:
               width INTEGER NOT NULL,
               height INTEGER NOT NULL,
               fps REAL NOT NULL,
+              bit_depth INTEGER NOT NULL DEFAULT 8,
+              hdr_format TEXT NOT NULL DEFAULT '',
               codec TEXT NOT NULL,
               bitrate INTEGER NOT NULL,
               has_audio INTEGER NOT NULL,
@@ -164,7 +166,6 @@ class DatabaseConnectionMixin:
               audio_bitrate INTEGER NOT NULL DEFAULT 0,
               audio_languages TEXT NOT NULL DEFAULT '',
               subtitle_languages TEXT NOT NULL DEFAULT '',
-              is_hdr INTEGER NOT NULL DEFAULT 0,
               probe_error TEXT,
               PRIMARY KEY(file_id, probe_backend),
               FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
@@ -301,8 +302,8 @@ class DatabaseConnectionMixin:
               ON scan_links(scan_id, link_kind, link_path);
             """
         )
-        self._ensure_video_meta_columns()
         self._ensure_backend_scoped_cache_tables()
+        self._ensure_video_meta_columns()
         self._ensure_fingerprint_decoder_provenance_table()
         self._ensure_audio_fingerprint_table()
         self._ensure_duplicate_group_item_columns()
@@ -353,13 +354,91 @@ class DatabaseConnectionMixin:
 
     def _ensure_backend_scoped_cache_tables(self) -> None:
         """Rebuild cache tables so every probe backend can store rows per file."""
-        video_meta_pk = {
-            str(row["name"]): int(row["pk"])
-            for row in self.conn.execute("PRAGMA table_info(video_meta)").fetchall()
+        video_meta_rows = self.conn.execute("PRAGMA table_info(video_meta)").fetchall()
+        video_meta_pk = {str(row["name"]): int(row["pk"]) for row in video_meta_rows}
+        video_meta_columns = {str(row["name"]) for row in video_meta_rows}
+        expected_video_meta_columns = {
+            "file_id",
+            "probe_backend",
+            "probed_at",
+            "source_size",
+            "source_mtime_ns",
+            "duration_s",
+            "width",
+            "height",
+            "fps",
+            "bit_depth",
+            "hdr_format",
+            "codec",
+            "bitrate",
+            "has_audio",
+            "audio_codec",
+            "audio_bitrate",
+            "audio_languages",
+            "subtitle_languages",
+            "probe_error",
         }
-        if video_meta_pk.get("file_id") != 1 or video_meta_pk.get("probe_backend") != 2:
+        if (
+            video_meta_pk.get("file_id") != 1
+            or video_meta_pk.get("probe_backend") != 2
+            or video_meta_columns != expected_video_meta_columns
+        ):
+            probe_backend_expr = (
+                "CASE "
+                "WHEN TRIM(COALESCE(probe_backend, '')) = '' THEN 'ffprobe' "
+                "ELSE probe_backend END"
+                if "probe_backend" in video_meta_columns
+                else "'ffprobe'"
+            )
+            probed_at_expr = (
+                "CASE "
+                "WHEN TRIM(COALESCE(probed_at, '')) = '' THEN CURRENT_TIMESTAMP "
+                "ELSE probed_at END"
+                if "probed_at" in video_meta_columns
+                else "CURRENT_TIMESTAMP"
+            )
+            source_size_expr = (
+                "source_size" if "source_size" in video_meta_columns else "0"
+            )
+            source_mtime_expr = (
+                "source_mtime_ns" if "source_mtime_ns" in video_meta_columns else "0"
+            )
+            duration_expr = "duration_s" if "duration_s" in video_meta_columns else "0"
+            width_expr = "width" if "width" in video_meta_columns else "0"
+            height_expr = "height" if "height" in video_meta_columns else "0"
+            fps_expr = "fps" if "fps" in video_meta_columns else "0"
+            bit_depth_expr = (
+                "CASE WHEN bit_depth > 0 THEN bit_depth ELSE 8 END"
+                if "bit_depth" in video_meta_columns
+                else "8"
+            )
+            hdr_format_expr = (
+                "TRIM(COALESCE(hdr_format, ''))"
+                if "hdr_format" in video_meta_columns
+                else "''"
+            )
+            codec_expr = "codec" if "codec" in video_meta_columns else "''"
+            bitrate_expr = "bitrate" if "bitrate" in video_meta_columns else "0"
+            has_audio_expr = "has_audio" if "has_audio" in video_meta_columns else "0"
+            audio_codec_expr = (
+                "audio_codec" if "audio_codec" in video_meta_columns else "''"
+            )
+            audio_bitrate_expr = (
+                "audio_bitrate" if "audio_bitrate" in video_meta_columns else "0"
+            )
+            audio_languages_expr = (
+                "audio_languages" if "audio_languages" in video_meta_columns else "''"
+            )
+            subtitle_languages_expr = (
+                "subtitle_languages"
+                if "subtitle_languages" in video_meta_columns
+                else "''"
+            )
+            probe_error_expr = (
+                "probe_error" if "probe_error" in video_meta_columns else "NULL"
+            )
             self.conn.executescript(
-                """
+                f"""
                 CREATE TABLE video_meta_new(
                   file_id INTEGER NOT NULL,
                   probe_backend TEXT NOT NULL DEFAULT 'pyav',
@@ -370,6 +449,8 @@ class DatabaseConnectionMixin:
                   width INTEGER NOT NULL,
                   height INTEGER NOT NULL,
                   fps REAL NOT NULL,
+                  bit_depth INTEGER NOT NULL DEFAULT 8,
+                  hdr_format TEXT NOT NULL DEFAULT '',
                   codec TEXT NOT NULL,
                   bitrate INTEGER NOT NULL,
                   has_audio INTEGER NOT NULL,
@@ -377,43 +458,37 @@ class DatabaseConnectionMixin:
                   audio_bitrate INTEGER NOT NULL DEFAULT 0,
                   audio_languages TEXT NOT NULL DEFAULT '',
                   subtitle_languages TEXT NOT NULL DEFAULT '',
-                  is_hdr INTEGER NOT NULL DEFAULT 0,
                   probe_error TEXT,
                   PRIMARY KEY(file_id, probe_backend),
                   FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
                 );
                 INSERT INTO video_meta_new(
                   file_id, probe_backend, probed_at, source_size, source_mtime_ns,
-                  duration_s, width, height, fps,
+                  duration_s, width, height, fps, bit_depth, hdr_format,
                   codec, bitrate, has_audio, audio_codec, audio_bitrate,
                   audio_languages,
-                  subtitle_languages, is_hdr, probe_error
+                  subtitle_languages, probe_error
                 )
                 SELECT
                   file_id,
-                  CASE
-                    WHEN TRIM(COALESCE(probe_backend, '')) = '' THEN 'ffprobe'
-                    ELSE probe_backend
-                  END,
-                  CASE
-                    WHEN TRIM(COALESCE(probed_at, '')) = '' THEN CURRENT_TIMESTAMP
-                    ELSE probed_at
-                  END,
-                  source_size,
-                  source_mtime_ns,
-                  duration_s,
-                  width,
-                  height,
-                  fps,
-                  codec,
-                  bitrate,
-                  has_audio,
-                  audio_codec,
-                  audio_bitrate,
-                  audio_languages,
-                  subtitle_languages,
-                  is_hdr,
-                  probe_error
+                  {probe_backend_expr},
+                  {probed_at_expr},
+                  {source_size_expr},
+                  {source_mtime_expr},
+                  {duration_expr},
+                  {width_expr},
+                  {height_expr},
+                  {fps_expr},
+                  {bit_depth_expr},
+                  {hdr_format_expr},
+                  {codec_expr},
+                  {bitrate_expr},
+                  {has_audio_expr},
+                  {audio_codec_expr},
+                  {audio_bitrate_expr},
+                  {audio_languages_expr},
+                  {subtitle_languages_expr},
+                  {probe_error_expr}
                 FROM video_meta;
                 DROP TABLE video_meta;
                 ALTER TABLE video_meta_new RENAME TO video_meta;
@@ -513,7 +588,11 @@ class DatabaseConnectionMixin:
                 ALTER TABLE fingerprint_decoder_provenance_new
                   RENAME TO fingerprint_decoder_provenance;
                 CREATE INDEX idx_fingerprint_decoder_provenance_file_backend
-                  ON fingerprint_decoder_provenance(file_id, probe_backend, algo_version);
+                  ON fingerprint_decoder_provenance(
+                    file_id,
+                    probe_backend,
+                    algo_version
+                  );
                 """
             )
 
@@ -587,9 +666,13 @@ class DatabaseConnectionMixin:
                 "ALTER TABLE video_meta ADD COLUMN subtitle_languages TEXT "
                 "NOT NULL DEFAULT ''"
             )
-        if "is_hdr" not in columns:
+        if "bit_depth" not in columns:
             self.conn.execute(
-                "ALTER TABLE video_meta ADD COLUMN is_hdr INTEGER NOT NULL DEFAULT 0"
+                "ALTER TABLE video_meta ADD COLUMN bit_depth INTEGER NOT NULL DEFAULT 8"
+            )
+        if "hdr_format" not in columns:
+            self.conn.execute(
+                "ALTER TABLE video_meta ADD COLUMN hdr_format TEXT NOT NULL DEFAULT ''"
             )
         fp_columns = {
             str(row["name"])

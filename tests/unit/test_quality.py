@@ -12,6 +12,8 @@ def _item(
     codec: str,
     mtime_ns: int,
     path: str,
+    *,
+    bit_depth: int = 8,
 ) -> MatchItem:
     return MatchItem(
         file_id=file_id,
@@ -29,8 +31,8 @@ def _item(
         audio_bitrate=128000,
         audio_languages="eng",
         subtitle_languages="",
-        is_hdr=False,
         hashes=[0] * 12,
+        bit_depth=bit_depth,
     )
 
 
@@ -44,3 +46,24 @@ def test_choose_keep_tie_breakers() -> None:
     first = _item(1, 1920, 1080, 2_000_000, "h264", 10, "x.mp4")
     second = _item(2, 1920, 1080, 2_000_000, "h264", 20, "much_longer_name.mp4")
     assert choose_keep_file_id([second, first]) == 1
+
+
+def test_quality_score_prefers_higher_bit_depth_when_other_specs_match() -> None:
+    low = _item(1, 1920, 1080, 2_000_000, "h264", 10, "a.mp4", bit_depth=8)
+    high = _item(2, 1920, 1080, 2_000_000, "h264", 20, "b.mp4", bit_depth=10)
+    assert quality_score(high) > quality_score(low)
+
+
+def test_quality_score_prefers_twelve_bit_over_ten_bit() -> None:
+    ten_bit = _item(1, 1920, 1080, 2_000_000, "h264", 10, "a.mp4", bit_depth=10)
+    twelve_bit = _item(
+        2,
+        1920,
+        1080,
+        2_000_000,
+        "h264",
+        20,
+        "b.mp4",
+        bit_depth=12,
+    )
+    assert quality_score(twelve_bit) > quality_score(ten_bit)

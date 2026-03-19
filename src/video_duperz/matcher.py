@@ -283,6 +283,81 @@ class _UnionFind:
             self.parent[rb] = ra
 
 
+def _collect_component_item_metrics(
+    *,
+    item: MatchItem,
+    component_ids: list[int],
+    score_map: dict[tuple[int, int], float],
+    reason_map: dict[tuple[int, int], MatchReason],
+    by_id: dict[int, MatchItem],
+) -> tuple[float, MatchReason, float]:
+    """Compute one item's similarity and persisted match metadata."""
+    pair_scores: list[float] = []
+    item_match_reason: MatchReason = "perceptual"
+    item_match_duration_delta_s = 0.0
+    for other in component_ids:
+        if other == item.file_id:
+            continue
+        score = score_map.get((item.file_id, other))
+        if score is not None:
+            pair_scores.append(score)
+        pair_reason = reason_map.get((item.file_id, other))
+        if pair_reason == "trimmed_match":
+            other_item = by_id.get(other)
+            if other_item is None:
+                continue
+            duration_delta_s = abs(item.duration_s - other_item.duration_s)
+            if item_match_reason != "trimmed_match":
+                item_match_reason = "trimmed_match"
+                item_match_duration_delta_s = duration_delta_s
+                continue
+            item_match_duration_delta_s = min(
+                item_match_duration_delta_s,
+                duration_delta_s,
+            )
+            continue
+        if pair_reason == "audio_match" and item_match_reason == "perceptual":
+            item_match_reason = "audio_match"
+    similarity = sum(pair_scores) / len(pair_scores) if pair_scores else 1.0
+    return (similarity, item_match_reason, item_match_duration_delta_s)
+
+
+def _build_duplicate_group_item(
+    *,
+    item: MatchItem,
+    similarity: float,
+    keep_id: int,
+    match_reason: MatchReason,
+    match_duration_delta_s: float,
+) -> DuplicateItem:
+    """Build one UI-ready duplicate item from one match item."""
+    is_keep = item.file_id == keep_id
+    return DuplicateItem(
+        file_id=item.file_id,
+        path=item.path,
+        size=item.size,
+        mtime_ns=item.mtime_ns,
+        ctime_ns=item.ctime_ns,
+        duration_s=item.duration_s,
+        width=item.width,
+        height=item.height,
+        fps=item.fps,
+        bit_depth=item.bit_depth,
+        hdr_format=item.hdr_format,
+        bitrate=item.bitrate,
+        codec=item.codec,
+        audio_codec=item.audio_codec,
+        audio_bitrate=item.audio_bitrate,
+        audio_languages=item.audio_languages,
+        subtitle_languages=item.subtitle_languages,
+        similarity_score=similarity,
+        keep_default=is_keep,
+        match_reason=match_reason,
+        match_duration_delta_s=match_duration_delta_s,
+        selected_action="keep" if is_keep else "rename",
+    )
+
+
 def build_duplicate_groups(
     items: list[MatchItem], edges: list[DuplicateEdge], profile: str
 ) -> list[DuplicateGroup]:
@@ -323,60 +398,22 @@ def build_duplicate_groups(
         total_size = 0
         for item in comp_items:
             total_size += item.size
-            pair_scores: list[float] = []
-            item_match_reason: MatchReason = "perceptual"
-            item_match_duration_delta_s = 0.0
-            for other in comp_ids:
-                if other == item.file_id:
-                    continue
-                score = score_map.get((item.file_id, other))
-                if score is not None:
-                    pair_scores.append(score)
-                pair_reason = reason_map.get((item.file_id, other))
-                if pair_reason == "trimmed_match":
-                    other_item = by_id.get(other)
-                    if other_item is None:
-                        continue
-                    duration_delta_s = abs(item.duration_s - other_item.duration_s)
-                    if item_match_reason != "trimmed_match":
-                        item_match_reason = "trimmed_match"
-                        item_match_duration_delta_s = duration_delta_s
-                        continue
-                    item_match_duration_delta_s = min(
-                        item_match_duration_delta_s,
-                        duration_delta_s,
-                    )
-                    continue
-                if (
-                    pair_reason == "audio_match"
-                    and item_match_reason == "perceptual"
-                ):
-                    item_match_reason = "audio_match"
-                    continue
-            similarity = sum(pair_scores) / len(pair_scores) if pair_scores else 1.0
-            is_keep = item.file_id == keep_id
+            similarity, item_match_reason, item_match_duration_delta_s = (
+                _collect_component_item_metrics(
+                    item=item,
+                    component_ids=comp_ids,
+                    score_map=score_map,
+                    reason_map=reason_map,
+                    by_id=by_id,
+                )
+            )
             group_items.append(
-                DuplicateItem(
-                    file_id=item.file_id,
-                    path=item.path,
-                    size=item.size,
-                    mtime_ns=item.mtime_ns,
-                    ctime_ns=item.ctime_ns,
-                    duration_s=item.duration_s,
-                    width=item.width,
-                    height=item.height,
-                    bitrate=item.bitrate,
-                    codec=item.codec,
-                    audio_codec=item.audio_codec,
-                    audio_bitrate=item.audio_bitrate,
-                    audio_languages=item.audio_languages,
-                    subtitle_languages=item.subtitle_languages,
-                    is_hdr=item.is_hdr,
-                    similarity_score=similarity,
-                    keep_default=is_keep,
+                _build_duplicate_group_item(
+                    item=item,
+                    similarity=similarity,
+                    keep_id=keep_id,
                     match_reason=item_match_reason,
                     match_duration_delta_s=item_match_duration_delta_s,
-                    selected_action="keep" if is_keep else "rename",
                 )
             )
         groups.append(

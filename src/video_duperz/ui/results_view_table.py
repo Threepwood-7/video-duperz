@@ -14,14 +14,16 @@ from .results_view_shared import (
     COL_AUDIO_BITRATE,
     COL_AUDIO_CODEC,
     COL_AUDIO_LANGS,
+    COL_BIT_DEPTH,
     COL_BITRATE,
     COL_CHECK,
     COL_DURATION,
     COL_EXTENSION,
     COL_FILE_NAME,
+    COL_FPS,
     COL_FULL_PATH,
     COL_GROUP_ID,
-    COL_HDR,
+    COL_HDR_FORMAT,
     COL_IDENTICAL,
     COL_LAST_MODIFIED,
     COL_MATCH,
@@ -136,11 +138,26 @@ class ResultsViewTableMixin(ResultsViewBase):
             mtime_ns=item.mtime_ns,
             width=item.width,
             height=item.height,
+            bit_depth=item.bit_depth,
             codec=item.codec,
             bitrate=item.bitrate,
             similarity=item.similarity_score,
             keep_default=item.keep_default,
         )
+
+    @staticmethod
+    def _fmt_fps(fps: float) -> str:
+        """Render one FPS value with a stable compact precision."""
+        if fps <= 0.0:
+            return ""
+        return f"{fps:.3f}"
+
+    @staticmethod
+    def _fmt_bit_depth(bit_depth: int) -> str:
+        """Render one bit-depth value for the results table."""
+        if bit_depth <= 0:
+            return ""
+        return f"{bit_depth}-bit"
 
     def _populate_results_row(
         self,
@@ -202,13 +219,15 @@ class ResultsViewTableMixin(ResultsViewBase):
             ),
             COL_SIZE: QTableWidgetItem(f"{item.size:,}"),
             COL_RESOLUTION: QTableWidgetItem(f"{item.width}x{item.height}"),
+            COL_FPS: QTableWidgetItem(self._fmt_fps(item.fps)),
+            COL_BIT_DEPTH: QTableWidgetItem(self._fmt_bit_depth(item.bit_depth)),
+            COL_HDR_FORMAT: QTableWidgetItem(item.hdr_format),
             COL_DURATION: QTableWidgetItem(f"{item.duration_s:.1f}s"),
             COL_VIDEO_CODEC: QTableWidgetItem(item.codec),
             COL_AUDIO_CODEC: QTableWidgetItem(item.audio_codec or ""),
             COL_AUDIO_BITRATE: QTableWidgetItem(str(item.audio_bitrate)),
             COL_AUDIO_LANGS: QTableWidgetItem(item.audio_languages or ""),
             COL_SUB_LANGS: QTableWidgetItem(item.subtitle_languages or ""),
-            COL_HDR: QTableWidgetItem("Yes" if item.is_hdr else "No"),
             COL_BITRATE: QTableWidgetItem(str(item.bitrate)),
             COL_SIMILARITY: QTableWidgetItem(f"{item.similarity_score:.3f}"),
             COL_MATCH: QTableWidgetItem(match_label),
@@ -440,9 +459,9 @@ class ResultsViewTableMixin(ResultsViewBase):
             and self._normalized_codec_value(item.codec) != filter_state.video_codec
         ):
             return False
-        if filter_state.hdr_mode == HDR_FILTER_ONLY and not item.is_hdr:
+        if filter_state.hdr_mode == HDR_FILTER_ONLY and not item.hdr_format:
             return False
-        return not (filter_state.hdr_mode == HDR_FILTER_EXCLUDE and item.is_hdr)
+        return not (filter_state.hdr_mode == HDR_FILTER_EXCLUDE and item.hdr_format)
 
     def _sorted_group_items(
         self,

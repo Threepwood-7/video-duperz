@@ -5,7 +5,7 @@ from collections import defaultdict
 from threading import Event, Lock
 from types import SimpleNamespace
 
-from video_duperz import pipeline, pipeline_runtime, pipeline_runtime_control
+from video_duperz import pipeline
 from video_duperz.db import Database
 from video_duperz.fingerprint import ALGO_VERSION
 from video_duperz.models import (
@@ -283,7 +283,7 @@ def _analysis_meta() -> VideoMeta:
         audio_bitrate=128000,
         audio_languages="eng",
         subtitle_languages="",
-        is_hdr=False,
+        hdr_format="",
     )
 
 
@@ -399,7 +399,7 @@ def test_run_scan_pyav_backend_routes_probe_calls(monkeypatch) -> None:
                 audio_bitrate=1,
                 audio_languages="eng",
                 subtitle_languages="",
-                is_hdr=False,
+                hdr_format="",
             )
         ),
     )
@@ -1091,7 +1091,7 @@ def test_run_scan_pause_and_resume_keeps_same_scan_id(
                 audio_bitrate=128000,
                 audio_languages="eng",
                 subtitle_languages="",
-                is_hdr=False,
+                hdr_format="",
             ),
             hashes=[11, 22, 33],
         )

@@ -1558,15 +1558,22 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
                 widget_alias="Scan Performance Form Table",
             )
         )
-        scan_performance_row = 0
-        for label_text, control in (
-            ("Max workers total", self.max_workers_spin),
-            ("Probe backend", self.probe_backend_combo),
-            ("Probe mode", self.probe_mode_combo),
-            ("Parent CPU priority during scan", self.scan_parent_cpu_priority_combo),
-            ("Parent I/O mode during scan", self.scan_parent_io_mode_combo),
-            ("Child CPU priority during scan", self.scan_child_cpu_priority_combo),
-            ("Child I/O mode during scan", self.scan_child_io_mode_combo),
+        for scan_performance_row, (label_text, control) in enumerate(
+            (
+                ("Max workers total", self.max_workers_spin),
+                ("Probe backend", self.probe_backend_combo),
+                ("Probe mode", self.probe_mode_combo),
+                (
+                    "Parent CPU priority during scan",
+                    self.scan_parent_cpu_priority_combo,
+                ),
+                ("Parent I/O mode during scan", self.scan_parent_io_mode_combo),
+                (
+                    "Child CPU priority during scan",
+                    self.scan_child_cpu_priority_combo,
+                ),
+                ("Child I/O mode during scan", self.scan_child_io_mode_combo),
+            )
         ):
             self._add_sources_form_row(
                 scan_performance_table_layout,
@@ -1576,7 +1583,6 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
                 control,
                 tooltip=control.toolTip(),
             )
-            scan_performance_row += 1
         scan_performance_layout.addWidget(scan_performance_table)
         scan_performance_layout.addStretch(1)
 

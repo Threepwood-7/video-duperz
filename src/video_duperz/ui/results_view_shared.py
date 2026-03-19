@@ -54,13 +54,15 @@ RESULTS_HEADERS = [
     "Extension",
     "Size (Bytes)",
     "Resolution",
+    "FPS",
+    "Bit Depth",
+    "HDR Format",
     "Duration",
     "Video Codec",
     "Audio Codec",
     "Audio Bitrate",
     "Audio Lang(s)",
     "Sub Lang(s)",
-    "HDR",
     "Bitrate",
     "Similarity",
     "Match",
@@ -77,19 +79,21 @@ COL_FILE_NAME = 4
 COL_EXTENSION = 5
 COL_SIZE = 6
 COL_RESOLUTION = 7
-COL_DURATION = 8
-COL_VIDEO_CODEC = 9
-COL_AUDIO_CODEC = 10
-COL_AUDIO_BITRATE = 11
-COL_AUDIO_LANGS = 12
-COL_SUB_LANGS = 13
-COL_HDR = 14
-COL_BITRATE = 15
-COL_SIMILARITY = 16
-COL_MATCH = 17
-COL_LAST_MODIFIED = 18
-COL_PARENT_DIR = 19
-COL_FULL_PATH = 20
+COL_FPS = 8
+COL_BIT_DEPTH = 9
+COL_HDR_FORMAT = 10
+COL_DURATION = 11
+COL_VIDEO_CODEC = 12
+COL_AUDIO_CODEC = 13
+COL_AUDIO_BITRATE = 14
+COL_AUDIO_LANGS = 15
+COL_SUB_LANGS = 16
+COL_BITRATE = 17
+COL_SIMILARITY = 18
+COL_MATCH = 19
+COL_LAST_MODIFIED = 20
+COL_PARENT_DIR = 21
+COL_FULL_PATH = 22
 
 META_ROLE = Qt.ItemDataRole.UserRole
 THUMB_GAP = 6
@@ -172,6 +176,7 @@ class RowMeta:
     mtime_ns: int
     width: int
     height: int
+    bit_depth: int
     codec: str
     bitrate: int
     similarity: float

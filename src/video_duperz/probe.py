@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -289,20 +290,168 @@ def _video_fps(stream: Any) -> float:
     return 0.0
 
 
-def _video_hdr(stream: Any) -> bool:
+def _pixel_format_bit_depth(pixel_format: str) -> int:
+    """Infer one bit depth from a pixel-format name."""
+    cleaned = str(pixel_format or "").strip().lower()
+    if not cleaned:
+        return 0
+    for pattern in (
+        r"p0?(10|12|14|16)(?:le|be)?$",
+        r"(10|12|14|16)(?:le|be)?$",
+    ):
+        match = re.search(pattern, cleaned)
+        if match is not None:
+            return _positive_int(match.group(1))
+    return 8 if cleaned else 0
+
+
+def _normalize_bit_depth(value: object) -> int:
+    """Clamp one loosely typed bit-depth value to a usable integer."""
+    parsed = _positive_int(value)
+    if parsed >= 16:
+        return 16
+    if parsed >= 14:
+        return 14
+    if parsed >= 12:
+        return 12
+    if parsed >= 10:
+        return 10
+    return 8
+
+
+def _flatten_metadata_texts(value: object) -> list[str]:
+    """Collect lower-cased metadata strings from nested probe payload values."""
+    if value is None:
+        return []
+    if isinstance(value, bytes):
+        try:
+            return [value.decode("utf-8", errors="ignore").lower()]
+        except Exception:
+            return []
+    if isinstance(value, str | int | float | bool):
+        return [str(value).strip().lower()]
+    if isinstance(value, dict):
+        raw_map = cast("dict[object, object]", value)
+        texts: list[str] = []
+        for key, raw in raw_map.items():
+            texts.extend(_flatten_metadata_texts(key))
+            texts.extend(_flatten_metadata_texts(raw))
+        return texts
+    if isinstance(value, list | tuple):
+        raw_items = cast("list[object] | tuple[object, ...]", value)
+        texts = []
+        for item in raw_items:
+            texts.extend(_flatten_metadata_texts(item))
+        return texts
+    if isinstance(value, set):
+        raw_items = cast("set[object]", value)
+        texts = []
+        for item in raw_items:
+            texts.extend(_flatten_metadata_texts(item))
+        return texts
+    return [str(value).strip().lower()]
+
+
+def _hdr_format_from_metadata(
+    *,
+    transfer: str,
+    primaries: str,
+    metadata_values: tuple[object, ...],
+) -> str:
+    """Derive one HDR format label from transfer, primaries, and side metadata."""
+    haystacks: list[str] = []
+    for value in metadata_values:
+        haystacks.extend(_flatten_metadata_texts(value))
+    joined = " ".join(text for text in haystacks if text)
+    if (
+        "dolby vision" in joined
+        or "dovi" in joined
+        or "dv_profile" in joined
+        or "side_data_type dv" in joined
+    ):
+        return "DV"
+    if "hdr10+" in joined or "dynamic hdr plus" in joined:
+        return "HDR10+"
+    normalized_transfer = str(transfer or "").strip().lower()
+    normalized_primaries = str(primaries or "").strip().lower()
+    if normalized_transfer == "smpte2084":
+        return "HDR10"
+    if normalized_transfer == "arib-std-b67":
+        return "HLG"
+    if normalized_transfer == "bt2020-10":
+        return "HDR10"
+    if normalized_primaries in {"bt2020", "bt2020nc", "bt2020c"} and (
+        "mastering display metadata" in joined
+        or "content light level metadata" in joined
+    ):
+        return "HDR10"
+    return ""
+
+
+def _ffprobe_bit_depth(video: dict[str, object]) -> int:
+    """Return one normalized ffprobe bit depth for a video stream payload."""
+    bits_per_raw_sample = _positive_int(video.get("bits_per_raw_sample"))
+    if bits_per_raw_sample > 0:
+        return _normalize_bit_depth(bits_per_raw_sample)
+    return _normalize_bit_depth(
+        _pixel_format_bit_depth(str(video.get("pix_fmt") or ""))
+    )
+
+
+def _pyav_bit_depth(stream: Any) -> int:
+    """Return one normalized PyAV bit depth for a video stream."""
+    codec_context = getattr(stream, "codec_context", None)
+    for candidate in (
+        getattr(stream, "bits_per_raw_sample", 0),
+        getattr(stream, "bits_per_coded_sample", 0),
+        getattr(codec_context, "bits_per_raw_sample", 0),
+        getattr(codec_context, "bits_per_coded_sample", 0),
+    ):
+        parsed = _positive_int(candidate)
+        if parsed > 0:
+            return _normalize_bit_depth(parsed)
+    for format_obj in (
+        getattr(codec_context, "format", None),
+        getattr(stream, "format", None),
+    ):
+        if format_obj is None:
+            continue
+        parsed_from_name = _pixel_format_bit_depth(str(getattr(format_obj, "name", "")))
+        if parsed_from_name > 0:
+            return _normalize_bit_depth(parsed_from_name)
+        components = getattr(format_obj, "components", None)
+        if isinstance(components, list | tuple):
+            component_items = cast("list[object] | tuple[object, ...]", components)
+            component_bits = [
+                _positive_int(getattr(component, "bits", 0))
+                for component in component_items
+            ]
+            if component_bits:
+                return _normalize_bit_depth(max(component_bits))
+    return 8
+
+
+def _pyav_hdr_format(stream: Any) -> str:
+    """Return one normalized HDR-format label for a PyAV stream."""
     codec_context = getattr(stream, "codec_context", None)
     transfer = str(
         getattr(codec_context, "color_trc", "") or getattr(stream, "color_trc", "")
-    ).lower()
+    )
     primaries = str(
         getattr(codec_context, "color_primaries", "")
         or getattr(stream, "color_primaries", "")
-    ).lower()
-    return transfer in {"smpte2084", "arib-std-b67"} or primaries in {
-        "bt2020",
-        "bt2020nc",
-        "bt2020c",
-    }
+    )
+    metadata_values = (
+        getattr(stream, "metadata", {}),
+        getattr(stream, "side_data", []),
+        getattr(stream, "side_data_list", []),
+        getattr(codec_context, "extradata", b""),
+    )
+    return _hdr_format_from_metadata(
+        transfer=transfer,
+        primaries=primaries,
+        metadata_values=metadata_values,
+    )
 
 
 def _import_av() -> _AvModuleLike:
@@ -350,7 +499,8 @@ class _FfprobeBackend:
             (
                 "format=duration,bit_rate:"
                 "stream=index,codec_type,codec_name,width,height,r_frame_rate,bit_rate,"
-                "color_transfer,color_primaries,color_space,pix_fmt:"
+                "color_transfer,color_primaries,color_space,pix_fmt,"
+                "bits_per_raw_sample,side_data_list:"
                 "stream_tags=language"
             ),
             "-of",
@@ -437,11 +587,16 @@ class _FfprobeBackend:
         )
         transfer = str(video.get("color_transfer") or "").lower()
         primaries = str(video.get("color_primaries") or "").lower()
-        is_hdr = transfer in {"smpte2084", "arib-std-b67"} or primaries in {
-            "bt2020",
-            "bt2020nc",
-            "bt2020c",
-        }
+        bit_depth = _ffprobe_bit_depth(video)
+        hdr_format = _hdr_format_from_metadata(
+            transfer=transfer,
+            primaries=primaries,
+            metadata_values=(
+                video.get("side_data_list"),
+                video,
+                _string_object_dict(video.get("tags")),
+            ),
+        )
 
         if duration_s <= 0 or width <= 0 or height <= 0:
             raise ProbeError("Invalid video metadata")
@@ -451,6 +606,8 @@ class _FfprobeBackend:
             width=width,
             height=height,
             fps=fps,
+            bit_depth=bit_depth,
+            hdr_format=hdr_format,
             codec=codec,
             bitrate=bitrate,
             has_audio=has_audio,
@@ -458,7 +615,6 @@ class _FfprobeBackend:
             audio_bitrate=audio_bitrate,
             audio_languages=audio_languages,
             subtitle_languages=subtitle_languages,
-            is_hdr=is_hdr,
         )
 
 
@@ -503,7 +659,8 @@ class _PyAvBackend:
                 audio_bitrate = sum(_stream_bitrate(stream) for stream in audio_streams)
                 audio_languages = _sorted_languages(audio_streams)
                 subtitle_languages = _sorted_languages(subtitle_streams)
-                is_hdr = _video_hdr(video_stream)
+                bit_depth = _pyav_bit_depth(video_stream)
+                hdr_format = _pyav_hdr_format(video_stream)
 
                 if duration_s <= 0.0 or width <= 0 or height <= 0:
                     raise ProbeError("Invalid video metadata")
@@ -513,6 +670,8 @@ class _PyAvBackend:
                     width=width,
                     height=height,
                     fps=fps,
+                    bit_depth=bit_depth,
+                    hdr_format=hdr_format,
                     codec=codec,
                     bitrate=bitrate,
                     has_audio=has_audio,
@@ -520,7 +679,6 @@ class _PyAvBackend:
                     audio_bitrate=audio_bitrate,
                     audio_languages=audio_languages,
                     subtitle_languages=subtitle_languages,
-                    is_hdr=is_hdr,
                 )
         except ProbeError:
             raise

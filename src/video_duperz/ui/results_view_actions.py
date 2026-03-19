@@ -19,7 +19,7 @@ from PySide6.QtWidgets import QMessageBox, QTableWidgetItem
 from threep_commons.desktop import open_path_in_default_app, reveal_path_in_file_manager
 
 from ..executable_paths import resolve_executable_path
-from ..quality import codec_rank
+from ..quality import bit_depth_bonus, codec_rank
 from .results_view_shared import (
     COL_CHECK,
     COL_FULL_PATH,
@@ -93,6 +93,7 @@ class ResultsViewActionMixin(ResultsViewThumbnailMixin):
         return self._quality_score_for_dimensions(
             meta.width,
             meta.height,
+            meta.bit_depth,
             meta.bitrate,
             meta.codec,
         )
@@ -102,6 +103,7 @@ class ResultsViewActionMixin(ResultsViewThumbnailMixin):
         return self._quality_score_for_dimensions(
             item.width,
             item.height,
+            item.bit_depth,
             item.bitrate,
             item.codec,
         )
@@ -110,12 +112,14 @@ class ResultsViewActionMixin(ResultsViewThumbnailMixin):
     def _quality_score_for_dimensions(
         width: int,
         height: int,
+        bit_depth: int,
         bitrate: int,
         codec: str,
     ) -> float:
         """Score one video using the same heuristic as the keep-best action."""
         pixels = float(width * height)
-        return 0.65 * pixels + 0.25 * float(bitrate) + 0.10 * codec_rank(codec)
+        base_score = 0.65 * pixels + 0.25 * float(bitrate) + 0.10 * codec_rank(codec)
+        return base_score * bit_depth_bonus(bit_depth)
 
     def apply_keep_strategy(self, strategy: str) -> None:
         """Check every row except the chosen keeper in each visible group."""

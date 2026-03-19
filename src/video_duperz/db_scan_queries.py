@@ -38,11 +38,11 @@ class DatabaseScanQueryMixin:
         rows = self.conn.execute(
             """
             SELECT f.id AS file_id, f.path, f.size, f.mtime_ns, f.ctime_ns,
-                   vm.duration_s, vm.width, vm.height, vm.fps,
+                   vm.duration_s, vm.width, vm.height, vm.fps, vm.bit_depth,
+                   vm.hdr_format,
                    vm.codec, vm.bitrate,
                    vm.audio_codec, vm.audio_bitrate,
                    vm.audio_languages, vm.subtitle_languages,
-                   vm.is_hdr,
                    fp.hash_blob,
                    af.fingerprint_text
             FROM files f
@@ -77,13 +77,14 @@ class DatabaseScanQueryMixin:
                 width=int(row["width"]),
                 height=int(row["height"]),
                 fps=float(row["fps"]),
+                bit_depth=int(row["bit_depth"] or 8),
+                hdr_format=str(row["hdr_format"] or ""),
                 codec=str(row["codec"]),
                 bitrate=int(row["bitrate"]),
                 audio_codec=str(row["audio_codec"] or ""),
                 audio_bitrate=int(row["audio_bitrate"] or 0),
                 audio_languages=str(row["audio_languages"] or ""),
                 subtitle_languages=str(row["subtitle_languages"] or ""),
-                is_hdr=bool(row["is_hdr"]),
                 hashes=decode_hashes(row["hash_blob"]),
                 audio_fingerprint=str(row["fingerprint_text"] or ""),
             )
@@ -355,9 +356,7 @@ class DatabaseScanQueryMixin:
                         )
                     ),
                     "scene_aware_sampling": bool(row["scene_aware_sampling"]),
-                    "audio_fingerprint_enabled": bool(
-                        row["audio_fingerprint_enabled"]
-                    ),
+                    "audio_fingerprint_enabled": bool(row["audio_fingerprint_enabled"]),
                     "cross_resolution_mode": normalize_cross_resolution_mode(
                         row["cross_resolution_mode"]
                     ),

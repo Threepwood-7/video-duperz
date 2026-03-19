@@ -87,7 +87,8 @@ def test_probe_video_ffprobe_uses_hidden_window_kwargs_and_resolved_executable(
         audio_bitrate=64000,
         audio_languages="eng",
         subtitle_languages="",
-        is_hdr=False,
+        bit_depth=8,
+        hdr_format="",
     )
     assert recorded["cmd"] == [
         r"C:\ffmpeg\bin\ffprobe.exe",
@@ -97,7 +98,8 @@ def test_probe_video_ffprobe_uses_hidden_window_kwargs_and_resolved_executable(
         (
             "format=duration,bit_rate:"
             "stream=index,codec_type,codec_name,width,height,r_frame_rate,bit_rate,"
-            "color_transfer,color_primaries,color_space,pix_fmt:"
+            "color_transfer,color_primaries,color_space,pix_fmt,"
+            "bits_per_raw_sample,side_data_list:"
             "stream_tags=language"
         ),
         "-of",
@@ -243,7 +245,8 @@ def test_probe_video_pyav_maps_metadata(monkeypatch: pytest.MonkeyPatch) -> None
         audio_bitrate=768000,
         audio_languages="deu,eng",
         subtitle_languages="pol",
-        is_hdr=True,
+        bit_depth=8,
+        hdr_format="HDR10",
     )
 
 

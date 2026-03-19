@@ -184,7 +184,8 @@ class VideoMeta:
     audio_bitrate: int
     audio_languages: str
     subtitle_languages: str
-    is_hdr: bool
+    bit_depth: int = 8
+    hdr_format: str = ""
 
 
 @dataclass(slots=True)
@@ -311,8 +312,9 @@ class MatchItem:
     audio_bitrate: int
     audio_languages: str
     subtitle_languages: str
-    is_hdr: bool
     hashes: list[int]
+    bit_depth: int = 8
+    hdr_format: str = ""
     audio_fingerprint: str = ""
 
 
@@ -334,9 +336,11 @@ class DuplicateItem:
     audio_bitrate: int
     audio_languages: str
     subtitle_languages: str
-    is_hdr: bool
     similarity_score: float
     keep_default: bool
+    fps: float = 0.0
+    bit_depth: int = 8
+    hdr_format: str = ""
     match_reason: MatchReason = "perceptual"
     match_duration_delta_s: float = 0.0
     selected_action: ActionKind = "keep"

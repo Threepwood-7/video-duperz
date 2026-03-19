@@ -6,17 +6,17 @@ Organized by area, priority ranked High / Medium / Low within each section.
 
 ## 1. Metadata & Probing
 
-### [High] Display FPS in results table
+### [High][DONE] Display FPS in results table
 `probe.py` already extracts `fps` into `VideoMeta.fps` and `MatchItem.fps` carries it, but no
 `COL_FPS` column exists in the results view.  Add the column alongside resolution so the user
 can distinguish 24 fps from 60 fps copies when choosing which to keep.
 
-### [High] Capture and display bit depth
+### [High][DONE] Capture and display bit depth
 `probe.py` reads `pix_fmt` / `bits_per_raw_sample` but discards it.  Add `bit_depth: int` to
 `VideoMeta` (default `8`).  Show it in a results column and factor it into quality scoring
 (10-bit > 8-bit at equal bitrate).
 
-### [High] Granular HDR metadata
+### [High][DONE] Granular HDR metadata
 The current `is_hdr: bool` flag collapses HDR10, HDR10+, HLG, Dolby Vision into one bit.
 Replace with `hdr_format: str` (e.g. `"HDR10"`, `"DV"`, `"HLG"`, `""`) derived from
 `color_trc` / `color_primaries` / side-data already inspected in `probe.py`.

@@ -21,10 +21,22 @@ def codec_rank(codec: str) -> float:
     return CODEC_RANK.get(codec.lower(), 0.7)
 
 
+def bit_depth_bonus(bit_depth: int) -> float:
+    """Return the quality multiplier for one normalized bit depth."""
+    if bit_depth >= 12:
+        return 1.10
+    if bit_depth >= 10:
+        return 1.05
+    return 1.00
+
+
 def quality_score(item: MatchItem) -> float:
     """Score a match item by resolution, bitrate, and codec preference."""
     pixels = float(item.width * item.height)
-    return 0.65 * pixels + 0.25 * float(item.bitrate) + 0.10 * codec_rank(item.codec)
+    base_score = (
+        0.65 * pixels + 0.25 * float(item.bitrate) + 0.10 * codec_rank(item.codec)
+    )
+    return base_score * bit_depth_bonus(item.bit_depth)
 
 
 def choose_keep_file_id(items: list[MatchItem]) -> int:

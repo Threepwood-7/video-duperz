@@ -6,12 +6,12 @@ import numpy as np
 import pytest
 
 from video_duperz.fingerprint import (
+    ALGO_VERSION,
+    SCENE_AWARE_ALGO_VERSION,
     FingerprintError,
     _decoder_timeout_for_path,
     _DecoderAttemptResult,
     _ffmpeg_gray_samples,
-    ALGO_VERSION,
-    SCENE_AWARE_ALGO_VERSION,
     build_fingerprint_record_with_fallback,
     dhash_from_gray,
     ensure_ffmpeg_available,

@@ -227,10 +227,10 @@ class DatabaseDuplicateGroupMixin:
                        gi.keep_default, gi.match_reason,
                        gi.match_duration_delta_s, gi.selected_action,
                        f.path, f.size, f.mtime_ns, f.ctime_ns,
-                       vm.duration_s, vm.width, vm.height, vm.bitrate, vm.codec,
+                       vm.duration_s, vm.width, vm.height, vm.fps,
+                       vm.bit_depth, vm.hdr_format, vm.bitrate, vm.codec,
                        vm.audio_codec, vm.audio_bitrate,
-                       vm.audio_languages, vm.subtitle_languages,
-                       vm.is_hdr
+                       vm.audio_languages, vm.subtitle_languages
                 FROM duplicate_group_items gi
                 JOIN files f ON f.id = gi.file_id
                 JOIN scans s ON s.id = ?
@@ -253,13 +253,15 @@ class DatabaseDuplicateGroupMixin:
                     duration_s=float(item_row["duration_s"]),
                     width=int(item_row["width"]),
                     height=int(item_row["height"]),
+                    fps=float(item_row["fps"]),
+                    bit_depth=int(item_row["bit_depth"] or 8),
+                    hdr_format=str(item_row["hdr_format"] or ""),
                     bitrate=int(item_row["bitrate"]),
                     codec=str(item_row["codec"]),
                     audio_codec=str(item_row["audio_codec"] or ""),
                     audio_bitrate=int(item_row["audio_bitrate"] or 0),
                     audio_languages=str(item_row["audio_languages"] or ""),
                     subtitle_languages=str(item_row["subtitle_languages"] or ""),
-                    is_hdr=bool(item_row["is_hdr"]),
                     similarity_score=float(item_row["similarity_score"]),
                     keep_default=bool(item_row["keep_default"]),
                     match_reason=normalize_match_reason(item_row["match_reason"]),

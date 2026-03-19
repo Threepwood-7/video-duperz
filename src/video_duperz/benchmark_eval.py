@@ -18,7 +18,12 @@ from .scanner import build_physical_drive_scan_plan, enumerate_video_files
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
-    from .models import FrameDecodeBackendId, ProbeBackendId, VideoRecord
+    from .models import (
+        FrameDecodeBackendId,
+        ProbeBackendId,
+        ScanEnumerationResult,
+        VideoRecord,
+    )
     from .pipeline_runtime_context import AnalyzeOutputLike
 
 BenchmarkDispatchStrategy = Literal["ordered", "micro_batch"]
@@ -247,14 +252,25 @@ def build_benchmark_sample_plan(
 ) -> BenchmarkSamplePlan:
     """Enumerate candidate files and build one deterministic benchmark plan."""
 
-    enumeration = enumerate_video_files(
-        scan_id=0,
-        roots=roots,
-        extensions=list(_BENCHMARK_VIDEO_EXTENSIONS),
-        max_workers=max(1, len(roots)),
-        drive_worker_overrides=drive_worker_overrides,
+    enumeration_payload = cast(
+        "object",
+        enumerate_video_files(
+            scan_id=0,
+            roots=roots,
+            extensions=list(_BENCHMARK_VIDEO_EXTENSIONS),
+            max_workers=max(1, len(roots)),
+            drive_worker_overrides=drive_worker_overrides,
+        ),
     )
-    records = enumeration.files
+    if hasattr(enumeration_payload, "files"):
+        enumeration_result = cast("ScanEnumerationResult", enumeration_payload)
+        records = list(enumeration_result.files)
+    else:
+        legacy_enumeration = cast(
+            "tuple[list[VideoRecord], list[object]]",
+            enumeration_payload,
+        )
+        records = list(legacy_enumeration[0])
     sorted_records = _sorted_records(records)
     selected_records = _select_records_for_set(set_id, sorted_records)
     plan = build_physical_drive_scan_plan(

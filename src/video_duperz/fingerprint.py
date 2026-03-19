@@ -481,7 +481,7 @@ def _opencv_gray_samples(
 
     samples: list[np.ndarray | None] = []
     try:
-        for timestamp_s in (timestamps or _fixed_sample_timestamps(duration_s)):
+        for timestamp_s in timestamps or _fixed_sample_timestamps(duration_s):
             cap.set(subprocess_cv_pos_msec(), max(0.0, timestamp_s * 1000.0))
             ok, frame = cap.read()
             if not ok:
@@ -731,9 +731,7 @@ def _parse_float_list(value: object) -> list[float] | None:
     raw_values = cast("list[object]", value)
     parsed: list[float] = []
     for item in raw_values:
-        if isinstance(item, bool):
-            parsed.append(float(item))
-        elif isinstance(item, int | float):
+        if isinstance(item, bool | int | float):
             parsed.append(float(item))
         elif isinstance(item, str):
             try:

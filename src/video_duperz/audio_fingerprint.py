@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from threep_commons.subprocess_helpers import (
     merge_subprocess_kwargs,
@@ -12,11 +12,13 @@ from threep_commons.subprocess_helpers import (
 )
 
 from .executable_paths import resolve_executable_path
-from .models import ScanProcessCpuPriority, ScanProcessIoMode
 from .process_priority import (
     apply_scan_child_process_io_mode,
     apply_subprocess_cpu_priority_kwargs,
 )
+
+if TYPE_CHECKING:
+    from .models import ScanProcessCpuPriority, ScanProcessIoMode
 
 
 class AudioFingerprintError(RuntimeError):
@@ -86,7 +88,8 @@ def compute_audio_fingerprint(
         stderr_tail = _stderr_tail(stderr_text)
         detail = f" stderr tail: {stderr_tail}" if stderr_tail else ""
         raise AudioFingerprintError(
-            f"fpcalc failed for {path} with exit code {int(process.returncode)}.{detail}"
+            "fpcalc failed for "
+            f"{path} with exit code {int(process.returncode)}.{detail}"
         )
 
     try:

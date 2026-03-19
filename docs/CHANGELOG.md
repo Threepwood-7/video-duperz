@@ -2,6 +2,9 @@
 
 ## 2026-03-19
 
+- Added visible `FPS`, `Bit Depth`, and `HDR Format` metadata columns to Results so near-identical files can be compared on frame rate, bit depth, and HDR type instead of a coarse HDR yes/no flag.
+- Replaced the old boolean HDR metadata model with persisted `hdr_format` strings and threaded `bit_depth` / `hdr_format` through probe caching, duplicate-group loading, and results filtering.
+- Updated keep-quality scoring so higher bit-depth encodes win when resolution, bitrate, and codec are otherwise similar, with 10-bit and 12-bit files receiving progressively stronger bonuses.
 - Added opt-in scene-aware visual sampling, cached by its own fingerprint algorithm version so scene-based and fixed-percentage fingerprints can coexist safely.
 - Added optional `fpcalc` audio fingerprinting as a secondary duplicate signal, including cached audio artifacts, non-fatal scan issues when the tool is unavailable, and `Audio` match badges in Results.
 - Added a `Custom` similarity profile with a numeric threshold control in Sources, and threaded that threshold through saved scan profiles, paused-scan reloads, scan-set identity, and matcher decisions.

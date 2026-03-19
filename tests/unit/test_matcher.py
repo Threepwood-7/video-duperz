@@ -30,7 +30,6 @@ def _item(
         audio_bitrate=192000,
         audio_languages="eng",
         subtitle_languages="",
-        is_hdr=False,
         hashes=hashes,
         audio_fingerprint=audio_fingerprint,
     )

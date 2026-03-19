@@ -102,9 +102,7 @@ def build_scan_set_spec(
         ),
         "scene_aware_sampling": bool(scene_aware_sampling),
         "audio_fingerprint_enabled": bool(audio_fingerprint_enabled),
-        "cross_resolution_mode": normalize_cross_resolution_mode(
-            cross_resolution_mode
-        ),
+        "cross_resolution_mode": normalize_cross_resolution_mode(cross_resolution_mode),
         "extensions": ext,
     }
 

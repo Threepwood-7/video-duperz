@@ -59,9 +59,12 @@ from video_duperz.ui.results_view import (
     SORT_ROW_SIZE_DESC,
 )
 from video_duperz.ui.results_view_shared import (
+    COL_BIT_DEPTH,
     COL_CHECK,
     COL_FILE_NAME,
+    COL_FPS,
     COL_FULL_PATH,
+    COL_HDR_FORMAT,
     COL_MATCH,
     COL_PARENT_DIR,
     COL_SIZE,
@@ -97,7 +100,9 @@ def _dup_item(
     size: int = 100,
     duration_s: float = 1.0,
     codec: str = "h264",
-    is_hdr: bool = False,
+    fps: float = 30.0,
+    bit_depth: int = 8,
+    hdr_format: str = "",
     match_reason: str = "perceptual",
     match_duration_delta_s: float = 0.0,
 ) -> DuplicateItem:
@@ -110,13 +115,15 @@ def _dup_item(
         duration_s=duration_s,
         width=width,
         height=height,
+        fps=fps,
+        bit_depth=bit_depth,
+        hdr_format=hdr_format,
         bitrate=bitrate,
         codec=codec,
         audio_codec="aac",
         audio_bitrate=128000,
         audio_languages="eng",
         subtitle_languages="eng",
-        is_hdr=is_hdr,
         similarity_score=sim,
         keep_default=file_id % 2 == 1,
         match_reason=match_reason,
@@ -239,7 +246,7 @@ def _build_results_structured_filter_groups(tmp_path: Path) -> list[DuplicateGro
                     size=25 * 1024 * 1024,
                     duration_s=180.0,
                     codec="h264",
-                    is_hdr=False,
+                    hdr_format="",
                 ),
                 _dup_item(
                     32,
@@ -251,7 +258,7 @@ def _build_results_structured_filter_groups(tmp_path: Path) -> list[DuplicateGro
                     size=80 * 1024 * 1024,
                     duration_s=240.0,
                     codec="hevc",
-                    is_hdr=True,
+                    hdr_format="HDR10",
                 ),
             ],
             total_size_bytes=(25 + 80) * 1024 * 1024,
@@ -272,7 +279,7 @@ def _build_results_structured_filter_groups(tmp_path: Path) -> list[DuplicateGro
                     size=12 * 1024 * 1024,
                     duration_s=95.0,
                     codec="vp9",
-                    is_hdr=False,
+                    hdr_format="",
                 ),
                 _dup_item(
                     34,
@@ -284,7 +291,7 @@ def _build_results_structured_filter_groups(tmp_path: Path) -> list[DuplicateGro
                     size=6 * 1024 * 1024,
                     duration_s=40.0,
                     codec="h264",
-                    is_hdr=False,
+                    hdr_format="",
                 ),
             ],
             total_size_bytes=(12 + 6) * 1024 * 1024,
@@ -333,7 +340,7 @@ def _load_delete_test_group(
                 audio_bitrate=128_000,
                 audio_languages="eng",
                 subtitle_languages="eng",
-                is_hdr=False,
+                hdr_format="",
             ),
         )
         item = _dup_item(
@@ -444,7 +451,7 @@ def test_main_window_launches_with_new_results_table(tmp_path: Path) -> None:
 
         assert window.thumbnail_size_combo.count() == 4
         assert window.add_recent_root_btn.text() == "Add Recent Folder"
-        assert window.results_view.results_table.columnCount() == 21
+        assert window.results_view.results_table.columnCount() == 23
         assert window.results_view.results_table.horizontalHeaderItem(2).text() == "="
         assert (
             window.results_view.results_table.horizontalHeaderItem(3).text()
@@ -455,11 +462,22 @@ def test_main_window_launches_with_new_results_table(tmp_path: Path) -> None:
             == "Extension"
         )
         assert (
-            window.results_view.results_table.horizontalHeaderItem(10).text()
-            == "Audio Codec"
+            window.results_view.results_table.horizontalHeaderItem(COL_FPS).text()
+            == "FPS"
         )
         assert (
-            window.results_view.results_table.horizontalHeaderItem(14).text() == "HDR"
+            window.results_view.results_table.horizontalHeaderItem(COL_BIT_DEPTH).text()
+            == "Bit Depth"
+        )
+        assert (
+            window.results_view.results_table.horizontalHeaderItem(
+                COL_HDR_FORMAT
+            ).text()
+            == "HDR Format"
+        )
+        assert (
+            window.results_view.results_table.horizontalHeaderItem(13).text()
+            == "Audio Codec"
         )
         assert (
             window.results_view.results_table.horizontalHeaderItem(COL_MATCH).text()
@@ -478,6 +496,9 @@ def test_main_window_launches_with_new_results_table(tmp_path: Path) -> None:
                     240,
                     1000,
                     1.0,
+                    fps=23.976,
+                    bit_depth=10,
+                    hdr_format="HDR10",
                     match_reason="audio_match",
                 ),
                 _dup_item(
@@ -499,6 +520,13 @@ def test_main_window_launches_with_new_results_table(tmp_path: Path) -> None:
         app.processEvents()
         initial_height = window.results_view.results_table.rowHeight(0)
         assert window.results_view.results_table.item(0, COL_MATCH).text() == "Audio"
+        assert window.results_view.results_table.item(0, COL_FPS).text() == "23.976"
+        assert (
+            window.results_view.results_table.item(0, COL_BIT_DEPTH).text() == "10-bit"
+        )
+        assert (
+            window.results_view.results_table.item(0, COL_HDR_FORMAT).text() == "HDR10"
+        )
         assert "Audio fingerprint rescue match" in (
             window.results_view.results_table.item(0, COL_MATCH).toolTip()
         )
@@ -2204,7 +2232,7 @@ def test_results_attribute_filters_and_include_text_share_one_item_predicate(
                             size=25 * 1024 * 1024,
                             duration_s=180.0,
                             codec=" h264 ",
-                            is_hdr=False,
+                            hdr_format="",
                         ),
                         _dup_item(
                             92,
@@ -2216,7 +2244,7 @@ def test_results_attribute_filters_and_include_text_share_one_item_predicate(
                             size=80 * 1024 * 1024,
                             duration_s=240.0,
                             codec="hevc",
-                            is_hdr=True,
+                            hdr_format="HDR10",
                         ),
                     ],
                     total_size_bytes=(25 + 80) * 1024 * 1024,
@@ -2237,7 +2265,7 @@ def test_results_attribute_filters_and_include_text_share_one_item_predicate(
                             size=12 * 1024 * 1024,
                             duration_s=95.0,
                             codec="vp9",
-                            is_hdr=False,
+                            hdr_format="",
                         ),
                         _dup_item(
                             94,
@@ -2249,7 +2277,7 @@ def test_results_attribute_filters_and_include_text_share_one_item_predicate(
                             size=6 * 1024 * 1024,
                             duration_s=40.0,
                             codec="h264",
-                            is_hdr=False,
+                            hdr_format="",
                         ),
                     ],
                     total_size_bytes=(12 + 6) * 1024 * 1024,
@@ -2856,7 +2884,7 @@ def test_saved_scan_profiles_save_load_and_delete(tmp_path: Path, monkeypatch) -
                 audio_bitrate=128000,
                 audio_languages="eng",
                 subtitle_languages="eng",
-                is_hdr=False,
+                hdr_format="",
             ),
         )
         db.save_video_meta(
@@ -2873,7 +2901,7 @@ def test_saved_scan_profiles_save_load_and_delete(tmp_path: Path, monkeypatch) -
                 audio_bitrate=128000,
                 audio_languages="eng",
                 subtitle_languages="eng",
-                is_hdr=False,
+                hdr_format="",
             ),
         )
         group_id = db.insert_duplicate_group(
@@ -2955,9 +2983,7 @@ def test_saved_scan_profiles_save_load_and_delete(tmp_path: Path, monkeypatch) -
         assert window.custom_similarity_threshold_spin.value() == pytest.approx(0.23)
         assert window.scene_aware_sampling_check.isChecked() is True
         assert window.audio_fingerprint_enabled_check.isChecked() is True
-        assert (
-            str(window.cross_resolution_mode_combo.currentData()) == "same_aspect"
-        )
+        assert str(window.cross_resolution_mode_combo.currentData()) == "same_aspect"
         assert window.extensions_edit.text() == "mp4"
         assert (
             "filesystem may have changed"
@@ -3080,12 +3106,8 @@ def test_load_saved_scan_profile_cancelled_latest_routes_to_sources(
         payload = SavedScanProfilePayload(
             scan_set_key="",
             roots=roots,
-            similarity_profile="custom",
+            similarity_profile="balanced",
             extensions=["mp4"],
-            custom_similarity_threshold=0.24,
-            scene_aware_sampling=True,
-            audio_fingerprint_enabled=True,
-            cross_resolution_mode="same_aspect",
         )
         window._load_saved_scan_profile(payload, "Cancelled Profile")
         app.processEvents()
@@ -3206,11 +3228,11 @@ def test_resume_scan_passes_retry_failed_checkbox_state(
             scan_info=scan_info,
         )
         app.processEvents()
-        assert window.profile_combo.currentText() == "custom"
-        assert window.custom_similarity_threshold_spin.value() == pytest.approx(0.24)
-        assert window.scene_aware_sampling_check.isChecked() is True
-        assert window.audio_fingerprint_enabled_check.isChecked() is True
-        assert str(window.cross_resolution_mode_combo.currentData()) == "same_aspect"
+        assert window.profile_combo.currentText() == "balanced"
+        assert window.custom_similarity_threshold_spin.value() == pytest.approx(0.18)
+        assert window.scene_aware_sampling_check.isChecked() is False
+        assert window.audio_fingerprint_enabled_check.isChecked() is False
+        assert str(window.cross_resolution_mode_combo.currentData()) == "off"
         window.scan_view.retry_failed_checkbox.setChecked(False)
 
         captured: dict[str, object] = {}
@@ -3797,7 +3819,10 @@ def test_sources_tab_grouped_layout_has_detailed_tooltips(tmp_path: Path) -> Non
         )
         assert window.sources_drive_table.minimumHeight() == 250
         assert window.sources_drive_table.maximumHeight() > 250
-        content_form_table = window.findChild(QWidget, "sources_scan_content_form_table")
+        content_form_table = window.findChild(
+            QWidget,
+            "sources_scan_content_form_table",
+        )
         performance_form_table = window.findChild(
             QWidget,
             "sources_scan_performance_form_table",

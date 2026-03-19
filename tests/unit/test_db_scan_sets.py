@@ -171,7 +171,7 @@ def test_list_match_items_for_scan_orders_by_path() -> None:
             audio_bitrate=128000,
             audio_languages="eng",
             subtitle_languages="",
-            is_hdr=False,
+            hdr_format="",
         )
         db.save_video_meta(file_b, meta)
         db.save_video_meta(file_a, meta)
@@ -265,7 +265,7 @@ def test_cached_artifacts_can_include_audio_fingerprints() -> None:
                 audio_bitrate=128000,
                 audio_languages="eng",
                 subtitle_languages="",
-                is_hdr=False,
+                hdr_format="",
             ),
         )
         db.save_fingerprint(file_id, algo_version=ALGO_VERSION, hashes=[1, 2, 3])
@@ -461,7 +461,7 @@ def test_scan_batch_methods_roundtrip() -> None:
                         audio_bitrate=128000,
                         audio_languages="eng",
                         subtitle_languages="",
-                        is_hdr=False,
+                        hdr_format="",
                     ),
                 )
             ]
@@ -493,7 +493,7 @@ def test_scan_batch_methods_roundtrip() -> None:
                     audio_bitrate=128000,
                     audio_languages="eng",
                     subtitle_languages="",
-                    is_hdr=False,
+                    hdr_format="",
                     similarity_score=1.0,
                     keep_default=True,
                     match_reason="trimmed_match",
@@ -514,7 +514,7 @@ def test_scan_batch_methods_roundtrip() -> None:
                     audio_bitrate=0,
                     audio_languages="",
                     subtitle_languages="",
-                    is_hdr=False,
+                    hdr_format="",
                     similarity_score=0.8,
                     keep_default=False,
                     selected_action="rename",
@@ -585,7 +585,7 @@ def test_cached_artifacts_are_probe_backend_specific() -> None:
             audio_bitrate=128000,
             audio_languages="eng",
             subtitle_languages="",
-            is_hdr=False,
+            hdr_format="",
         )
         db.save_video_meta(file_id, meta, probe_backend="ffprobe")
         db.save_fingerprint(
@@ -608,7 +608,7 @@ def test_cached_artifacts_are_probe_backend_specific() -> None:
                 audio_bitrate=0,
                 audio_languages="",
                 subtitle_languages="",
-                is_hdr=True,
+                hdr_format="HDR10",
             ),
             probe_backend="pyav",
         )

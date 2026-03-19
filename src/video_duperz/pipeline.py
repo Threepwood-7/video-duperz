@@ -159,9 +159,7 @@ def _configure_runtime_analyze_options(
     _ANALYZE_RUNTIME_OPTIONS.ffprobe_exe_path = str(ffprobe_exe_path or "")
     _ANALYZE_RUNTIME_OPTIONS.fpcalc_exe_path = str(fpcalc_exe_path or "")
     _ANALYZE_RUNTIME_OPTIONS.scene_aware_sampling = bool(scene_aware_sampling)
-    _ANALYZE_RUNTIME_OPTIONS.audio_fingerprint_enabled = bool(
-        audio_fingerprint_enabled
-    )
+    _ANALYZE_RUNTIME_OPTIONS.audio_fingerprint_enabled = bool(audio_fingerprint_enabled)
     _ANALYZE_RUNTIME_OPTIONS.scan_child_cpu_priority = scan_child_cpu_priority
     _ANALYZE_RUNTIME_OPTIONS.scan_child_io_mode = scan_child_io_mode
 
@@ -298,10 +296,7 @@ def run_scan(
                     ScanIssue(
                         stage="audio_fingerprint",
                         path="",
-                        message=(
-                            "Audio fingerprinting disabled for this scan: "
-                            f"{exc}"
-                        ),
+                        message=(f"Audio fingerprinting disabled for this scan: {exc}"),
                     )
                 )
     analyze_file = _build_runtime_analyze_file(

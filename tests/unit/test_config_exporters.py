@@ -145,10 +145,7 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     assert loaded.saved_scan_profiles["My Set"].custom_similarity_threshold == 0.21
     assert loaded.saved_scan_profiles["My Set"].scene_aware_sampling is True
     assert loaded.saved_scan_profiles["My Set"].audio_fingerprint_enabled is True
-    assert (
-        loaded.saved_scan_profiles["My Set"].cross_resolution_mode
-        == "same_aspect"
-    )
+    assert loaded.saved_scan_profiles["My Set"].cross_resolution_mode == "same_aspect"
 
 
 def test_settings_path_uses_app_name_ini_under_appdata(
@@ -603,7 +600,7 @@ def test_export_scan_outputs_duplicates_and_links(tmp_path: Path) -> None:
                 audio_bitrate=128000,
                 audio_languages="eng",
                 subtitle_languages="eng",
-                is_hdr=False,
+                hdr_format="",
             ),
         )
         db.save_video_meta(
@@ -620,7 +617,7 @@ def test_export_scan_outputs_duplicates_and_links(tmp_path: Path) -> None:
                 audio_bitrate=128000,
                 audio_languages="eng",
                 subtitle_languages="eng",
-                is_hdr=False,
+                hdr_format="",
             ),
         )
         db.save_fingerprint(file_id=file_id, algo_version=1, hashes=[1] * 12)
@@ -646,7 +643,7 @@ def test_export_scan_outputs_duplicates_and_links(tmp_path: Path) -> None:
                 audio_bitrate=128000,
                 audio_languages="eng",
                 subtitle_languages="eng",
-                is_hdr=False,
+                hdr_format="",
                 similarity_score=1.0,
                 keep_default=True,
                 selected_action="keep",
@@ -669,7 +666,7 @@ def test_export_scan_outputs_duplicates_and_links(tmp_path: Path) -> None:
                 audio_bitrate=128000,
                 audio_languages="eng",
                 subtitle_languages="eng",
-                is_hdr=False,
+                hdr_format="",
                 similarity_score=0.99,
                 keep_default=False,
                 selected_action="rename",

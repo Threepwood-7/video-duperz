@@ -245,9 +245,7 @@ class MainWindowProfilesMixin(MainWindowDriveViewMixin):
                 custom_similarity_threshold=normalize_custom_similarity_threshold(
                     self.custom_similarity_threshold_spin.value()
                 ),
-                scene_aware_sampling=bool(
-                    self.scene_aware_sampling_check.isChecked()
-                ),
+                scene_aware_sampling=bool(self.scene_aware_sampling_check.isChecked()),
                 audio_fingerprint_enabled=bool(
                     self.audio_fingerprint_enabled_check.isChecked()
                 ),
@@ -420,9 +418,7 @@ class MainWindowProfilesMixin(MainWindowDriveViewMixin):
             normalize_custom_similarity_threshold(custom_similarity_threshold)
         )
         self._loaded_paused_scene_aware_sampling = bool(scene_aware_sampling)
-        self._loaded_paused_audio_fingerprint_enabled = bool(
-            audio_fingerprint_enabled
-        )
+        self._loaded_paused_audio_fingerprint_enabled = bool(audio_fingerprint_enabled)
         self._loaded_paused_cross_resolution_mode = normalize_cross_resolution_mode(
             cross_resolution_mode
         )
