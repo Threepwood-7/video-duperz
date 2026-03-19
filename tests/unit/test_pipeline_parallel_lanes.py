@@ -15,6 +15,7 @@ from video_duperz.models import (
     VideoMeta,
     VideoRecord,
 )
+from video_duperz.scan_sets import build_scan_set_key
 
 
 class _FakeDb:
@@ -22,7 +23,11 @@ class _FakeDb:
         self._scan_id = 17
         self._next_file_id = 100
         self.status = "running"
-        self._path_to_id: dict[str, int] = {}
+        self._path_to_id: dict[tuple[int, str], int] = {}
+        self.latest_completed_by_set: dict[str, int] = {}
+        self.scan_snapshots: dict[int, dict[str, dict[str, int | str]]] = {}
+        self.cloned_paths: list[str] = []
+        self.cloned_failed_paths: list[str] = []
 
     def create_scan(
         self,
@@ -96,11 +101,13 @@ class _FakeDb:
             path = str(file.get("path", ""))
             if not path:
                 continue
-            file_id = self._path_to_id.get(path)
+            scan_id = int(file.get("scan_id", 0))
+            key = (scan_id, path)
+            file_id = self._path_to_id.get(key)
             if file_id is None:
                 self._next_file_id += 1
                 file_id = self._next_file_id
-                self._path_to_id[path] = file_id
+                self._path_to_id[key] = file_id
             out[path] = file_id
         return out
 
@@ -118,7 +125,47 @@ class _FakeDb:
         scan_id: int,
     ) -> int:
         self._next_file_id += 1
+        self._path_to_id[(scan_id, path)] = self._next_file_id
         return self._next_file_id
+
+    def latest_completed_scan_id_for_set(self, scan_set_key: str) -> int | None:
+        return self.latest_completed_by_set.get(scan_set_key)
+
+    def load_scan_file_snapshot(
+        self,
+        scan_id: int,
+    ) -> dict[str, dict[str, int | str]]:
+        return dict(self.scan_snapshots.get(scan_id, {}))
+
+    def clone_scan_files_with_artifacts(
+        self,
+        *,
+        source_scan_id: int,
+        target_scan_id: int,
+        paths: set[str],
+        probe_backend: str = "pyav",
+        algo_version: int,
+        include_audio_fingerprint: bool = False,
+    ) -> dict[str, int]:
+        _ = source_scan_id, probe_backend, algo_version, include_audio_fingerprint
+        out: dict[str, int] = {}
+        for path in sorted(paths):
+            self.cloned_paths.append(path)
+            self._next_file_id += 1
+            self._path_to_id[(target_scan_id, path)] = self._next_file_id
+            out[path] = self._next_file_id
+        return out
+
+    def clone_failed_files_for_paths(
+        self,
+        *,
+        source_scan_id: int,
+        target_scan_id: int,
+        paths: set[str],
+    ) -> int:
+        _ = source_scan_id, target_scan_id
+        self.cloned_failed_paths.extend(sorted(paths))
+        return len(paths)
 
     def load_cached_artifacts_batch(
         self,
@@ -2032,3 +2079,178 @@ def test_resume_keeps_duplicate_groups_correct_after_pause(
         assert resumed.metrics["resume_cache_hits"] == 1
         assert frozenset({first_a.path, second_a.path}) in path_groups
         assert frozenset({first_b.path, second_b.path}) in path_groups
+
+
+def test_run_scan_incremental_rescan_carries_forward_unchanged_files(
+    monkeypatch,
+) -> None:
+    files = [
+        _video_with_stats("D:/Videos/same.mp4", lane=0, size=10, mtime_ns=1),
+        _video_with_stats("D:/Videos/mod.mp4", lane=0, size=10, mtime_ns=2),
+        _video_with_stats("D:/Videos/new.mp4", lane=0, size=30, mtime_ns=3),
+    ]
+    analyze_calls: list[str] = []
+
+    monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
+    monkeypatch.setattr(
+        pipeline, "ensure_fingerprint_fallback_chain_available", lambda: None
+    )
+    monkeypatch.setattr(
+        pipeline, "enumerate_video_files", lambda **kwargs: (list(files), [])
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_physical_drive_scan_plan",
+        lambda roots, max_workers, drive_worker_overrides=None: _lane_plan_for_roots(
+            roots,
+            lane_worker_limits={0: 1},
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "find_duplicate_edges",
+        lambda items, profile, **kwargs: ([], MatchStats()),
+    )
+    monkeypatch.setattr(
+        pipeline, "build_duplicate_groups", lambda items, edges, profile: []
+    )
+
+    def _fake_analyze(path: str, cached_meta: object | None) -> pipeline._AnalyzeOutput:
+        analyze_calls.append(path)
+        return pipeline._AnalyzeOutput(meta=_analysis_meta(), hashes=[1, 2, 3])
+
+    monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)
+
+    db = _FakeDb()
+    scan_set_key = build_scan_set_key(
+        roots=["D:/Videos"],
+        similarity_profile="balanced",
+        extensions=["mp4"],
+    )
+    db.latest_completed_by_set[scan_set_key] = 12
+    db.scan_snapshots[12] = {
+        "D:/Videos/same.mp4": {
+            "file_id": 1,
+            "path": "D:/Videos/same.mp4",
+            "size": 10,
+            "mtime_ns": 1,
+            "ctime_ns": 1,
+            "ext": "mp4",
+        },
+        "D:/Videos/mod.mp4": {
+            "file_id": 2,
+            "path": "D:/Videos/mod.mp4",
+            "size": 10,
+            "mtime_ns": 1,
+            "ctime_ns": 1,
+            "ext": "mp4",
+        },
+        "D:/Videos/gone.mp4": {
+            "file_id": 3,
+            "path": "D:/Videos/gone.mp4",
+            "size": 20,
+            "mtime_ns": 1,
+            "ctime_ns": 1,
+            "ext": "mp4",
+        },
+    }
+
+    result = pipeline.run_scan(
+        db=db,  # type: ignore[arg-type]
+        roots=["D:/Videos"],
+        extensions=["mp4"],
+        max_workers=1,
+        probe_backend="ffprobe",
+        probe_worker_mode="balanced",
+        db_batch_size=64,
+        db_flush_interval_ms=200,
+        enum_queue_max=512,
+        progress_emit_interval_ms=50,
+        progress_emit_every_files=1,
+    )
+
+    assert result.scanned_files == 3
+    assert result.cached_files == 1
+    assert result.fingerprinted_files == 2
+    assert analyze_calls == ["D:/Videos/mod.mp4", "D:/Videos/new.mp4"]
+    assert db.cloned_paths == ["D:/Videos/same.mp4"]
+    assert db.cloned_failed_paths == ["D:/Videos/same.mp4"]
+    assert result.metrics["incremental_base_scan_id"] == 12
+    assert result.metrics["incremental_unchanged_files"] == 1
+    assert result.metrics["incremental_modified_files"] == 1
+    assert result.metrics["incremental_new_files"] == 1
+    assert result.metrics["incremental_deleted_files"] == 1
+
+
+def test_run_scan_resume_does_not_use_incremental_baseline_cloning(monkeypatch) -> None:
+    files = [_video_with_stats("D:/Videos/same.mp4", lane=0, size=10, mtime_ns=1)]
+    analyze_calls: list[str] = []
+
+    monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda: None)
+    monkeypatch.setattr(
+        pipeline, "ensure_fingerprint_fallback_chain_available", lambda: None
+    )
+    monkeypatch.setattr(
+        pipeline, "enumerate_video_files", lambda **kwargs: (list(files), [])
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_physical_drive_scan_plan",
+        lambda roots, max_workers, drive_worker_overrides=None: _lane_plan_for_roots(
+            roots,
+            lane_worker_limits={0: 1},
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "find_duplicate_edges",
+        lambda items, profile, **kwargs: ([], MatchStats()),
+    )
+    monkeypatch.setattr(
+        pipeline, "build_duplicate_groups", lambda items, edges, profile: []
+    )
+
+    def _fake_analyze(path: str, cached_meta: object | None) -> pipeline._AnalyzeOutput:
+        analyze_calls.append(path)
+        return pipeline._AnalyzeOutput(meta=_analysis_meta(), hashes=[1, 2, 3])
+
+    monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)
+
+    db = _FakeDb()
+    scan_set_key = build_scan_set_key(
+        roots=["D:/Videos"],
+        similarity_profile="balanced",
+        extensions=["mp4"],
+    )
+    db.latest_completed_by_set[scan_set_key] = 12
+    db.scan_snapshots[12] = {
+        "D:/Videos/same.mp4": {
+            "file_id": 1,
+            "path": "D:/Videos/same.mp4",
+            "size": 10,
+            "mtime_ns": 1,
+            "ctime_ns": 1,
+            "ext": "mp4",
+        }
+    }
+
+    result = pipeline.run_scan(
+        db=db,  # type: ignore[arg-type]
+        roots=["D:/Videos"],
+        extensions=["mp4"],
+        max_workers=1,
+        probe_backend="ffprobe",
+        probe_worker_mode="balanced",
+        db_batch_size=64,
+        db_flush_interval_ms=200,
+        enum_queue_max=512,
+        progress_emit_interval_ms=50,
+        progress_emit_every_files=1,
+        resume_scan_id=55,
+    )
+
+    assert result.scan_id == 55
+    assert analyze_calls == ["D:/Videos/same.mp4"]
+    assert db.cloned_paths == []
+    assert db.cloned_failed_paths == []
+    assert result.metrics["incremental_base_scan_id"] is None

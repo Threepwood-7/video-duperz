@@ -28,9 +28,11 @@ from .models import (
     VideoMeta,
     VideoRecord,
 )
+from .scan_sets import build_scan_set_key
 
 if TYPE_CHECKING:
     from .db import Database
+    from .db_artifacts import ScanFileSnapshotRow
 
 _ScanPlanFn = Callable[..., Any]
 _EnumerateFn = Callable[
@@ -135,6 +137,9 @@ class ScanContext:
     present_paths: set[str]
     streamed_path_keys: set[str]
     failed_path_keys: set[str]
+    incremental_base_scan_id: int | None
+    incremental_baseline_snapshot: dict[str, ScanFileSnapshotRow]
+    incremental_seen_baseline_paths: set[str]
     pending_discovered: list[VideoRecord]
     pending_scan_links: list[ScanLinkRecord]
     pending_meta_rows: list[tuple[int, int, int, VideoMeta]]
@@ -152,6 +157,10 @@ class ScanContext:
     last_pending_write_at: float
     last_discovered_batch_at: float
     cached_files: int
+    incremental_unchanged_files: int
+    incremental_new_files: int
+    incremental_modified_files: int
+    incremental_deleted_files: int
     resume_cache_hits: int
     resume_reprocessed_files: int
     skipped_failed_files: int
@@ -359,6 +368,15 @@ def create_context(
     visual_algo_version = (
         SCENE_AWARE_ALGO_VERSION if scene_aware_sampling else ALGO_VERSION
     )
+    scan_set_key = build_scan_set_key(
+        roots=roots,
+        similarity_profile=profile,
+        extensions=extensions,
+        custom_similarity_threshold=custom_similarity_threshold,
+        scene_aware_sampling=scene_aware_sampling,
+        audio_fingerprint_enabled=audio_fingerprint_enabled,
+        cross_resolution_mode=cross_resolution_mode,
+    )
     if scan_id > 0:
         db.update_scan_definition(
             scan_id,
@@ -383,6 +401,14 @@ def create_context(
             cross_resolution_mode=cross_resolution_mode,
             probe_backend=probe_backend,
         )
+    incremental_base_scan_id = None
+    incremental_baseline_snapshot: dict[str, ScanFileSnapshotRow] = {}
+    if resume_scan_id is None:
+        incremental_base_scan_id = db.latest_completed_scan_id_for_set(scan_set_key)
+        if incremental_base_scan_id is not None:
+            incremental_baseline_snapshot = db.load_scan_file_snapshot(
+                incremental_base_scan_id
+            )
     db.delete_scan_links_for_scan(scan_id)
     scan_plan = build_scan_plan_fn(
         roots=roots,
@@ -451,6 +477,9 @@ def create_context(
         present_paths=set(),
         streamed_path_keys=set(),
         failed_path_keys=_load_failed_path_keys(db, scan_id),
+        incremental_base_scan_id=incremental_base_scan_id,
+        incremental_baseline_snapshot=incremental_baseline_snapshot,
+        incremental_seen_baseline_paths=set(),
         pending_discovered=[],
         pending_scan_links=[],
         pending_meta_rows=[],
@@ -468,6 +497,10 @@ def create_context(
         last_pending_write_at=started_at,
         last_discovered_batch_at=started_at,
         cached_files=0,
+        incremental_unchanged_files=0,
+        incremental_new_files=0,
+        incremental_modified_files=0,
+        incremental_deleted_files=0,
         resume_cache_hits=0,
         resume_reprocessed_files=0,
         skipped_failed_files=0,

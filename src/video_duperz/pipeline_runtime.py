@@ -412,8 +412,6 @@ def _process_discovered_batch(ctx: _ScanContext, batch: list[VideoRecord]) -> No
             *_video_record_sort_key(record),
         ),
     )
-    upsert_payload: list[dict[str, object]] = []
-    cache_payload: list[dict[str, object]] = []
     valid: list[tuple[VideoRecord, int, str, int, str]] = []
     for file in lane_sorted_batch:
         lane = int(getattr(file, "parallel_lane", 0))
@@ -434,23 +432,6 @@ def _process_discovered_batch(ctx: _ScanContext, batch: list[VideoRecord]) -> No
             prepared_now = ctx.prepared_files
             prepare_total = _prepare_total_locked(ctx)
         ctx.present_paths.add(path)
-        upsert_payload.append(
-            {
-                "path": path,
-                "size": file_size,
-                "mtime_ns": int(getattr(file, "mtime_ns", 0)),
-                "ctime_ns": int(getattr(file, "ctime_ns", 0)),
-                "ext": str(getattr(file, "ext", "")),
-                "scan_id": ctx.scan_id,
-            }
-        )
-        cache_payload.append(
-            {
-                "path": path,
-                "size": file_size,
-                "mtime_ns": int(getattr(file, "mtime_ns", 0)),
-            }
-        )
         valid.append((file, lane, source_root, file_size, path))
         emit_progress(
             ctx,
@@ -464,10 +445,120 @@ def _process_discovered_batch(ctx: _ScanContext, batch: list[VideoRecord]) -> No
     if not valid:
         return
 
+    valid.sort(
+        key=lambda item: (item[1], *_video_record_sort_key(item[0])),
+    )
+    analyze_valid: list[tuple[VideoRecord, int, str, int, str]] = list(valid)
+    if ctx.resume_scan_id is None and ctx.incremental_base_scan_id is not None:
+        unchanged_valid: list[tuple[VideoRecord, int, str, int, str]] = []
+        analyze_valid = []
+        seen_baseline_paths: set[str] = set()
+        new_files = 0
+        modified_files = 0
+        for entry in valid:
+            file, _lane, _source_root, file_size, path = entry
+            baseline_row = ctx.incremental_baseline_snapshot.get(path)
+            if baseline_row is None:
+                analyze_valid.append(entry)
+                new_files += 1
+                continue
+            seen_baseline_paths.add(path)
+            current_mtime_ns = int(getattr(file, "mtime_ns", 0))
+            if (
+                int(baseline_row["size"]) == file_size
+                and int(baseline_row["mtime_ns"]) == current_mtime_ns
+            ):
+                unchanged_valid.append(entry)
+                continue
+            analyze_valid.append(entry)
+            modified_files += 1
+        with ctx.state_lock:
+            ctx.incremental_seen_baseline_paths.update(seen_baseline_paths)
+            ctx.incremental_new_files += new_files
+            ctx.incremental_modified_files += modified_files
+        if unchanged_valid:
+            unchanged_paths = {entry[4] for entry in unchanged_valid}
+            cloned_by_path = _timed_db_write(
+                ctx,
+                ctx.db.clone_scan_files_with_artifacts,
+                len(unchanged_paths),
+                source_scan_id=ctx.incremental_base_scan_id,
+                target_scan_id=ctx.scan_id,
+                paths=unchanged_paths,
+                probe_backend=ctx.probe_backend,
+                algo_version=ctx.visual_algo_version,
+                include_audio_fingerprint=ctx.audio_fingerprint_enabled,
+            )
+            _timed_db_write(
+                ctx,
+                ctx.db.clone_failed_files_for_paths,
+                len(unchanged_paths),
+                source_scan_id=ctx.incremental_base_scan_id,
+                target_scan_id=ctx.scan_id,
+                paths=unchanged_paths,
+            )
+            for file, lane, source_root, _file_size, path in unchanged_valid:
+                cloned_file_id = int(cloned_by_path.get(path, 0))
+                if cloned_file_id <= 0:
+                    record_issue(
+                        ctx,
+                        ScanIssue(
+                            stage="prepare",
+                            path=path,
+                            message=(
+                                "Incremental carry-forward missed a cached row; "
+                                "falling back to full analysis."
+                            ),
+                        ),
+                    )
+                    analyze_valid.append((file, lane, source_root, _file_size, path))
+                    with ctx.state_lock:
+                        ctx.incremental_modified_files += 1
+                    continue
+                file.file_id = cloned_file_id
+                with ctx.state_lock:
+                    lane_state = ensure_lane_state_locked(ctx, lane, source_root)
+                    ctx.cached_files += 1
+                    ctx.incremental_unchanged_files += 1
+                    lane_state.cache_hits += 1
+                    lane_state.completed += 1
+                    completed_now, completed_total = _completed_total_locked(ctx)
+                    refresh_lane_state_locked(ctx, lane)
+                stage, message, work_kind = _cache_hit_progress_details(path)
+                emit_progress(
+                    ctx,
+                    stage,
+                    completed_now,
+                    completed_total,
+                    message,
+                    file_counter=completed_now,
+                    subject_path=path,
+                    work_kind=work_kind,
+                )
+
+    upsert_payload = [
+        {
+            "path": path,
+            "size": file_size,
+            "mtime_ns": int(getattr(file, "mtime_ns", 0)),
+            "ctime_ns": int(getattr(file, "ctime_ns", 0)),
+            "ext": str(getattr(file, "ext", "")),
+            "scan_id": ctx.scan_id,
+        }
+        for file, _lane, _source_root, file_size, path in analyze_valid
+    ]
+    cache_payload = [
+        {
+            "path": path,
+            "size": file_size,
+            "mtime_ns": int(getattr(file, "mtime_ns", 0)),
+        }
+        for file, _lane, _source_root, file_size, path in analyze_valid
+    ]
     by_path = _timed_db_write(
         ctx,
         ctx.db.upsert_files_batch,
-        len(valid),
+        len(analyze_valid),
         upsert_payload,
     )
     cache_by_path = ctx.db.load_cached_artifacts_batch(
@@ -476,10 +567,7 @@ def _process_discovered_batch(ctx: _ScanContext, batch: list[VideoRecord]) -> No
         include_audio_fingerprint=ctx.audio_fingerprint_enabled,
         probe_backend=ctx.probe_backend,
     )
-    valid.sort(
-        key=lambda item: (item[1], *_video_record_sort_key(item[0])),
-    )
-    for file, lane, source_root, file_size, path in valid:
+    for file, lane, source_root, file_size, path in analyze_valid:
         file_id = int(by_path.get(path, 0))
         if file_id <= 0:
             continue

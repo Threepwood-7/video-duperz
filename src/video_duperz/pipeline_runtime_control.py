@@ -54,6 +54,11 @@ def collect_metrics(ctx: _ScanContext, match_stats: MatchStats) -> dict[str, obj
         "avg_rows_per_flush": float(avg_rows_per_flush),
         "max_queue_depth": int(ctx.max_queue_depth),
         "resume_scan_id": ctx.resume_scan_id,
+        "incremental_base_scan_id": ctx.incremental_base_scan_id,
+        "incremental_unchanged_files": int(ctx.incremental_unchanged_files),
+        "incremental_new_files": int(ctx.incremental_new_files),
+        "incremental_modified_files": int(ctx.incremental_modified_files),
+        "incremental_deleted_files": int(ctx.incremental_deleted_files),
         "resume_cache_hits": int(ctx.resume_cache_hits),
         "resume_reprocessed_files": int(ctx.resume_reprocessed_files),
         "skipped_failed_files": int(ctx.skipped_failed_files),
@@ -251,6 +256,26 @@ def completed_result(
     Returns:
         Final scan result for the completed run.
     """
+    if ctx.incremental_base_scan_id is not None:
+        ctx.incremental_deleted_files = max(
+            0,
+            len(ctx.incremental_baseline_snapshot)
+            - len(ctx.incremental_seen_baseline_paths),
+        )
+        emit_progress(
+            ctx,
+            "prepare",
+            0,
+            1,
+            (
+                f"Incremental baseline #{ctx.incremental_base_scan_id}: "
+                f"unchanged {ctx.incremental_unchanged_files}, "
+                f"modified {ctx.incremental_modified_files}, "
+                f"new {ctx.incremental_new_files}, "
+                f"deleted {ctx.incremental_deleted_files}"
+            ),
+            force=True,
+        )
     timed_db_write(
         ctx.db.mark_missing_for_scan,
         len(ctx.present_paths),

@@ -9,7 +9,9 @@ from threading import Event
 
 import pytest
 
+from video_duperz import pipeline
 from video_duperz.db import Database
+from video_duperz.models import MatchStats, VideoMeta, VideoRecord
 from video_duperz.pipeline import run_scan
 
 
@@ -83,6 +85,38 @@ def _real_pause_subset(
     return (selected_files, roots, extensions)
 
 
+def _fake_lane_plan(roots: list[str]) -> object:
+    return type(
+        "_LanePlan",
+        (),
+        {
+            "root_groups": [list(roots)],
+            "root_to_group_index": dict.fromkeys(roots, 0),
+            "lane_worker_limits": {0: 1},
+            "effective_total_workers": 1,
+            "requested_worker_target": 1,
+            "issues": [],
+        },
+    )()
+
+
+def _fake_meta() -> VideoMeta:
+    return VideoMeta(
+        duration_s=3.0,
+        width=320,
+        height=240,
+        fps=24.0,
+        codec="h264",
+        bitrate=1000,
+        has_audio=True,
+        audio_codec="aac",
+        audio_bitrate=128000,
+        audio_languages="eng",
+        subtitle_languages="",
+        hdr_format="",
+    )
+
+
 @pytest.mark.skipif(not _tools_available(), reason="ffmpeg/ffprobe not available")
 def test_pipeline_detects_reencoded_duplicates(tmp_path: Path) -> None:
     base = tmp_path / "base.mp4"
@@ -138,6 +172,175 @@ def test_pipeline_detects_reencoded_duplicates(tmp_path: Path) -> None:
         path_groups = [{item.path for item in g.items} for g in result.groups]
         assert any(str(base) in g and str(copy) in g for g in path_groups)
         assert any(str(reenc) in g for g in path_groups)
+
+
+def test_pipeline_incremental_rescan_reuses_completed_baseline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "library"
+    root.mkdir()
+    first_scan_files = [
+        VideoRecord(
+            path=str(root / "same.mp4"),
+            size=10,
+            mtime_ns=1,
+            ctime_ns=1,
+            ext="mp4",
+            scan_id=0,
+            source_root=str(root),
+            parallel_lane=0,
+        ),
+        VideoRecord(
+            path=str(root / "mod.mp4"),
+            size=20,
+            mtime_ns=1,
+            ctime_ns=1,
+            ext="mp4",
+            scan_id=0,
+            source_root=str(root),
+            parallel_lane=0,
+        ),
+        VideoRecord(
+            path=str(root / "gone.mp4"),
+            size=30,
+            mtime_ns=1,
+            ctime_ns=1,
+            ext="mp4",
+            scan_id=0,
+            source_root=str(root),
+            parallel_lane=0,
+        ),
+    ]
+    second_scan_files = [
+        VideoRecord(
+            path=str(root / "same.mp4"),
+            size=10,
+            mtime_ns=1,
+            ctime_ns=1,
+            ext="mp4",
+            scan_id=0,
+            source_root=str(root),
+            parallel_lane=0,
+        ),
+        VideoRecord(
+            path=str(root / "mod.mp4"),
+            size=20,
+            mtime_ns=2,
+            ctime_ns=2,
+            ext="mp4",
+            scan_id=0,
+            source_root=str(root),
+            parallel_lane=0,
+        ),
+        VideoRecord(
+            path=str(root / "new.mp4"),
+            size=40,
+            mtime_ns=3,
+            ctime_ns=3,
+            ext="mp4",
+            scan_id=0,
+            source_root=str(root),
+            parallel_lane=0,
+        ),
+    ]
+    enumerate_round = 0
+    analyze_calls: list[str] = []
+
+    monkeypatch.setattr(pipeline, "ensure_ffprobe_available", lambda *args: None)
+    monkeypatch.setattr(
+        pipeline, "ensure_fingerprint_fallback_chain_available", lambda *args: None
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "build_physical_drive_scan_plan",
+        lambda roots, max_workers, drive_worker_overrides=None: _fake_lane_plan(roots),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "find_duplicate_edges",
+        lambda items, profile, **kwargs: ([], MatchStats()),
+    )
+    monkeypatch.setattr(
+        pipeline, "build_duplicate_groups", lambda items, edges, profile: []
+    )
+
+    def _fake_enumerate(**kwargs: object) -> tuple[list[VideoRecord], list[object]]:
+        nonlocal enumerate_round
+        enumerate_round += 1
+        emitted = first_scan_files if enumerate_round == 1 else second_scan_files
+        on_file_discovered = kwargs.get("on_file_discovered")
+        assert callable(on_file_discovered)
+        for item in emitted:
+            on_file_discovered(item)
+        return (list(emitted), [])
+
+    def _fake_analyze(path: str, cached_meta: object | None) -> pipeline._AnalyzeOutput:
+        _ = cached_meta
+        analyze_calls.append(path)
+        return pipeline._AnalyzeOutput(meta=_fake_meta(), hashes=[1, 2, 3])
+
+    monkeypatch.setattr(pipeline, "enumerate_video_files", _fake_enumerate)
+    monkeypatch.setattr(pipeline, "_analyze_file", _fake_analyze)
+
+    with Database(tmp_path / "incremental.db") as db:
+        first = run_scan(
+            db=db,
+            roots=[str(root)],
+            extensions=["mp4"],
+            scan_size_mib_min=0,
+            profile="balanced",
+            probe_backend="ffprobe",
+            db_batch_size=64,
+            db_flush_interval_ms=50,
+            enum_queue_max=512,
+            progress_emit_interval_ms=50,
+            progress_emit_every_files=1,
+        )
+        assert first.scan_id > 0
+        assert set(analyze_calls) == {
+            str(root / "same.mp4"),
+            str(root / "mod.mp4"),
+            str(root / "gone.mp4"),
+        }
+
+        analyze_calls.clear()
+        second = run_scan(
+            db=db,
+            roots=[str(root)],
+            extensions=["mp4"],
+            scan_size_mib_min=0,
+            profile="balanced",
+            probe_backend="ffprobe",
+            db_batch_size=64,
+            db_flush_interval_ms=50,
+            enum_queue_max=512,
+            progress_emit_interval_ms=50,
+            progress_emit_every_files=1,
+        )
+
+        assert second.scan_id > first.scan_id
+        assert second.cached_files == 1
+        assert second.fingerprinted_files == 2
+        assert analyze_calls == [str(root / "mod.mp4"), str(root / "new.mp4")]
+        assert second.metrics["incremental_base_scan_id"] == first.scan_id
+        assert second.metrics["incremental_unchanged_files"] == 1
+        assert second.metrics["incremental_modified_files"] == 1
+        assert second.metrics["incremental_new_files"] == 1
+        assert second.metrics["incremental_deleted_files"] == 1
+
+        first_snapshot = db.load_scan_file_snapshot(first.scan_id)
+        second_snapshot = db.load_scan_file_snapshot(second.scan_id)
+        assert set(first_snapshot) == {
+            str(root / "same.mp4"),
+            str(root / "mod.mp4"),
+            str(root / "gone.mp4"),
+        }
+        assert set(second_snapshot) == {
+            str(root / "same.mp4"),
+            str(root / "mod.mp4"),
+            str(root / "new.mp4"),
+        }
 
 
 @pytest.mark.skipif(not _tools_available(), reason="ffmpeg/ffprobe not available")
