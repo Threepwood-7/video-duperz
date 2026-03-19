@@ -23,6 +23,8 @@ from .models import (
 )
 from .scan_sets import (
     build_scan_set_key,
+    normalize_cross_resolution_mode,
+    normalize_custom_similarity_threshold,
     normalize_extensions,
     normalize_roots_for_display,
     normalize_similarity_profile,
@@ -50,6 +52,8 @@ class CachedArtifacts(TypedDict, total=False):
     meta_probed_at: str
     fingerprint: CachedFingerprintPayload
     fingerprint_created_at: str
+    audio_fingerprint: str
+    audio_fingerprint_created_at: str
 
 
 class FailedFileRow(TypedDict):
@@ -92,6 +96,10 @@ class DatabaseArtifactMixin:
         profile: str,
         roots: list[str],
         extensions: list[str] | None = None,
+        custom_similarity_threshold: float = 0.18,
+        scene_aware_sampling: bool = False,
+        audio_fingerprint_enabled: bool = False,
+        cross_resolution_mode: str = "off",
         probe_backend: ProbeBackendId = "pyav",
     ) -> int:
         """Insert a new scan row and return its id."""
@@ -102,20 +110,30 @@ class DatabaseArtifactMixin:
             roots=normalized_roots,
             similarity_profile=normalized_profile,
             extensions=normalized_extensions,
+            custom_similarity_threshold=custom_similarity_threshold,
+            scene_aware_sampling=scene_aware_sampling,
+            audio_fingerprint_enabled=audio_fingerprint_enabled,
+            cross_resolution_mode=cross_resolution_mode,
         )
         cursor = self.conn.execute(
             """
             INSERT INTO scans(
               created_at, profile, roots_json, extensions_json,
+              custom_similarity_threshold, scene_aware_sampling,
+              audio_fingerprint_enabled, cross_resolution_mode,
               probe_backend, scan_set_key, status
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 utc_now_iso(),
                 normalized_profile,
                 json.dumps(normalized_roots),
                 json.dumps(normalized_extensions),
+                normalize_custom_similarity_threshold(custom_similarity_threshold),
+                1 if scene_aware_sampling else 0,
+                1 if audio_fingerprint_enabled else 0,
+                normalize_cross_resolution_mode(cross_resolution_mode),
                 str(probe_backend),
                 scan_set_key,
                 "running",
@@ -136,6 +154,10 @@ class DatabaseArtifactMixin:
         profile: str,
         roots: list[str],
         extensions: list[str] | None = None,
+        custom_similarity_threshold: float = 0.18,
+        scene_aware_sampling: bool = False,
+        audio_fingerprint_enabled: bool = False,
+        cross_resolution_mode: str = "off",
         probe_backend: ProbeBackendId = "pyav",
         status: str | None = None,
     ) -> None:
@@ -147,12 +169,18 @@ class DatabaseArtifactMixin:
             roots=normalized_roots,
             similarity_profile=normalized_profile,
             extensions=normalized_extensions,
+            custom_similarity_threshold=custom_similarity_threshold,
+            scene_aware_sampling=scene_aware_sampling,
+            audio_fingerprint_enabled=audio_fingerprint_enabled,
+            cross_resolution_mode=cross_resolution_mode,
         )
         if status is None:
             self.conn.execute(
                 """
                 UPDATE scans
                 SET profile = ?, roots_json = ?, extensions_json = ?,
+                    custom_similarity_threshold = ?, scene_aware_sampling = ?,
+                    audio_fingerprint_enabled = ?, cross_resolution_mode = ?,
                     probe_backend = ?, scan_set_key = ?
                 WHERE id = ?
                 """,
@@ -160,6 +188,10 @@ class DatabaseArtifactMixin:
                     normalized_profile,
                     json.dumps(normalized_roots),
                     json.dumps(normalized_extensions),
+                    normalize_custom_similarity_threshold(custom_similarity_threshold),
+                    1 if scene_aware_sampling else 0,
+                    1 if audio_fingerprint_enabled else 0,
+                    normalize_cross_resolution_mode(cross_resolution_mode),
                     str(probe_backend),
                     scan_set_key,
                     scan_id,
@@ -170,6 +202,8 @@ class DatabaseArtifactMixin:
                 """
                 UPDATE scans
                 SET profile = ?, roots_json = ?, extensions_json = ?,
+                    custom_similarity_threshold = ?, scene_aware_sampling = ?,
+                    audio_fingerprint_enabled = ?, cross_resolution_mode = ?,
                     probe_backend = ?, scan_set_key = ?, status = ?
                 WHERE id = ?
                 """,
@@ -177,6 +211,10 @@ class DatabaseArtifactMixin:
                     normalized_profile,
                     json.dumps(normalized_roots),
                     json.dumps(normalized_extensions),
+                    normalize_custom_similarity_threshold(custom_similarity_threshold),
+                    1 if scene_aware_sampling else 0,
+                    1 if audio_fingerprint_enabled else 0,
+                    normalize_cross_resolution_mode(cross_resolution_mode),
                     str(probe_backend),
                     scan_set_key,
                     str(status),
@@ -507,6 +545,15 @@ class DatabaseArtifactMixin:
                 "created_at": str(row["created_at"] or ""),
             }
             out["fingerprint_created_at"] = str(row["created_at"] or "")
+        if (
+            row["audio_fingerprint_text"] is not None
+            and int(row["audio_source_size"] or 0) == int(row["size"])
+            and int(row["audio_source_mtime_ns"] or 0) == int(row["mtime_ns"])
+        ):
+            out["audio_fingerprint"] = str(row["audio_fingerprint_text"] or "")
+            out["audio_fingerprint_created_at"] = str(
+                row["audio_created_at"] or ""
+            )
         return out
 
     def get_cached_artifacts(
@@ -514,11 +561,16 @@ class DatabaseArtifactMixin:
         path: str,
         size: int,
         mtime_ns: int,
+        *,
+        algo_version: int = 1,
+        include_audio_fingerprint: bool = False,
         probe_backend: ProbeBackendId = "pyav",
     ) -> CachedArtifacts | None:
         """Load cached artifacts for one file stat tuple."""
         cached = self.load_cached_artifacts_batch(
             [{"path": path, "size": int(size), "mtime_ns": int(mtime_ns)}],
+            algo_version=algo_version,
+            include_audio_fingerprint=include_audio_fingerprint,
             probe_backend=probe_backend,
         )
         return cached.get(path)
@@ -526,6 +578,9 @@ class DatabaseArtifactMixin:
     def load_cached_artifacts_batch(
         self,
         files: Sequence[Mapping[str, object]],
+        *,
+        algo_version: int,
+        include_audio_fingerprint: bool = False,
         probe_backend: ProbeBackendId = "pyav",
     ) -> dict[str, CachedArtifacts]:
         """Load cached metadata and fingerprints for matching file stat tuples."""
@@ -559,15 +614,22 @@ class DatabaseArtifactMixin:
                        vm.is_hdr,
                        fp.source_size AS fp_source_size,
                        fp.source_mtime_ns AS fp_source_mtime_ns,
-                       fp.algo_version, fp.frame_count, fp.hash_blob, fp.created_at
+                       fp.algo_version, fp.frame_count, fp.hash_blob, fp.created_at,
+                       af.source_size AS audio_source_size,
+                       af.source_mtime_ns AS audio_source_mtime_ns,
+                       af.fingerprint_text AS audio_fingerprint_text,
+                       af.created_at AS audio_created_at
                 FROM files f
                 LEFT JOIN video_meta vm
                   ON vm.file_id = f.id AND vm.probe_backend = ?
                 LEFT JOIN fingerprints fp
                   ON fp.file_id = f.id AND fp.probe_backend = ?
+                 AND fp.algo_version = ?
+                LEFT JOIN audio_fingerprints af
+                  ON af.file_id = f.id
                 WHERE f.path IN ({placeholders}) AND f.exists_flag = 1
                 """,
-                (str(probe_backend), str(probe_backend), *chunk),
+                (str(probe_backend), str(probe_backend), int(algo_version), *chunk),
             ).fetchall()
             for row in rows:
                 path = str(row["path"])
@@ -580,6 +642,9 @@ class DatabaseArtifactMixin:
                 ):
                     continue
                 artifacts = self._row_to_cached_artifacts(cast("sqlite3.Row", row))
+                if not include_audio_fingerprint:
+                    artifacts.pop("audio_fingerprint", None)
+                    artifacts.pop("audio_fingerprint_created_at", None)
                 if len(artifacts) <= 1:
                     continue
                 out[path] = artifacts
@@ -789,10 +854,9 @@ class DatabaseArtifactMixin:
               algo_version, frame_count, hash_blob, created_at
             )
             VALUES(?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(file_id, probe_backend) DO UPDATE SET
+            ON CONFLICT(file_id, probe_backend, algo_version) DO UPDATE SET
               source_size = excluded.source_size,
               source_mtime_ns = excluded.source_mtime_ns,
-              algo_version = excluded.algo_version,
               frame_count = excluded.frame_count,
               hash_blob = excluded.hash_blob,
               created_at = excluded.created_at
@@ -803,7 +867,7 @@ class DatabaseArtifactMixin:
 
     def save_fingerprint_provenance_batch(
         self,
-        rows: list[tuple[int, FrameDecodeBackendId, str]],
+        rows: list[tuple[int, int, FrameDecodeBackendId, str]],
         *,
         probe_backend: ProbeBackendId = "pyav",
     ) -> None:
@@ -815,21 +879,57 @@ class DatabaseArtifactMixin:
             (
                 int(file_id),
                 str(probe_backend),
+                int(algo_version),
                 str(decoder_backend),
                 str(attempts_json),
                 created_at,
             )
-            for file_id, decoder_backend, attempts_json in rows
+            for file_id, algo_version, decoder_backend, attempts_json in rows
         ]
         self.conn.executemany(
             """
             INSERT INTO fingerprint_decoder_provenance(
-              file_id, probe_backend, decoder_backend, attempts_json, created_at
+              file_id, probe_backend, algo_version, decoder_backend,
+              attempts_json, created_at
             )
-            VALUES(?, ?, ?, ?, ?)
-            ON CONFLICT(file_id, probe_backend) DO UPDATE SET
+            VALUES(?, ?, ?, ?, ?, ?)
+            ON CONFLICT(file_id, probe_backend, algo_version) DO UPDATE SET
               decoder_backend = excluded.decoder_backend,
               attempts_json = excluded.attempts_json,
+              created_at = excluded.created_at
+            """,
+            payload,
+        )
+        self._commit_if_needed()
+
+    def save_audio_fingerprints_batch(
+        self,
+        rows: list[tuple[int, int, int, str]],
+    ) -> None:
+        """Persist multiple audio-fingerprint rows."""
+        if not rows:
+            return
+        created_at = utc_now_iso()
+        payload = [
+            (
+                int(file_id),
+                int(source_size),
+                int(source_mtime_ns),
+                str(fingerprint_text),
+                created_at,
+            )
+            for file_id, source_size, source_mtime_ns, fingerprint_text in rows
+        ]
+        self.conn.executemany(
+            """
+            INSERT INTO audio_fingerprints(
+              file_id, source_size, source_mtime_ns, fingerprint_text, created_at
+            )
+            VALUES(?, ?, ?, ?, ?)
+            ON CONFLICT(file_id) DO UPDATE SET
+              source_size = excluded.source_size,
+              source_mtime_ns = excluded.source_mtime_ns,
+              fingerprint_text = excluded.fingerprint_text,
               created_at = excluded.created_at
             """,
             payload,

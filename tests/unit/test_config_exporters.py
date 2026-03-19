@@ -45,7 +45,11 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     settings.thumbnail_size = "128x72"
     settings.scan_size_mib_min = 75
     settings.scan_size_mib_max = 640
+    settings.custom_similarity_threshold = 0.21
     settings.duration_tolerance_s = 9.5
+    settings.scene_aware_sampling = True
+    settings.audio_fingerprint_enabled = True
+    settings.cross_resolution_mode = "same_aspect"
     settings.thumbnail_frame_a_pct = 25
     settings.thumbnail_frame_b_pct = 75
     settings.identical_block_mib = 4
@@ -62,6 +66,7 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     settings.probe_worker_mode = "burst"
     settings.ffmpeg_exe_path = "~/bin/ffmpeg.exe"
     settings.ffprobe_exe_path = "~/bin/ffprobe.exe"
+    settings.fpcalc_exe_path = "~/bin/fpcalc.exe"
     settings.mediainfo_exe_path = "~/bin/mediainfo.exe"
     settings.everything_exe_path = "~/bin/Everything.exe"
     settings.custom_command_f2 = '"C:/Tools/F2 Runner.exe" --flag'
@@ -78,10 +83,14 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     settings.scan_progress_emit_every_files = 300
     settings.saved_scan_profiles = {
         "My Set": SavedScanProfilePayload(
-            scan_set_key='{"extensions":["mp4"],"roots":["d:/videos"],"similarity_profile":"balanced"}',
+            scan_set_key='{"audio_fingerprint_enabled":true,"cross_resolution_mode":"same_aspect","custom_similarity_threshold":0.21,"extensions":["mp4"],"roots":["d:/videos"],"scene_aware_sampling":true,"similarity_profile":"custom"}',
             roots=["D:/Videos"],
-            similarity_profile="balanced",
+            similarity_profile="custom",
             extensions=["mp4"],
+            custom_similarity_threshold=0.21,
+            scene_aware_sampling=True,
+            audio_fingerprint_enabled=True,
+            cross_resolution_mode="same_aspect",
             updated_at="2026-01-01T12:00:00+00:00",
         )
     }
@@ -93,7 +102,11 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     assert loaded.thumbnail_size == "128x72"
     assert loaded.scan_size_mib_min == 75
     assert loaded.scan_size_mib_max == 640
+    assert loaded.custom_similarity_threshold == 0.21
     assert loaded.duration_tolerance_s == 9.5
+    assert loaded.scene_aware_sampling is True
+    assert loaded.audio_fingerprint_enabled is True
+    assert loaded.cross_resolution_mode == "same_aspect"
     assert loaded.thumbnail_frame_a_pct == 25
     assert loaded.thumbnail_frame_b_pct == 75
     assert loaded.identical_block_mib == 4
@@ -111,6 +124,7 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     assert loaded.probe_worker_mode == "burst"
     assert loaded.ffmpeg_exe_path == str(Path("~/bin/ffmpeg.exe").expanduser())
     assert loaded.ffprobe_exe_path == str(Path("~/bin/ffprobe.exe").expanduser())
+    assert loaded.fpcalc_exe_path == str(Path("~/bin/fpcalc.exe").expanduser())
     assert loaded.mediainfo_exe_path == str(Path("~/bin/mediainfo.exe").expanduser())
     assert loaded.everything_exe_path == str(Path("~/bin/Everything.exe").expanduser())
     assert loaded.custom_command_f2 == '"C:/Tools/F2 Runner.exe" --flag'
@@ -127,6 +141,14 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     assert loaded.scan_progress_emit_every_files == 300
     assert "My Set" in loaded.saved_scan_profiles
     assert loaded.saved_scan_profiles["My Set"].roots == [str(Path("D:/Videos"))]
+    assert loaded.saved_scan_profiles["My Set"].similarity_profile == "custom"
+    assert loaded.saved_scan_profiles["My Set"].custom_similarity_threshold == 0.21
+    assert loaded.saved_scan_profiles["My Set"].scene_aware_sampling is True
+    assert loaded.saved_scan_profiles["My Set"].audio_fingerprint_enabled is True
+    assert (
+        loaded.saved_scan_profiles["My Set"].cross_resolution_mode
+        == "same_aspect"
+    )
 
 
 def test_settings_path_uses_app_name_ini_under_appdata(
@@ -186,6 +208,25 @@ def test_settings_duration_tolerance_is_clamped(tmp_path: Path, monkeypatch) -> 
     _set_qsettings_value(path, "duration_tolerance_s", -5.0)
     loaded_low = load_settings()
     assert loaded_low.duration_tolerance_s == 0.0
+
+
+def test_settings_custom_similarity_threshold_is_clamped(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    settings = default_settings()
+    save_settings(settings)
+
+    path = settings_path()
+    _set_qsettings_value(path, "custom_similarity_threshold", 9.0)
+    loaded_high = load_settings()
+    assert loaded_high.custom_similarity_threshold == 0.30
+
+    _set_qsettings_value(path, "custom_similarity_threshold", -1.0)
+    loaded_low = load_settings()
+    assert loaded_low.custom_similarity_threshold == 0.01
 
 
 def test_settings_recent_roots_are_normalized(tmp_path: Path, monkeypatch) -> None:

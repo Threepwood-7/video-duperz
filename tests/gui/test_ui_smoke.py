@@ -24,11 +24,14 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
+    QGridLayout,
     QGroupBox,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSlider,
     QSpinBox,
     QTableWidget,
     QWidget,
@@ -95,6 +98,8 @@ def _dup_item(
     duration_s: float = 1.0,
     codec: str = "h264",
     is_hdr: bool = False,
+    match_reason: str = "perceptual",
+    match_duration_delta_s: float = 0.0,
 ) -> DuplicateItem:
     return DuplicateItem(
         file_id=file_id,
@@ -114,6 +119,8 @@ def _dup_item(
         is_hdr=is_hdr,
         similarity_score=sim,
         keep_default=file_id % 2 == 1,
+        match_reason=match_reason,
+        match_duration_delta_s=match_duration_delta_s,
         selected_action="keep",
     )
 
@@ -464,7 +471,15 @@ def test_main_window_launches_with_new_results_table(tmp_path: Path) -> None:
             profile="balanced",
             created_at="now",
             items=[
-                _dup_item(11, str(tmp_path / "missing.mp4"), 320, 240, 1000, 1.0),
+                _dup_item(
+                    11,
+                    str(tmp_path / "missing.mp4"),
+                    320,
+                    240,
+                    1000,
+                    1.0,
+                    match_reason="audio_match",
+                ),
                 _dup_item(
                     12,
                     str(tmp_path / "missing_copy.mp4"),
@@ -483,8 +498,9 @@ def test_main_window_launches_with_new_results_table(tmp_path: Path) -> None:
         window.results_view.load_groups([group])
         app.processEvents()
         initial_height = window.results_view.results_table.rowHeight(0)
-        assert (
-            window.results_view.results_table.item(0, COL_MATCH).text() == "Perceptual"
+        assert window.results_view.results_table.item(0, COL_MATCH).text() == "Audio"
+        assert "Audio fingerprint rescue match" in (
+            window.results_view.results_table.item(0, COL_MATCH).toolTip()
         )
         assert window.results_view.results_table.item(1, COL_MATCH).text() == "Trimmed"
         assert "Delta t 5.0s" in (
@@ -557,6 +573,24 @@ def test_sources_root_buttons_labels_order_and_state(tmp_path: Path) -> None:
         assert "Child I/O mode during scan" in performance_labels
         assert "ffmpeg executable override" in tools_labels
         assert "Thumbnail preview size" in tools_labels
+        content_form_table = window.findChild(
+            QWidget,
+            "sources_scan_content_form_table",
+        )
+        performance_form_table = window.findChild(
+            QWidget,
+            "sources_scan_performance_form_table",
+        )
+        tools_form_table = window.findChild(
+            QWidget,
+            "sources_tool_paths_form_table",
+        )
+        assert content_form_table is not None
+        assert performance_form_table is not None
+        assert tools_form_table is not None
+        assert isinstance(content_form_table.layout(), QGridLayout)
+        assert isinstance(performance_form_table.layout(), QGridLayout)
+        assert isinstance(tools_form_table.layout(), QGridLayout)
 
         scan_folders_layout = scan_folders_group.layout()
         assert scan_folders_layout is not None
@@ -610,7 +644,8 @@ def test_sources_tab_scan_shortcut_button_opens_scan_tab(tmp_path: Path) -> None
         scan_button = window.findChild(QPushButton, "sources_scan_btn")
         assert scan_button is window.sources_scan_btn
         assert scan_button.text() == "Scan"
-        assert window.roots_list.minimumHeight() >= 220
+        assert window.roots_list.minimumHeight() == 250
+        assert window.roots_list.maximumHeight() > 250
 
         window.tabs.setCurrentWidget(window.sources_tab)
         app.processEvents()
@@ -754,6 +789,89 @@ def test_sources_tab_duration_tolerance_exists_and_persists(
 
     loaded = load_settings()
     assert loaded.duration_tolerance_s == 9.5
+
+
+def test_sources_tab_duplicate_detection_controls_exist_and_persist(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        assert window.profile_combo.findText("custom") >= 0
+        assert isinstance(
+            window.findChild(
+                QDoubleSpinBox,
+                "sources_custom_similarity_threshold_spin",
+            ),
+            QDoubleSpinBox,
+        )
+        assert isinstance(
+            window.findChild(
+                QSlider,
+                "sources_custom_similarity_threshold_slider",
+            ),
+            QSlider,
+        )
+        assert isinstance(
+            window.findChild(
+                QCheckBox,
+                "sources_scene_aware_sampling_check",
+            ),
+            QCheckBox,
+        )
+        assert isinstance(
+            window.findChild(
+                QCheckBox,
+                "sources_audio_fingerprint_enabled_check",
+            ),
+            QCheckBox,
+        )
+        assert isinstance(
+            window.findChild(
+                QComboBox,
+                "sources_cross_resolution_mode_combo",
+            ),
+            QComboBox,
+        )
+        assert isinstance(
+            window.findChild(
+                QLineEdit,
+                "sources_fpcalc_exe_path_edit",
+            ),
+            QLineEdit,
+        )
+        assert not window.custom_similarity_threshold_row.isVisible()
+
+        window.profile_combo.setCurrentText("custom")
+        app.processEvents()
+        assert window.custom_similarity_threshold_row.isVisible()
+        window.custom_similarity_threshold_spin.setValue(0.22)
+        window.scene_aware_sampling_check.setChecked(True)
+        window.audio_fingerprint_enabled_check.setChecked(True)
+        for index in range(window.cross_resolution_mode_combo.count()):
+            if str(window.cross_resolution_mode_combo.itemData(index)) == "same_aspect":
+                window.cross_resolution_mode_combo.setCurrentIndex(index)
+                break
+        window.fpcalc_exe_path_edit.setText(str(tmp_path / "tools" / "fpcalc.exe"))
+        window._persist_settings()
+        window.close()
+
+    loaded = load_settings()
+    assert loaded.similarity_profile == "custom"
+    assert loaded.custom_similarity_threshold == 0.22
+    assert loaded.scene_aware_sampling is True
+    assert loaded.audio_fingerprint_enabled is True
+    assert loaded.cross_resolution_mode == "same_aspect"
+    assert loaded.fpcalc_exe_path == str(tmp_path / "tools" / "fpcalc.exe")
 
 
 def test_results_column_widths_persist(tmp_path: Path, monkeypatch) -> None:
@@ -2699,7 +2817,15 @@ def test_saved_scan_profiles_save_load_and_delete(tmp_path: Path, monkeypatch) -
     app = QApplication.instance() or QApplication([])
     with Database(tmp_path / "app.db") as db:
         roots = [str(tmp_path / "library")]
-        scan_id = db.create_scan(profile="balanced", roots=roots, extensions=["mp4"])
+        scan_id = db.create_scan(
+            profile="custom",
+            roots=roots,
+            extensions=["mp4"],
+            custom_similarity_threshold=0.23,
+            scene_aware_sampling=True,
+            audio_fingerprint_enabled=True,
+            cross_resolution_mode="same_aspect",
+        )
         file_a = db.upsert_file(
             path=str(tmp_path / "library" / "a.mp4"),
             size=111,
@@ -2782,13 +2908,25 @@ def test_saved_scan_profiles_save_load_and_delete(tmp_path: Path, monkeypatch) -
         settings = default_settings()
         settings.scan_roots = roots
         settings.extensions = ["mp4"]
-        settings.similarity_profile = "balanced"
+        settings.similarity_profile = "custom"
+        settings.custom_similarity_threshold = 0.23
+        settings.scene_aware_sampling = True
+        settings.audio_fingerprint_enabled = True
+        settings.cross_resolution_mode = "same_aspect"
         window = MainWindow(db=db, settings=settings)
         window.show()
         app.processEvents()
 
         assert window.save_scan_set_btn.text() == "Save Scan Set"
         assert window.load_saved_scan_btn.text() == "Load Saved Scan"
+        window.profile_combo.setCurrentText("custom")
+        window.custom_similarity_threshold_spin.setValue(0.23)
+        window.scene_aware_sampling_check.setChecked(True)
+        window.audio_fingerprint_enabled_check.setChecked(True)
+        for index in range(window.cross_resolution_mode_combo.count()):
+            if str(window.cross_resolution_mode_combo.itemData(index)) == "same_aspect":
+                window.cross_resolution_mode_combo.setCurrentIndex(index)
+                break
 
         monkeypatch.setattr(
             "video_duperz.ui.main_window_profiles.QInputDialog.getText",
@@ -2799,6 +2937,11 @@ def test_saved_scan_profiles_save_load_and_delete(tmp_path: Path, monkeypatch) -
         assert "My Library" in window._saved_scan_profiles
 
         payload = window._saved_scan_profiles["My Library"]
+        assert payload.similarity_profile == "custom"
+        assert payload.custom_similarity_threshold == pytest.approx(0.23)
+        assert payload.scene_aware_sampling is True
+        assert payload.audio_fingerprint_enabled is True
+        assert payload.cross_resolution_mode == "same_aspect"
         window._load_saved_scan_profile(payload, "My Library")
         app.processEvents()
         assert window.current_scan_id == scan_id
@@ -2808,7 +2951,13 @@ def test_saved_scan_profiles_save_load_and_delete(tmp_path: Path, monkeypatch) -
             window.roots_list.item(i).text() for i in range(window.roots_list.count())
         ]
         assert roots_in_widget == roots
-        assert window.profile_combo.currentText() == "balanced"
+        assert window.profile_combo.currentText() == "custom"
+        assert window.custom_similarity_threshold_spin.value() == pytest.approx(0.23)
+        assert window.scene_aware_sampling_check.isChecked() is True
+        assert window.audio_fingerprint_enabled_check.isChecked() is True
+        assert (
+            str(window.cross_resolution_mode_combo.currentData()) == "same_aspect"
+        )
         assert window.extensions_edit.text() == "mp4"
         assert (
             "filesystem may have changed"
@@ -2931,8 +3080,12 @@ def test_load_saved_scan_profile_cancelled_latest_routes_to_sources(
         payload = SavedScanProfilePayload(
             scan_set_key="",
             roots=roots,
-            similarity_profile="balanced",
+            similarity_profile="custom",
             extensions=["mp4"],
+            custom_similarity_threshold=0.24,
+            scene_aware_sampling=True,
+            audio_fingerprint_enabled=True,
+            cross_resolution_mode="same_aspect",
         )
         window._load_saved_scan_profile(payload, "Cancelled Profile")
         app.processEvents()
@@ -2953,9 +3106,13 @@ def test_load_saved_scan_profile_paused_loads_scan_tab_and_issues(
     with Database(tmp_path / "app.db") as db:
         roots = [str(tmp_path / "library")]
         paused_id = db.create_scan(
-            profile="balanced",
+            profile="custom",
             roots=roots,
             extensions=["mp4"],
+            custom_similarity_threshold=0.24,
+            scene_aware_sampling=True,
+            audio_fingerprint_enabled=True,
+            cross_resolution_mode="same_aspect",
             probe_backend="ffprobe",
         )
         db.insert_scan_issue(
@@ -2985,8 +3142,12 @@ def test_load_saved_scan_profile_paused_loads_scan_tab_and_issues(
         payload = SavedScanProfilePayload(
             scan_set_key="",
             roots=roots,
-            similarity_profile="balanced",
+            similarity_profile="custom",
             extensions=["mp4"],
+            custom_similarity_threshold=0.24,
+            scene_aware_sampling=True,
+            audio_fingerprint_enabled=True,
+            cross_resolution_mode="same_aspect",
         )
         window._load_saved_scan_profile(payload, "Paused Profile")
         app.processEvents()
@@ -3045,6 +3206,11 @@ def test_resume_scan_passes_retry_failed_checkbox_state(
             scan_info=scan_info,
         )
         app.processEvents()
+        assert window.profile_combo.currentText() == "custom"
+        assert window.custom_similarity_threshold_spin.value() == pytest.approx(0.24)
+        assert window.scene_aware_sampling_check.isChecked() is True
+        assert window.audio_fingerprint_enabled_check.isChecked() is True
+        assert str(window.cross_resolution_mode_combo.currentData()) == "same_aspect"
         window.scan_view.retry_failed_checkbox.setChecked(False)
 
         captured: dict[str, object] = {}
@@ -3629,7 +3795,20 @@ def test_sources_tab_grouped_layout_has_detailed_tooltips(tmp_path: Path) -> Non
         assert "current scan roots map to local physical drives" in (
             window.sources_drive_summary_label.toolTip().lower()
         )
-        assert window.sources_drive_table.minimumHeight() >= 280
+        assert window.sources_drive_table.minimumHeight() == 250
+        assert window.sources_drive_table.maximumHeight() > 250
+        content_form_table = window.findChild(QWidget, "sources_scan_content_form_table")
+        performance_form_table = window.findChild(
+            QWidget,
+            "sources_scan_performance_form_table",
+        )
+        tools_form_table = window.findChild(QWidget, "sources_tool_paths_form_table")
+        assert content_form_table is not None
+        assert performance_form_table is not None
+        assert tools_form_table is not None
+        assert isinstance(content_form_table.layout(), QGridLayout)
+        assert isinstance(performance_form_table.layout(), QGridLayout)
+        assert isinstance(tools_form_table.layout(), QGridLayout)
         sources_layout = window.sources_tab.layout()
         assert sources_layout is not None
         assert sources_layout.stretch(1) > sources_layout.stretch(0)

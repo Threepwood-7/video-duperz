@@ -10,12 +10,15 @@ from video_duperz.fingerprint import (
     _decoder_timeout_for_path,
     _DecoderAttemptResult,
     _ffmpeg_gray_samples,
+    ALGO_VERSION,
+    SCENE_AWARE_ALGO_VERSION,
     build_fingerprint_record_with_fallback,
     dhash_from_gray,
     ensure_ffmpeg_available,
     fingerprint_child_stdio,
     inner_median_distance,
     normalized_median_distance,
+    plan_visual_sample_timestamps,
     run_fingerprint_child_from_stdio,
     sample_timestamps,
 )
@@ -50,6 +53,54 @@ def test_inner_median_distance_uses_only_inner_frames() -> None:
 def test_inner_median_distance_empty_guard() -> None:
     assert inner_median_distance([], []) == 1.0
     assert inner_median_distance([1, 2, 3], [1, 2]) == 1.0
+
+
+def test_plan_visual_sample_timestamps_uses_scene_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scene_points = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+    monkeypatch.setattr(
+        "video_duperz.fingerprint._scene_change_candidates",
+        lambda *args, **kwargs: list(scene_points),
+    )
+
+    timestamps, algo_version = plan_visual_sample_timestamps(
+        "D:/Videos/clip.mp4",
+        20.0,
+        scene_aware_sampling=True,
+    )
+
+    assert timestamps == scene_points
+    assert algo_version == SCENE_AWARE_ALGO_VERSION
+
+
+def test_plan_visual_sample_timestamps_falls_back_when_scene_data_is_sparse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "video_duperz.fingerprint._scene_change_candidates",
+        lambda *args, **kwargs: [1.0, 2.0, 3.0],
+    )
+
+    timestamps, algo_version = plan_visual_sample_timestamps(
+        "D:/Videos/clip.mp4",
+        20.0,
+        scene_aware_sampling=True,
+    )
+
+    assert timestamps == sample_timestamps(20.0)
+    assert algo_version == SCENE_AWARE_ALGO_VERSION
+
+
+def test_plan_visual_sample_timestamps_keeps_fixed_mode_when_disabled() -> None:
+    timestamps, algo_version = plan_visual_sample_timestamps(
+        "D:/Videos/clip.mp4",
+        20.0,
+        scene_aware_sampling=False,
+    )
+
+    assert timestamps == sample_timestamps(20.0)
+    assert algo_version == ALGO_VERSION
 
 
 def test_ffmpeg_gray_samples_use_explicit_override_path(
@@ -147,6 +198,7 @@ def test_decoder_subprocess_payload_includes_ffmpeg_override(
 
     payload = json.loads(str(captured["input"]))
     assert payload["ffmpeg_exe_path"] == r"C:\ffmpeg\bin\ffmpeg.exe"
+    assert payload["timestamps_s"] == sample_timestamps(10.0)
     assert payload["scan_child_cpu_priority"] == "above_normal"
     assert payload["scan_child_io_mode"] == "background"
     assert result.decoder_backend == "ffmpeg"

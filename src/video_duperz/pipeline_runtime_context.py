@@ -13,7 +13,9 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from threep_commons.fs_paths import path_key
 
+from .fingerprint import ALGO_VERSION, SCENE_AWARE_ALGO_VERSION
 from .models import (
+    CrossResolutionMode,
     FrameDecodeBackendId,
     ProbeBackendId,
     ProbeWorkerMode,
@@ -48,6 +50,9 @@ class AnalyzeOutputLike(Protocol):
     fingerprint_s: float
     fingerprint_decoder_backend: FrameDecodeBackendId
     fingerprint_provenance_json: str
+    visual_algo_version: int
+    audio_fingerprint: str
+    audio_fingerprint_error: str
 
 
 class _FailedFilePathKeysFn(Protocol):
@@ -83,7 +88,12 @@ class ScanContext:
     scan_size_mib_min: int
     scan_size_mib_max: int
     profile: str
+    custom_similarity_threshold: float
     duration_tolerance_s: float
+    scene_aware_sampling: bool
+    audio_fingerprint_enabled: bool
+    cross_resolution_mode: CrossResolutionMode
+    visual_algo_version: int
     probe_backend: ProbeBackendId
     drive_worker_overrides: dict[str, int] | None
     cancel_event: Event | None
@@ -129,7 +139,8 @@ class ScanContext:
     pending_scan_links: list[ScanLinkRecord]
     pending_meta_rows: list[tuple[int, int, int, VideoMeta]]
     pending_fp_rows: list[tuple[int, int, int, int, list[int]]]
-    pending_fp_provenance_rows: list[tuple[int, FrameDecodeBackendId, str]]
+    pending_fp_provenance_rows: list[tuple[int, int, FrameDecodeBackendId, str]]
+    pending_audio_fp_rows: list[tuple[int, int, int, str]]
     pending_probe_error_rows: list[tuple[int, int, int, str]]
     scan_started_at: float
     stage_seconds: dict[str, float]
@@ -307,7 +318,11 @@ def create_context(
     scan_size_mib_min: int,
     scan_size_mib_max: int,
     profile: str,
+    custom_similarity_threshold: float,
     duration_tolerance_s: float,
+    scene_aware_sampling: bool,
+    audio_fingerprint_enabled: bool,
+    cross_resolution_mode: CrossResolutionMode,
     probe_backend: ProbeBackendId,
     max_workers: int,
     drive_worker_overrides: dict[str, int] | None,
@@ -341,12 +356,19 @@ def create_context(
         progress_emit_every_files=progress_emit_every_files,
     )
     scan_id = int(resume_scan_id or 0)
+    visual_algo_version = (
+        SCENE_AWARE_ALGO_VERSION if scene_aware_sampling else ALGO_VERSION
+    )
     if scan_id > 0:
         db.update_scan_definition(
             scan_id,
             profile=profile,
             roots=roots,
             extensions=extensions,
+            custom_similarity_threshold=custom_similarity_threshold,
+            scene_aware_sampling=scene_aware_sampling,
+            audio_fingerprint_enabled=audio_fingerprint_enabled,
+            cross_resolution_mode=cross_resolution_mode,
             probe_backend=probe_backend,
             status="running",
         )
@@ -355,6 +377,10 @@ def create_context(
             profile=profile,
             roots=roots,
             extensions=extensions,
+            custom_similarity_threshold=custom_similarity_threshold,
+            scene_aware_sampling=scene_aware_sampling,
+            audio_fingerprint_enabled=audio_fingerprint_enabled,
+            cross_resolution_mode=cross_resolution_mode,
             probe_backend=probe_backend,
         )
     db.delete_scan_links_for_scan(scan_id)
@@ -378,7 +404,12 @@ def create_context(
         scan_size_mib_min=max(0, int(scan_size_mib_min)),
         scan_size_mib_max=max(0, int(scan_size_mib_max)),
         profile=profile,
+        custom_similarity_threshold=max(0.01, float(custom_similarity_threshold)),
         duration_tolerance_s=max(0.0, float(duration_tolerance_s)),
+        scene_aware_sampling=bool(scene_aware_sampling),
+        audio_fingerprint_enabled=bool(audio_fingerprint_enabled),
+        cross_resolution_mode=cross_resolution_mode,
+        visual_algo_version=visual_algo_version,
         probe_backend=probe_backend,
         drive_worker_overrides=drive_worker_overrides,
         cancel_event=cancel_event,
@@ -425,6 +456,7 @@ def create_context(
         pending_meta_rows=[],
         pending_fp_rows=[],
         pending_fp_provenance_rows=[],
+        pending_audio_fp_rows=[],
         pending_probe_error_rows=[],
         scan_started_at=started_at,
         stage_seconds=_initial_stage_seconds(),

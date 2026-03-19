@@ -21,6 +21,10 @@ def _tools_available() -> bool:
     )
 
 
+def _audio_tools_available() -> bool:
+    return bool(_tools_available() and shutil.which("fpcalc"))
+
+
 def _run_ffmpeg(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True, capture_output=True, text=True)
 
@@ -217,6 +221,80 @@ def test_pipeline_detects_trimmed_duration_difference_duplicates(
         assert target_group["longer.mp4"].match_reason == "trimmed_match"
         assert target_group["shorter.mp4"].match_reason == "trimmed_match"
         assert target_group["longer.mp4"].match_duration_delta_s == pytest.approx(5.0)
+
+
+@pytest.mark.skipif(
+    not _audio_tools_available(),
+    reason="ffmpeg/ffprobe/fpcalc not available",
+)
+def test_pipeline_audio_fingerprint_rescues_visual_miss(tmp_path: Path) -> None:
+    black = tmp_path / "black.mp4"
+    blue = tmp_path / "blue.mp4"
+
+    _run_ffmpeg(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=320x240:r=24",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=880:sample_rate=44100",
+            "-shortest",
+            "-t",
+            "3",
+            str(black),
+        ]
+    )
+    _run_ffmpeg(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=320x240:r=24",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=880:sample_rate=44100",
+            "-shortest",
+            "-t",
+            "3",
+            str(blue),
+        ]
+    )
+
+    with Database(tmp_path / "app.db") as db:
+        result = run_scan(
+            db=db,
+            roots=[str(tmp_path)],
+            extensions=["mp4"],
+            scan_size_mib_min=0,
+            profile="balanced",
+            audio_fingerprint_enabled=True,
+            db_batch_size=512,
+            db_flush_interval_ms=200,
+            enum_queue_max=4096,
+            progress_emit_interval_ms=200,
+            progress_emit_every_files=100,
+        )
+
+        target_group = next(
+            (
+                group
+                for group in result.groups
+                if {Path(item.path).name for item in group.items}
+                == {"black.mp4", "blue.mp4"}
+            ),
+            None,
+        )
+
+        assert target_group is not None
+        assert any(item.match_reason == "audio_match" for item in target_group.items)
 
 
 @pytest.mark.skipif(not _tools_available(), reason="ffmpeg/ffprobe not available")

@@ -13,6 +13,7 @@ from .fingerprint import (
     normalized_median_distance,
 )
 from .models import (
+    CrossResolutionMode,
     DuplicateEdge,
     DuplicateGroup,
     DuplicateItem,
@@ -31,6 +32,27 @@ PROFILE_THRESHOLD = {
 _DURATION_BUCKET_WINDOW_S = 5.0
 _INNER_ONLY_THRESHOLD_S = 3.0
 _INNER_MODE_THRESHOLD_FACTOR = 0.90
+_SAME_ASPECT_RATIO_DELTA = 0.5
+
+
+def _resolve_similarity_threshold(
+    profile: str,
+    *,
+    custom_similarity_threshold: float,
+) -> float:
+    """Resolve one effective similarity threshold from profile settings."""
+    if str(profile).strip().lower() == "custom":
+        return max(0.01, min(0.30, float(custom_similarity_threshold)))
+    return PROFILE_THRESHOLD.get(profile, PROFILE_THRESHOLD["balanced"])
+
+
+def _audio_fingerprint_match(a: MatchItem, b: MatchItem) -> bool:
+    """Return whether two items share a usable audio fingerprint."""
+    return bool(
+        a.audio_fingerprint
+        and b.audio_fingerprint
+        and a.audio_fingerprint == b.audio_fingerprint
+    )
 
 
 def aspect_bin(width: int, height: int) -> float:
@@ -72,6 +94,7 @@ def _is_candidate(
     b: MatchItem,
     *,
     duration_tolerance_s: float,
+    cross_resolution_mode: CrossResolutionMode,
 ) -> bool:
     """Return whether one pair should advance to perceptual hash comparison."""
     if abs(a.duration_s - b.duration_s) > duration_tolerance_s:
@@ -87,7 +110,11 @@ def _is_candidate(
     rb = b.width / b.height if b.height else 0.0
     if ra <= 0 or rb <= 0:
         return False
+    if cross_resolution_mode == "any_aspect":
+        return True
     ratio_delta = abs(math.log2(ra / rb))
+    if cross_resolution_mode == "same_aspect":
+        return ratio_delta <= _SAME_ASPECT_RATIO_DELTA
     return ratio_delta <= 0.2
 
 
@@ -97,6 +124,7 @@ def _neighbor_items(
     duration_bin: int,
     aspect_ratio_bin: float,
     duration_tolerance_s: float,
+    cross_resolution_mode: CrossResolutionMode,
 ) -> list[MatchItem]:
     """Collect items from the current and adjacent duration buckets."""
     extra_buckets = max(
@@ -106,11 +134,24 @@ def _neighbor_items(
     seen_file_ids: set[int] = set()
     result: list[MatchItem] = []
     for offset in range(-extra_buckets, extra_buckets + 1):
-        for item in buckets.get((duration_bin + offset, aspect_ratio_bin), []):
-            if item.file_id in seen_file_ids:
-                continue
-            seen_file_ids.add(item.file_id)
-            result.append(item)
+        bucket_duration = duration_bin + offset
+        if cross_resolution_mode == "off":
+            aspect_bins: set[float] = {aspect_ratio_bin}
+        else:
+            aspect_bins = {
+                bucket_aspect
+                for candidate_duration, bucket_aspect in buckets
+                if candidate_duration == bucket_duration
+            }
+        for candidate_aspect_bin in aspect_bins:
+            for item in buckets.get(
+                (bucket_duration, candidate_aspect_bin),
+                [],
+            ):
+                if item.file_id in seen_file_ids:
+                    continue
+                seen_file_ids.add(item.file_id)
+                result.append(item)
     return result
 
 
@@ -118,10 +159,15 @@ def find_duplicate_edges(
     items: list[MatchItem],
     profile: str = "balanced",
     *,
+    custom_similarity_threshold: float = 0.18,
     duration_tolerance_s: float = 8.0,
+    cross_resolution_mode: CrossResolutionMode = "off",
 ) -> tuple[list[DuplicateEdge], MatchStats]:
     """Find likely duplicate pairs by bucketing and comparing match items."""
-    threshold = PROFILE_THRESHOLD.get(profile, PROFILE_THRESHOLD["balanced"])
+    threshold = _resolve_similarity_threshold(
+        profile,
+        custom_similarity_threshold=custom_similarity_threshold,
+    )
     buckets: dict[tuple[int, float], list[MatchItem]] = defaultdict(list)
     for item in items:
         buckets[
@@ -140,6 +186,7 @@ def find_duplicate_edges(
             duration_bin=duration_bin,
             aspect_ratio_bin=aspect_ratio_bin,
             duration_tolerance_s=duration_tolerance_s,
+            cross_resolution_mode=cross_resolution_mode,
         )
         if len(bucket_items) < 2:
             continue
@@ -152,7 +199,12 @@ def find_duplicate_edges(
                 continue
             seen_pairs.add(pair_key)
             stats.candidate_pairs += 1
-            if not _is_candidate(a, b, duration_tolerance_s=duration_tolerance_s):
+            if not _is_candidate(
+                a,
+                b,
+                duration_tolerance_s=duration_tolerance_s,
+                cross_resolution_mode=cross_resolution_mode,
+            ):
                 continue
             duration_gap_s = abs(a.duration_s - b.duration_s)
             use_inner = duration_gap_s > _INNER_ONLY_THRESHOLD_S
@@ -166,6 +218,16 @@ def find_duplicate_edges(
             )
             if prefilter_distance > 22.0:
                 stats.prefilter_rejected_pairs += 1
+                if _audio_fingerprint_match(a, b):
+                    edges.append(
+                        DuplicateEdge(
+                            file_a=a.file_id,
+                            file_b=b.file_id,
+                            score=1.0,
+                            match_reason="audio_match",
+                        )
+                    )
+                    stats.accepted_pairs += 1
                 continue
             stats.full_distance_pairs += 1
             distance = (
@@ -187,6 +249,17 @@ def find_duplicate_edges(
                 )
                 if use_inner:
                     stats.inner_mode_accepted += 1
+                stats.accepted_pairs += 1
+                continue
+            if _audio_fingerprint_match(a, b):
+                edges.append(
+                    DuplicateEdge(
+                        file_a=a.file_id,
+                        file_b=b.file_id,
+                        score=1.0,
+                        match_reason="audio_match",
+                    )
+                )
                 stats.accepted_pairs += 1
     return edges, stats
 
@@ -259,20 +332,27 @@ def build_duplicate_groups(
                 score = score_map.get((item.file_id, other))
                 if score is not None:
                     pair_scores.append(score)
-                if reason_map.get((item.file_id, other)) != "trimmed_match":
+                pair_reason = reason_map.get((item.file_id, other))
+                if pair_reason == "trimmed_match":
+                    other_item = by_id.get(other)
+                    if other_item is None:
+                        continue
+                    duration_delta_s = abs(item.duration_s - other_item.duration_s)
+                    if item_match_reason != "trimmed_match":
+                        item_match_reason = "trimmed_match"
+                        item_match_duration_delta_s = duration_delta_s
+                        continue
+                    item_match_duration_delta_s = min(
+                        item_match_duration_delta_s,
+                        duration_delta_s,
+                    )
                     continue
-                other_item = by_id.get(other)
-                if other_item is None:
+                if (
+                    pair_reason == "audio_match"
+                    and item_match_reason == "perceptual"
+                ):
+                    item_match_reason = "audio_match"
                     continue
-                duration_delta_s = abs(item.duration_s - other_item.duration_s)
-                if item_match_reason != "trimmed_match":
-                    item_match_reason = "trimmed_match"
-                    item_match_duration_delta_s = duration_delta_s
-                    continue
-                item_match_duration_delta_s = min(
-                    item_match_duration_delta_s,
-                    duration_delta_s,
-                )
             similarity = sum(pair_scores) / len(pair_scores) if pair_scores else 1.0
             is_keep = item.file_id == keep_id
             group_items.append(

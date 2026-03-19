@@ -8,12 +8,18 @@ from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING
 
+from .audio_fingerprint import (
+    AudioFingerprintError,
+    compute_audio_fingerprint,
+    ensure_fpcalc_available,
+)
 from .fingerprint import (
     build_fingerprint_record_with_fallback,
     ensure_fingerprint_fallback_chain_available,
 )
 from .matcher import build_duplicate_groups, find_duplicate_edges
 from .models import (
+    CrossResolutionMode,
     FrameDecodeBackendId,
     ProbeBackendId,
     ScanIssue,
@@ -46,6 +52,9 @@ class _AnalyzeOutput:
     fingerprint_s: float = 0.0
     fingerprint_decoder_backend: FrameDecodeBackendId = "opencv"
     fingerprint_provenance_json: str = ""
+    visual_algo_version: int = 1
+    audio_fingerprint: str = ""
+    audio_fingerprint_error: str = ""
 
 
 @dataclass(slots=True)
@@ -55,6 +64,9 @@ class _AnalyzeRuntimeOptions:
     probe_backend: ProbeBackendId = "pyav"
     ffmpeg_exe_path: str = ""
     ffprobe_exe_path: str = ""
+    fpcalc_exe_path: str = ""
+    scene_aware_sampling: bool = False
+    audio_fingerprint_enabled: bool = False
     scan_child_cpu_priority: ScanProcessCpuPriority = "normal"
     scan_child_io_mode: ScanProcessIoMode = "normal"
 
@@ -67,7 +79,10 @@ def _analyze_file_with_probe(
     cached_meta: VideoMeta | None,
     *,
     probe_video_fn: Callable[[str], VideoMeta],
+    scene_aware_sampling: bool = False,
+    audio_fingerprint_enabled: bool = False,
     ffmpeg_exe_path: str = "",
+    fpcalc_exe_path: str = "",
     scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
     scan_child_io_mode: ScanProcessIoMode = "normal",
 ) -> _AnalyzeOutput:
@@ -85,6 +100,7 @@ def _analyze_file_with_probe(
             file_id=0,
             duration_s=meta.duration_s,
             path=path,
+            scene_aware_sampling=scene_aware_sampling,
             ffmpeg_exe_path=ffmpeg_exe_path,
             scan_child_cpu_priority=scan_child_cpu_priority,
             scan_child_io_mode=scan_child_io_mode,
@@ -94,10 +110,23 @@ def _analyze_file_with_probe(
             file_id=0,
             duration_s=meta.duration_s,
             path=path,
+            scene_aware_sampling=scene_aware_sampling,
             scan_child_cpu_priority=scan_child_cpu_priority,
             scan_child_io_mode=scan_child_io_mode,
         )
     fingerprint_s = max(0.0, time.perf_counter() - fp_started)
+    audio_fingerprint = ""
+    audio_fingerprint_error = ""
+    if audio_fingerprint_enabled and meta.has_audio:
+        try:
+            audio_fingerprint = compute_audio_fingerprint(
+                path,
+                fpcalc_exe_path=fpcalc_exe_path,
+                scan_child_cpu_priority=scan_child_cpu_priority,
+                scan_child_io_mode=scan_child_io_mode,
+            )
+        except AudioFingerprintError as exc:
+            audio_fingerprint_error = str(exc)
     return _AnalyzeOutput(
         meta=meta,
         hashes=fp_result.record.hashes,
@@ -105,6 +134,9 @@ def _analyze_file_with_probe(
         fingerprint_s=fingerprint_s,
         fingerprint_decoder_backend=fp_result.decoder_backend,
         fingerprint_provenance_json=fp_result.provenance_json,
+        visual_algo_version=int(fp_result.record.algo_version),
+        audio_fingerprint=audio_fingerprint,
+        audio_fingerprint_error=audio_fingerprint_error,
     )
 
 
@@ -113,6 +145,9 @@ def _configure_runtime_analyze_options(
     *,
     ffmpeg_exe_path: str = "",
     ffprobe_exe_path: str = "",
+    fpcalc_exe_path: str = "",
+    scene_aware_sampling: bool = False,
+    audio_fingerprint_enabled: bool = False,
     scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
     scan_child_io_mode: ScanProcessIoMode = "normal",
 ) -> None:
@@ -122,6 +157,11 @@ def _configure_runtime_analyze_options(
     )
     _ANALYZE_RUNTIME_OPTIONS.ffmpeg_exe_path = str(ffmpeg_exe_path or "")
     _ANALYZE_RUNTIME_OPTIONS.ffprobe_exe_path = str(ffprobe_exe_path or "")
+    _ANALYZE_RUNTIME_OPTIONS.fpcalc_exe_path = str(fpcalc_exe_path or "")
+    _ANALYZE_RUNTIME_OPTIONS.scene_aware_sampling = bool(scene_aware_sampling)
+    _ANALYZE_RUNTIME_OPTIONS.audio_fingerprint_enabled = bool(
+        audio_fingerprint_enabled
+    )
     _ANALYZE_RUNTIME_OPTIONS.scan_child_cpu_priority = scan_child_cpu_priority
     _ANALYZE_RUNTIME_OPTIONS.scan_child_io_mode = scan_child_io_mode
 
@@ -149,7 +189,10 @@ def _analyze_file(path: str, cached_meta: VideoMeta | None) -> _AnalyzeOutput:
             backend=_ANALYZE_RUNTIME_OPTIONS.probe_backend,
             **probe_video_kwargs,
         ),
+        scene_aware_sampling=_ANALYZE_RUNTIME_OPTIONS.scene_aware_sampling,
+        audio_fingerprint_enabled=_ANALYZE_RUNTIME_OPTIONS.audio_fingerprint_enabled,
         ffmpeg_exe_path=_ANALYZE_RUNTIME_OPTIONS.ffmpeg_exe_path,
+        fpcalc_exe_path=_ANALYZE_RUNTIME_OPTIONS.fpcalc_exe_path,
         scan_child_cpu_priority=_ANALYZE_RUNTIME_OPTIONS.scan_child_cpu_priority,
         scan_child_io_mode=_ANALYZE_RUNTIME_OPTIONS.scan_child_io_mode,
     )
@@ -160,6 +203,9 @@ def build_analyze_file(
     *,
     ffmpeg_exe_path: str = "",
     ffprobe_exe_path: str = "",
+    fpcalc_exe_path: str = "",
+    scene_aware_sampling: bool = False,
+    audio_fingerprint_enabled: bool = False,
     scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
     scan_child_io_mode: ScanProcessIoMode = "normal",
 ) -> Callable[[str], _AnalyzeOutput]:
@@ -168,6 +214,9 @@ def build_analyze_file(
         probe_backend,
         ffmpeg_exe_path=ffmpeg_exe_path,
         ffprobe_exe_path=ffprobe_exe_path,
+        fpcalc_exe_path=fpcalc_exe_path,
+        scene_aware_sampling=scene_aware_sampling,
+        audio_fingerprint_enabled=audio_fingerprint_enabled,
         scan_child_cpu_priority=scan_child_cpu_priority,
         scan_child_io_mode=scan_child_io_mode,
     )
@@ -183,6 +232,9 @@ def _build_runtime_analyze_file(
     *,
     ffmpeg_exe_path: str = "",
     ffprobe_exe_path: str = "",
+    fpcalc_exe_path: str = "",
+    scene_aware_sampling: bool = False,
+    audio_fingerprint_enabled: bool = False,
     scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
     scan_child_io_mode: ScanProcessIoMode = "normal",
 ) -> Callable[[str, VideoMeta | None], _AnalyzeOutput]:
@@ -191,6 +243,9 @@ def _build_runtime_analyze_file(
         probe_backend,
         ffmpeg_exe_path=ffmpeg_exe_path,
         ffprobe_exe_path=ffprobe_exe_path,
+        fpcalc_exe_path=fpcalc_exe_path,
+        scene_aware_sampling=scene_aware_sampling,
+        audio_fingerprint_enabled=audio_fingerprint_enabled,
         scan_child_cpu_priority=scan_child_cpu_priority,
         scan_child_io_mode=scan_child_io_mode,
     )
@@ -204,13 +259,18 @@ def run_scan(
     scan_size_mib_min: int = 50,
     scan_size_mib_max: int = 0,
     profile: str = "balanced",
+    custom_similarity_threshold: float = 0.18,
     duration_tolerance_s: float = 8.0,
+    scene_aware_sampling: bool = False,
+    audio_fingerprint_enabled: bool = False,
+    cross_resolution_mode: CrossResolutionMode = "off",
     max_workers: int = 2,
     drive_worker_overrides: dict[str, int] | None = None,
     probe_backend: ProbeBackendId = "pyav",
     probe_worker_mode: str = "balanced",
     ffmpeg_exe_path: str = "",
     ffprobe_exe_path: str = "",
+    fpcalc_exe_path: str = "",
     scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
     scan_child_io_mode: ScanProcessIoMode = "normal",
     *,
@@ -227,10 +287,30 @@ def run_scan(
     retry_failed_files: bool = True,
 ) -> ScanResult:
     """Run a full scan using the default probe, fingerprint, and matcher pipeline."""
+    audio_enabled_for_run = bool(audio_fingerprint_enabled)
+    if audio_enabled_for_run:
+        try:
+            ensure_fpcalc_available(fpcalc_exe_path)
+        except AudioFingerprintError as exc:
+            audio_enabled_for_run = False
+            if issue_cb is not None:
+                issue_cb(
+                    ScanIssue(
+                        stage="audio_fingerprint",
+                        path="",
+                        message=(
+                            "Audio fingerprinting disabled for this scan: "
+                            f"{exc}"
+                        ),
+                    )
+                )
     analyze_file = _build_runtime_analyze_file(
         probe_backend,
         ffmpeg_exe_path=ffmpeg_exe_path,
         ffprobe_exe_path=ffprobe_exe_path,
+        fpcalc_exe_path=fpcalc_exe_path,
+        scene_aware_sampling=scene_aware_sampling,
+        audio_fingerprint_enabled=audio_enabled_for_run,
         scan_child_cpu_priority=scan_child_cpu_priority,
         scan_child_io_mode=scan_child_io_mode,
     )
@@ -266,7 +346,11 @@ def run_scan(
         scan_size_mib_min=scan_size_mib_min,
         scan_size_mib_max=scan_size_mib_max,
         profile=profile,
+        custom_similarity_threshold=custom_similarity_threshold,
         duration_tolerance_s=duration_tolerance_s,
+        scene_aware_sampling=scene_aware_sampling,
+        audio_fingerprint_enabled=audio_enabled_for_run,
+        cross_resolution_mode=cross_resolution_mode,
         max_workers=max_workers,
         drive_worker_overrides=drive_worker_overrides,
         probe_backend=probe_backend,

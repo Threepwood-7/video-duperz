@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from video_duperz import pipeline, pipeline_runtime, pipeline_runtime_control
 from video_duperz.db import Database
+from video_duperz.fingerprint import ALGO_VERSION
 from video_duperz.models import (
     MatchStats,
     ScanIssue,
@@ -28,10 +29,51 @@ class _FakeDb:
         profile: str,
         roots: list[str],
         extensions: list[str] | None = None,
+        custom_similarity_threshold: float = 0.18,
+        scene_aware_sampling: bool = False,
+        audio_fingerprint_enabled: bool = False,
+        cross_resolution_mode: str = "off",
         probe_backend: str = "pyav",
     ) -> int:
-        _ = profile, roots, extensions, probe_backend
+        _ = (
+            profile,
+            roots,
+            extensions,
+            custom_similarity_threshold,
+            scene_aware_sampling,
+            audio_fingerprint_enabled,
+            cross_resolution_mode,
+            probe_backend,
+        )
         return self._scan_id
+
+    def update_scan_definition(
+        self,
+        scan_id: int,
+        *,
+        profile: str,
+        roots: list[str],
+        extensions: list[str] | None = None,
+        custom_similarity_threshold: float = 0.18,
+        scene_aware_sampling: bool = False,
+        audio_fingerprint_enabled: bool = False,
+        cross_resolution_mode: str = "off",
+        probe_backend: str = "pyav",
+        status: str | None = None,
+    ) -> None:
+        _ = (
+            scan_id,
+            profile,
+            roots,
+            extensions,
+            custom_similarity_threshold,
+            scene_aware_sampling,
+            audio_fingerprint_enabled,
+            cross_resolution_mode,
+            probe_backend,
+            status,
+        )
+        return None
 
     def begin_scan_transaction(self) -> None:
         return None
@@ -81,9 +123,12 @@ class _FakeDb:
     def load_cached_artifacts_batch(
         self,
         files: list[dict[str, object]],
+        *,
+        algo_version: int = 1,
+        include_audio_fingerprint: bool = False,
         probe_backend: str = "pyav",
     ) -> dict[str, dict]:
-        _ = files, probe_backend
+        _ = files, algo_version, include_audio_fingerprint, probe_backend
         return {}
 
     def get_cached_artifacts(
@@ -143,11 +188,18 @@ class _FakeDb:
 
     def save_fingerprint_provenance_batch(
         self,
-        rows: list[tuple[int, str, str]],
+        rows: list[tuple[int, int, str, str]],
         *,
         probe_backend: str = "pyav",
     ) -> None:
         _ = rows, probe_backend
+        return None
+
+    def save_audio_fingerprints_batch(
+        self,
+        rows: list[tuple[int, int, int, str]],
+    ) -> None:
+        _ = rows
         return None
 
     def save_fingerprint(
@@ -1817,8 +1869,19 @@ def test_resume_reprocesses_when_fingerprint_algo_version_changes(
 
         pause_event.clear()
         analyze_calls.clear()
-        monkeypatch.setattr(pipeline_runtime, "ALGO_VERSION", 9_999)
-        monkeypatch.setattr(pipeline_runtime_control, "ALGO_VERSION", 9_999)
+        monkeypatch.setattr(
+            "video_duperz.pipeline_runtime_context.ALGO_VERSION",
+            9_999,
+        )
+        monkeypatch.setattr(
+            "video_duperz.pipeline_runtime_context.SCENE_AWARE_ALGO_VERSION",
+            10_000,
+        )
+        monkeypatch.setattr("video_duperz.fingerprint.ALGO_VERSION", 9_999)
+        monkeypatch.setattr(
+            "video_duperz.fingerprint.SCENE_AWARE_ALGO_VERSION",
+            10_000,
+        )
 
         resumed = pipeline.run_scan(
             db=db,
@@ -1854,7 +1917,7 @@ def test_runtime_analyze_reuses_cached_meta_without_calling_probe(monkeypatch) -
         pipeline,
         "build_fingerprint_record_with_fallback",
         lambda **kwargs: SimpleNamespace(
-            record=SimpleNamespace(hashes=[1, 2, 3]),
+            record=SimpleNamespace(hashes=[1, 2, 3], algo_version=ALGO_VERSION),
             decoder_backend="opencv",
             provenance_json="{}",
         ),

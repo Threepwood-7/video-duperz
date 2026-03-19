@@ -103,13 +103,18 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
             scan_size_mib_min=self.settings.scan_size_mib_min,
             scan_size_mib_max=self.settings.scan_size_mib_max,
             profile=self.settings.similarity_profile,
+            custom_similarity_threshold=self.settings.custom_similarity_threshold,
             duration_tolerance_s=self.settings.duration_tolerance_s,
+            scene_aware_sampling=self.settings.scene_aware_sampling,
+            audio_fingerprint_enabled=self.settings.audio_fingerprint_enabled,
+            cross_resolution_mode=self.settings.cross_resolution_mode,
             max_workers=self.settings.max_workers,
             drive_worker_overrides=self.settings.drive_worker_overrides,
             probe_backend=self.settings.probe_backend,
             probe_worker_mode=self.settings.probe_worker_mode,
             ffmpeg_exe_path=self.settings.ffmpeg_exe_path,
             ffprobe_exe_path=self.settings.ffprobe_exe_path,
+            fpcalc_exe_path=self.settings.fpcalc_exe_path,
             scan_child_cpu_priority=self.settings.scan_child_cpu_priority,
             scan_child_io_mode=self.settings.scan_child_io_mode,
             db_batch_size=self.settings.scan_db_batch_size,
@@ -212,6 +217,18 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
                     profile=str(scan_info.get("profile", "balanced")),
                     extensions=list(scan_info.get("extensions", [])),
                     probe_backend=str(scan_info.get("probe_backend", "pyav")),
+                    custom_similarity_threshold=float(
+                        scan_info.get("custom_similarity_threshold", 0.18)
+                    ),
+                    scene_aware_sampling=bool(
+                        scan_info.get("scene_aware_sampling", False)
+                    ),
+                    audio_fingerprint_enabled=bool(
+                        scan_info.get("audio_fingerprint_enabled", False)
+                    ),
+                    cross_resolution_mode=str(
+                        scan_info.get("cross_resolution_mode", "off")
+                    ),
                 )
                 self.scan_view.set_paused_loaded(True)
                 self.scan_view.set_retry_failed_file_count(

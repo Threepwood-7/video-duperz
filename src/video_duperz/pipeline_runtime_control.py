@@ -8,7 +8,6 @@ from dataclasses import asdict
 from threading import Thread
 from typing import TYPE_CHECKING, Protocol
 
-from .fingerprint import ALGO_VERSION
 from .models import MatchStats, ScanIssue, ScanResult
 from .pipeline_runtime_progress import emit_progress, notify_event
 
@@ -125,6 +124,8 @@ def pipeline_should_stop(
         or ctx.pending_discovered
         or ctx.pending_meta_rows
         or ctx.pending_fp_rows
+        or ctx.pending_fp_provenance_rows
+        or ctx.pending_audio_fp_rows
         or ctx.pending_probe_error_rows
         or ctx.queued_issues
     )
@@ -162,6 +163,8 @@ def wait_for_pipeline_event(ctx: _ScanContext) -> None:
         or ctx.pending_discovered
         or ctx.pending_meta_rows
         or ctx.pending_fp_rows
+        or ctx.pending_fp_provenance_rows
+        or ctx.pending_audio_fp_rows
         or ctx.pending_probe_error_rows
         or ctx.queued_issues
     )
@@ -259,12 +262,14 @@ def completed_result(
     matching_started = time.perf_counter()
     items = ctx.db.list_match_items_for_scan(
         scan_id=ctx.scan_id,
-        algo_version=ALGO_VERSION,
+        algo_version=ctx.visual_algo_version,
     )
     edges, match_stats = ctx.find_duplicate_edges_fn(
         items,
         profile=ctx.profile,
+        custom_similarity_threshold=ctx.custom_similarity_threshold,
         duration_tolerance_s=ctx.duration_tolerance_s,
+        cross_resolution_mode=ctx.cross_resolution_mode,
     )
     groups = ctx.build_duplicate_groups_fn(
         items=items,

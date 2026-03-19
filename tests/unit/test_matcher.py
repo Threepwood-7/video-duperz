@@ -5,7 +5,14 @@ from video_duperz.models import MatchItem
 
 
 def _item(
-    file_id: int, path: str, hashes: list[int], duration: float = 10.0
+    file_id: int,
+    path: str,
+    hashes: list[int],
+    duration: float = 10.0,
+    *,
+    width: int = 1920,
+    height: int = 1080,
+    audio_fingerprint: str = "",
 ) -> MatchItem:
     return MatchItem(
         file_id=file_id,
@@ -14,8 +21,8 @@ def _item(
         mtime_ns=file_id,
         ctime_ns=file_id,
         duration_s=duration,
-        width=1920,
-        height=1080,
+        width=width,
+        height=height,
         fps=30.0,
         codec="h264",
         bitrate=2_000_000,
@@ -25,6 +32,7 @@ def _item(
         subtitle_languages="",
         is_hdr=False,
         hashes=hashes,
+        audio_fingerprint=audio_fingerprint,
     )
 
 
@@ -184,3 +192,90 @@ def test_build_duplicate_groups_marks_trimmed_items_and_delta() -> None:
     deltas = {item.file_id: item.match_duration_delta_s for item in groups[0].items}
     assert reasons == {1: "trimmed_match", 2: "trimmed_match"}
     assert deltas == {1: 5.0, 2: 5.0}
+
+
+def test_custom_similarity_threshold_controls_acceptance() -> None:
+    strict_base = [0x0000000000000000] * 12
+    borderline = [0x00000000000000FF] * 12
+    items = [
+        _item(1, "a.mp4", strict_base),
+        _item(2, "b.mp4", borderline),
+    ]
+
+    accepted_edges, _accepted_stats = find_duplicate_edges(
+        items,
+        profile="custom",
+        custom_similarity_threshold=0.13,
+    )
+    rejected_edges, _rejected_stats = find_duplicate_edges(
+        items,
+        profile="custom",
+        custom_similarity_threshold=0.10,
+    )
+
+    assert len(accepted_edges) == 1
+    assert rejected_edges == []
+
+
+def test_cross_resolution_mode_any_aspect_allows_match() -> None:
+    same = [0x7777777777777777] * 12
+    items = [
+        _item(1, "a.mp4", same, width=1920, height=1080),
+        _item(2, "b.mp4", same, width=640, height=480),
+    ]
+
+    off_edges, _off_stats = find_duplicate_edges(
+        items,
+        profile="balanced",
+        cross_resolution_mode="off",
+    )
+    any_edges, _any_stats = find_duplicate_edges(
+        items,
+        profile="balanced",
+        cross_resolution_mode="any_aspect",
+    )
+
+    assert off_edges == []
+    assert len(any_edges) == 1
+
+
+def test_cross_resolution_mode_same_aspect_relaxes_gate() -> None:
+    same = [0x8888888888888888] * 12
+    items = [
+        _item(1, "a.mp4", same, width=1920, height=1080),
+        _item(2, "b.mp4", same, width=1920, height=800),
+    ]
+
+    off_edges, _off_stats = find_duplicate_edges(
+        items,
+        profile="balanced",
+        cross_resolution_mode="off",
+    )
+    relaxed_edges, _relaxed_stats = find_duplicate_edges(
+        items,
+        profile="balanced",
+        cross_resolution_mode="same_aspect",
+    )
+
+    assert off_edges == []
+    assert len(relaxed_edges) == 1
+
+
+def test_audio_fingerprint_rescues_visual_miss() -> None:
+    far_a = [0x0000000000000000] * 12
+    far_b = [0xFFFFFFFFFFFFFFFF] * 12
+    items = [
+        _item(1, "a.mp4", far_a, audio_fingerprint="audio:123"),
+        _item(2, "b.mp4", far_b, audio_fingerprint="audio:123"),
+    ]
+
+    edges, stats = find_duplicate_edges(items, profile="balanced")
+    groups = build_duplicate_groups(items, edges, profile="balanced")
+
+    assert len(edges) == 1
+    assert edges[0].match_reason == "audio_match"
+    assert stats.accepted_pairs == 1
+    assert [item.match_reason for item in groups[0].items] == [
+        "audio_match",
+        "audio_match",
+    ]

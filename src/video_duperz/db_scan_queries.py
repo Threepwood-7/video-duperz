@@ -9,6 +9,8 @@ from threep_commons.fs_paths import is_path_under_root, path_key
 from .db_shared import decode_hashes, decode_string_list_json
 from .models import MatchItem, ScanLinkRecord
 from .scan_sets import (
+    normalize_cross_resolution_mode,
+    normalize_custom_similarity_threshold,
     normalize_extensions,
     normalize_roots_for_display,
     normalize_similarity_profile,
@@ -41,14 +43,18 @@ class DatabaseScanQueryMixin:
                    vm.audio_codec, vm.audio_bitrate,
                    vm.audio_languages, vm.subtitle_languages,
                    vm.is_hdr,
-                   fp.hash_blob
+                   fp.hash_blob,
+                   af.fingerprint_text
             FROM files f
             JOIN scans s ON s.id = f.scan_id
             JOIN video_meta vm
               ON vm.file_id = f.id AND vm.probe_backend = s.probe_backend
             JOIN fingerprints fp
               ON fp.file_id = f.id AND fp.probe_backend = s.probe_backend
-            WHERE f.scan_id = ? AND f.exists_flag = 1 AND fp.algo_version = ?
+             AND fp.algo_version = ?
+            LEFT JOIN audio_fingerprints af
+              ON af.file_id = f.id
+            WHERE f.scan_id = ? AND f.exists_flag = 1
               AND vm.duration_s > 0
               AND NOT EXISTS(
                 SELECT 1
@@ -58,7 +64,7 @@ class DatabaseScanQueryMixin:
               )
             ORDER BY f.path
             """,
-            (scan_id, algo_version),
+            (algo_version, scan_id),
         ).fetchall()
         return [
             MatchItem(
@@ -79,6 +85,7 @@ class DatabaseScanQueryMixin:
                 subtitle_languages=str(row["subtitle_languages"] or ""),
                 is_hdr=bool(row["is_hdr"]),
                 hashes=decode_hashes(row["hash_blob"]),
+                audio_fingerprint=str(row["fingerprint_text"] or ""),
             )
             for row in rows
         ]
@@ -196,6 +203,14 @@ class DatabaseScanQueryMixin:
             "profile": str(row["profile"]),
             "roots": normalize_roots_for_display(roots),
             "extensions": normalize_extensions(extensions),
+            "custom_similarity_threshold": normalize_custom_similarity_threshold(
+                row["custom_similarity_threshold"]
+            ),
+            "scene_aware_sampling": bool(row["scene_aware_sampling"]),
+            "audio_fingerprint_enabled": bool(row["audio_fingerprint_enabled"]),
+            "cross_resolution_mode": normalize_cross_resolution_mode(
+                row["cross_resolution_mode"]
+            ),
             "probe_backend": str(row["probe_backend"] or "pyav"),
             "scan_set_key": str(row["scan_set_key"] or ""),
             "status": str(row["status"]),
@@ -281,7 +296,9 @@ class DatabaseScanQueryMixin:
         rows = self.conn.execute(
             """
             SELECT s.id, s.created_at, s.profile, s.roots_json,
-                   s.extensions_json, s.scan_set_key, s.status
+                   s.extensions_json, s.custom_similarity_threshold,
+                   s.scene_aware_sampling, s.audio_fingerprint_enabled,
+                   s.cross_resolution_mode, s.scan_set_key, s.status
             FROM scans s
             JOIN (
               SELECT scan_set_key, MAX(id) AS latest_id
@@ -299,7 +316,9 @@ class DatabaseScanQueryMixin:
         rows = self.conn.execute(
             """
             SELECT s.id, s.created_at, s.profile, s.roots_json,
-                   s.extensions_json, s.scan_set_key, s.status
+                   s.extensions_json, s.custom_similarity_threshold,
+                   s.scene_aware_sampling, s.audio_fingerprint_enabled,
+                   s.cross_resolution_mode, s.scan_set_key, s.status
             FROM scans s
             JOIN (
               SELECT scan_set_key, MAX(id) AS latest_id
@@ -330,6 +349,18 @@ class DatabaseScanQueryMixin:
                     ),
                     "roots": normalize_roots_for_display(roots),
                     "extensions": normalize_extensions(extensions),
+                    "custom_similarity_threshold": (
+                        normalize_custom_similarity_threshold(
+                            row["custom_similarity_threshold"]
+                        )
+                    ),
+                    "scene_aware_sampling": bool(row["scene_aware_sampling"]),
+                    "audio_fingerprint_enabled": bool(
+                        row["audio_fingerprint_enabled"]
+                    ),
+                    "cross_resolution_mode": normalize_cross_resolution_mode(
+                        row["cross_resolution_mode"]
+                    ),
                     "scan_set_key": str(row["scan_set_key"] or ""),
                     "status": str(row["status"] or ""),
                 }

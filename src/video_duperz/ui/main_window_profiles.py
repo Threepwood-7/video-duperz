@@ -20,6 +20,8 @@ from ..models import (
 )
 from ..scan_sets import (
     build_scan_set_key,
+    normalize_cross_resolution_mode,
+    normalize_custom_similarity_threshold,
     normalize_extensions,
     normalize_roots_for_display,
     normalize_similarity_profile,
@@ -240,10 +242,32 @@ class MainWindowProfilesMixin(MainWindowDriveViewMixin):
                 roots=roots,
                 similarity_profile=profile,
                 extensions=extensions,
+                custom_similarity_threshold=normalize_custom_similarity_threshold(
+                    self.custom_similarity_threshold_spin.value()
+                ),
+                scene_aware_sampling=bool(
+                    self.scene_aware_sampling_check.isChecked()
+                ),
+                audio_fingerprint_enabled=bool(
+                    self.audio_fingerprint_enabled_check.isChecked()
+                ),
+                cross_resolution_mode=normalize_cross_resolution_mode(
+                    self.cross_resolution_mode_combo.currentData()
+                ),
             ),
             roots=roots,
             similarity_profile=profile,
             extensions=extensions,
+            custom_similarity_threshold=normalize_custom_similarity_threshold(
+                self.custom_similarity_threshold_spin.value()
+            ),
+            scene_aware_sampling=bool(self.scene_aware_sampling_check.isChecked()),
+            audio_fingerprint_enabled=bool(
+                self.audio_fingerprint_enabled_check.isChecked()
+            ),
+            cross_resolution_mode=normalize_cross_resolution_mode(
+                self.cross_resolution_mode_combo.currentData()
+            ),
             updated_at=utc_now_iso(),
         )
 
@@ -342,6 +366,14 @@ class MainWindowProfilesMixin(MainWindowDriveViewMixin):
             roots=roots,
             similarity_profile=similarity_profile,
             extensions=extensions,
+            custom_similarity_threshold=normalize_custom_similarity_threshold(
+                profile.custom_similarity_threshold
+            ),
+            scene_aware_sampling=bool(profile.scene_aware_sampling),
+            audio_fingerprint_enabled=bool(profile.audio_fingerprint_enabled),
+            cross_resolution_mode=normalize_cross_resolution_mode(
+                profile.cross_resolution_mode
+            ),
         )
 
     def _format_scan_status(self, status: str | None) -> str:
@@ -359,6 +391,10 @@ class MainWindowProfilesMixin(MainWindowDriveViewMixin):
         self._loaded_paused_profile = ""
         self._loaded_paused_extensions = []
         self._loaded_paused_probe_backend = ""
+        self._loaded_paused_custom_similarity_threshold = 0.18
+        self._loaded_paused_scene_aware_sampling = False
+        self._loaded_paused_audio_fingerprint_enabled = False
+        self._loaded_paused_cross_resolution_mode = "off"
         self.scan_view.set_paused_loaded(False)
 
     def _set_loaded_paused_scan(
@@ -369,6 +405,10 @@ class MainWindowProfilesMixin(MainWindowDriveViewMixin):
         profile: str,
         extensions: list[str],
         probe_backend: str,
+        custom_similarity_threshold: float,
+        scene_aware_sampling: bool,
+        audio_fingerprint_enabled: bool,
+        cross_resolution_mode: str,
     ) -> None:
         """Record the paused-scan definition that is currently loaded in the UI."""
         self._loaded_paused_scan_id = int(scan_id)
@@ -376,6 +416,16 @@ class MainWindowProfilesMixin(MainWindowDriveViewMixin):
         self._loaded_paused_profile = normalize_similarity_profile(profile)
         self._loaded_paused_extensions = normalize_extensions(extensions)
         self._loaded_paused_probe_backend = str(probe_backend or "pyav")
+        self._loaded_paused_custom_similarity_threshold = (
+            normalize_custom_similarity_threshold(custom_similarity_threshold)
+        )
+        self._loaded_paused_scene_aware_sampling = bool(scene_aware_sampling)
+        self._loaded_paused_audio_fingerprint_enabled = bool(
+            audio_fingerprint_enabled
+        )
+        self._loaded_paused_cross_resolution_mode = normalize_cross_resolution_mode(
+            cross_resolution_mode
+        )
         self.scan_view.set_paused_loaded(True)
 
     def _reload_loaded_paused_scan_widgets(self) -> None:
@@ -386,11 +436,28 @@ class MainWindowProfilesMixin(MainWindowDriveViewMixin):
         self.roots_list.setCurrentRow(-1)
         profile_index = self.profile_combo.findText(self._loaded_paused_profile)
         self.profile_combo.setCurrentIndex(max(0, profile_index))
+        self.custom_similarity_threshold_spin.setValue(
+            self._loaded_paused_custom_similarity_threshold
+        )
         self.extensions_edit.setText(", ".join(self._loaded_paused_extensions))
+        self.scene_aware_sampling_check.setChecked(
+            self._loaded_paused_scene_aware_sampling
+        )
+        self.audio_fingerprint_enabled_check.setChecked(
+            self._loaded_paused_audio_fingerprint_enabled
+        )
+        for index in range(self.cross_resolution_mode_combo.count()):
+            if (
+                str(self.cross_resolution_mode_combo.itemData(index))
+                == self._loaded_paused_cross_resolution_mode
+            ):
+                self.cross_resolution_mode_combo.setCurrentIndex(index)
+                break
         probe_backend_index = self.probe_backend_combo.findText(
             self._loaded_paused_probe_backend
         )
         self.probe_backend_combo.setCurrentIndex(max(0, probe_backend_index))
+        self._update_custom_similarity_controls_visibility()
         preset_name = (
             detect_video_extension_preset(self._loaded_paused_extensions)
             or DEFAULT_VIDEO_EXTENSION_PRESET
@@ -413,7 +480,25 @@ class MainWindowProfilesMixin(MainWindowDriveViewMixin):
             return True
         if self._current_sources_profile() != self._loaded_paused_profile:
             return True
+        if normalize_custom_similarity_threshold(
+            self.custom_similarity_threshold_spin.value()
+        ) != normalize_custom_similarity_threshold(
+            self._loaded_paused_custom_similarity_threshold
+        ):
+            return True
         if self._current_sources_extensions() != self._loaded_paused_extensions:
+            return True
+        if bool(self.scene_aware_sampling_check.isChecked()) != bool(
+            self._loaded_paused_scene_aware_sampling
+        ):
+            return True
+        if bool(self.audio_fingerprint_enabled_check.isChecked()) != bool(
+            self._loaded_paused_audio_fingerprint_enabled
+        ):
+            return True
+        if normalize_cross_resolution_mode(
+            self.cross_resolution_mode_combo.currentData()
+        ) != normalize_cross_resolution_mode(self._loaded_paused_cross_resolution_mode):
             return True
         return self._current_probe_backend() != self._loaded_paused_probe_backend
 
@@ -424,7 +509,8 @@ class MainWindowProfilesMixin(MainWindowDriveViewMixin):
         box.setWindowTitle("Paused Scan Changed")
         box.setText(
             "This paused scan can only be resumed after adding new folders.\n\n"
-            "Removing folders or changing profile, extensions, or probe backend "
+            "Removing folders or changing profile, threshold, extensions, scene "
+            "sampling, audio matching, cross-resolution mode, or probe backend "
             "requires a new scan."
         )
         start_new = box.addButton("Start New Scan", QMessageBox.ButtonRole.AcceptRole)
@@ -457,6 +543,16 @@ class MainWindowProfilesMixin(MainWindowDriveViewMixin):
             payload_strings(scan_info.get("extensions", []))
         )
         probe_backend = str(scan_info.get("probe_backend", "pyav"))
+        custom_similarity_threshold = normalize_custom_similarity_threshold(
+            scan_info.get("custom_similarity_threshold", 0.18)
+        )
+        scene_aware_sampling = bool(scan_info.get("scene_aware_sampling", False))
+        audio_fingerprint_enabled = bool(
+            scan_info.get("audio_fingerprint_enabled", False)
+        )
+        cross_resolution_mode = normalize_cross_resolution_mode(
+            scan_info.get("cross_resolution_mode", "off")
+        )
         stamp = self._format_scan_created_at(str(scan_info.get("created_at", "")))
 
         self._set_loaded_paused_scan(
@@ -465,7 +561,22 @@ class MainWindowProfilesMixin(MainWindowDriveViewMixin):
             profile=profile,
             extensions=extensions,
             probe_backend=probe_backend,
+            custom_similarity_threshold=custom_similarity_threshold,
+            scene_aware_sampling=scene_aware_sampling,
+            audio_fingerprint_enabled=audio_fingerprint_enabled,
+            cross_resolution_mode=cross_resolution_mode,
         )
+        self.custom_similarity_threshold_spin.setValue(custom_similarity_threshold)
+        self.scene_aware_sampling_check.setChecked(scene_aware_sampling)
+        self.audio_fingerprint_enabled_check.setChecked(audio_fingerprint_enabled)
+        for index in range(self.cross_resolution_mode_combo.count()):
+            if (
+                str(self.cross_resolution_mode_combo.itemData(index))
+                == cross_resolution_mode
+            ):
+                self.cross_resolution_mode_combo.setCurrentIndex(index)
+                break
+        self._update_custom_similarity_controls_visibility()
         self.scan_view.reset()
         lane_plan = build_physical_drive_scan_plan(
             roots=roots,
@@ -581,6 +692,18 @@ class MainWindowProfilesMixin(MainWindowDriveViewMixin):
                     roots=roots,
                     similarity_profile=profile,
                     extensions=extensions,
+                    custom_similarity_threshold=normalize_custom_similarity_threshold(
+                        scan_payload.get("custom_similarity_threshold", 0.18)
+                    ),
+                    scene_aware_sampling=bool(
+                        scan_payload.get("scene_aware_sampling", False)
+                    ),
+                    audio_fingerprint_enabled=bool(
+                        scan_payload.get("audio_fingerprint_enabled", False)
+                    ),
+                    cross_resolution_mode=normalize_cross_resolution_mode(
+                        scan_payload.get("cross_resolution_mode", "off")
+                    ),
                     updated_at=str(scan_payload.get("created_at", "")),
                 )
                 scan_id = metric_int(scan_payload, "scan_id")
@@ -637,7 +760,25 @@ class MainWindowProfilesMixin(MainWindowDriveViewMixin):
         self._update_root_buttons_state()
         profile_index = self.profile_combo.findText(normalized_profile)
         self.profile_combo.setCurrentIndex(max(0, profile_index))
+        self.custom_similarity_threshold_spin.setValue(
+            normalize_custom_similarity_threshold(profile.custom_similarity_threshold)
+        )
         self.extensions_edit.setText(", ".join(extensions))
+        self.scene_aware_sampling_check.setChecked(bool(profile.scene_aware_sampling))
+        self.audio_fingerprint_enabled_check.setChecked(
+            bool(profile.audio_fingerprint_enabled)
+        )
+        normalized_cross_resolution_mode = normalize_cross_resolution_mode(
+            profile.cross_resolution_mode
+        )
+        for index in range(self.cross_resolution_mode_combo.count()):
+            if (
+                str(self.cross_resolution_mode_combo.itemData(index))
+                == normalized_cross_resolution_mode
+            ):
+                self.cross_resolution_mode_combo.setCurrentIndex(index)
+                break
+        self._update_custom_similarity_controls_visibility()
         preset_name = (
             detect_video_extension_preset(extensions) or DEFAULT_VIDEO_EXTENSION_PRESET
         )
@@ -722,6 +863,14 @@ class MainWindowProfilesMixin(MainWindowDriveViewMixin):
             roots=roots,
             similarity_profile=profile,
             extensions=extensions,
+            custom_similarity_threshold=normalize_custom_similarity_threshold(
+                self.settings.custom_similarity_threshold
+            ),
+            scene_aware_sampling=bool(self.settings.scene_aware_sampling),
+            audio_fingerprint_enabled=bool(self.settings.audio_fingerprint_enabled),
+            cross_resolution_mode=normalize_cross_resolution_mode(
+                self.settings.cross_resolution_mode
+            ),
         )
         confirm = QMessageBox.question(
             self,

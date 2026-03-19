@@ -189,9 +189,12 @@ class ResultsViewTableMixin(ResultsViewBase):
         self.results_table.setItem(row, COL_THUMB, thumb_item)
 
         file_path = Path(item.path)
-        match_label = (
-            "Trimmed" if item.match_reason == "trimmed_match" else "Perceptual"
-        )
+        if item.match_reason == "trimmed_match":
+            match_label = "Trimmed"
+        elif item.match_reason == "audio_match":
+            match_label = "Audio"
+        else:
+            match_label = "Perceptual"
         row_items = {
             COL_FILE_NAME: QTableWidgetItem(file_path.name),
             COL_EXTENSION: QTableWidgetItem(
@@ -220,6 +223,8 @@ class ResultsViewTableMixin(ResultsViewBase):
                     table_item.setToolTip(
                         f"Trimmed match. Delta t {item.match_duration_delta_s:.1f}s"
                     )
+                elif item.match_reason == "audio_match":
+                    table_item.setToolTip("Audio fingerprint rescue match.")
                 else:
                     table_item.setToolTip("Perceptual match.")
             self.results_table.setItem(row, column, table_item)

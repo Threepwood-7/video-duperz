@@ -101,21 +101,21 @@ different types of re-encoding artefacts.
 `fingerprint_frame_count: int` (default `12`) and optionally `fingerprint_sample_percents`
 as a settings override.  More samples = slower scan, fewer false positives.
 
-### [Medium] Scene-change-aware sampling
+### [Medium][DONE] Scene-change-aware sampling
 Instead of fixed percentages, sample at detected scene boundaries so hashes are anchored to
 stable visual landmarks rather than arbitrary time positions.  Particularly useful for
 variable-length intros.
 
-### [Medium] Audio fingerprinting for near-identical video detection
+### [Medium][DONE] Audio fingerprinting for near-identical video detection
 Add optional chromaprint / audiohash-based comparison as a secondary signal.  Two files
 with the same audio fingerprint but different video encoding are almost certainly the same
 content.
 
-### [Low] Custom similarity thresholds
+### [Low][DONE] Custom similarity thresholds
 Beyond the three named profiles (`conservative / balanced / aggressive`), allow the user to
 set a numeric threshold directly (a slider in settings, range 0.01–0.30).
 
-### [Low] Cross-resolution matching
+### [Low][DONE] Cross-resolution matching
 Today aspect ratio is gated strictly (`log2(ra/rb) ≤ 0.2`).  Add an opt-in
 `match_cross_resolution: bool` that relaxes this gate for cases like 1080p vs 720p of the
 same film.

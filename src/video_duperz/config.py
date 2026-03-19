@@ -30,6 +30,8 @@ from .models import (
 from .process_priority import normalize_scan_cpu_priority, normalize_scan_io_mode
 from .scan_sets import (
     build_scan_set_key,
+    normalize_cross_resolution_mode,
+    normalize_custom_similarity_threshold,
     normalize_extensions,
     normalize_roots_for_display,
     normalize_similarity_profile,
@@ -53,6 +55,7 @@ DEFAULT_SCAN_PROGRESS_EMIT_EVERY_FILES = 100
 DEFAULT_SCAN_SIZE_MIB_MIN = 50
 DEFAULT_SCAN_SIZE_MIB_MAX = 0
 DEFAULT_DURATION_TOLERANCE_S = 8.0
+DEFAULT_CUSTOM_SIMILARITY_THRESHOLD = 0.18
 
 
 def _object_list(value: object) -> list[object]:
@@ -189,10 +192,33 @@ def _normalize_saved_scan_profiles(value: object) -> dict[str, SavedScanProfileP
         )
         ext_raw = _string_list(payload_map.get("extensions", []))
         extensions = normalize_extensions(ext_raw)
+        custom_similarity_threshold = normalize_custom_similarity_threshold(
+            payload_map.get(
+                "custom_similarity_threshold",
+                DEFAULT_CUSTOM_SIMILARITY_THRESHOLD,
+            )
+        )
+        scene_aware_sampling = _coerce_bool(
+            payload_map.get("scene_aware_sampling", False),
+            False,
+        )
+        audio_fingerprint_enabled = _coerce_bool(
+            payload_map.get("audio_fingerprint_enabled", False),
+            False,
+        )
+        cross_resolution_mode = normalize_cross_resolution_mode(
+            payload_map.get("cross_resolution_mode", "off")
+        )
         scan_set_key = str(payload_map.get("scan_set_key", "")).strip()
         if not scan_set_key:
             scan_set_key = build_scan_set_key(
-                roots=roots, similarity_profile=profile, extensions=extensions
+                roots=roots,
+                similarity_profile=profile,
+                extensions=extensions,
+                custom_similarity_threshold=custom_similarity_threshold,
+                scene_aware_sampling=scene_aware_sampling,
+                audio_fingerprint_enabled=audio_fingerprint_enabled,
+                cross_resolution_mode=cross_resolution_mode,
             )
         updated_at = str(payload_map.get("updated_at", "")).strip() or utc_now_iso()
         normalized[name] = SavedScanProfilePayload(
@@ -200,6 +226,10 @@ def _normalize_saved_scan_profiles(value: object) -> dict[str, SavedScanProfileP
             roots=roots,
             similarity_profile=profile,
             extensions=extensions,
+            custom_similarity_threshold=custom_similarity_threshold,
+            scene_aware_sampling=scene_aware_sampling,
+            audio_fingerprint_enabled=audio_fingerprint_enabled,
+            cross_resolution_mode=cross_resolution_mode,
             updated_at=updated_at,
         )
         if len(normalized) >= MAX_SAVED_SCAN_PROFILES:
@@ -403,9 +433,25 @@ def _read_qsettings_payload(
         "similarity_profile": qs.value(
             "similarity_profile", defaults.similarity_profile
         ),
+        "custom_similarity_threshold": qs.value(
+            "custom_similarity_threshold",
+            defaults.custom_similarity_threshold,
+        ),
         "duration_tolerance_s": qs.value(
             "duration_tolerance_s",
             defaults.duration_tolerance_s,
+        ),
+        "scene_aware_sampling": _coerce_bool(
+            qs.value("scene_aware_sampling"),
+            defaults.scene_aware_sampling,
+        ),
+        "audio_fingerprint_enabled": _coerce_bool(
+            qs.value("audio_fingerprint_enabled"),
+            defaults.audio_fingerprint_enabled,
+        ),
+        "cross_resolution_mode": qs.value(
+            "cross_resolution_mode",
+            defaults.cross_resolution_mode,
         ),
         "max_workers": qs.value("max_workers", defaults.max_workers),
         "preview_autoplay": _coerce_bool(
@@ -462,6 +508,7 @@ def _read_qsettings_payload(
         "probe_worker_mode": qs.value("probe_worker_mode", defaults.probe_worker_mode),
         "ffmpeg_exe_path": qs.value("ffmpeg_exe_path", defaults.ffmpeg_exe_path),
         "ffprobe_exe_path": qs.value("ffprobe_exe_path", defaults.ffprobe_exe_path),
+        "fpcalc_exe_path": qs.value("fpcalc_exe_path", defaults.fpcalc_exe_path),
         "mediainfo_exe_path": qs.value(
             "mediainfo_exe_path",
             defaults.mediainfo_exe_path,
@@ -553,9 +600,29 @@ def _settings_from_raw(raw: dict[str, object], defaults: Settings) -> Settings:
         similarity_profile=normalize_similarity_profile(
             str(raw.get("similarity_profile", defaults.similarity_profile))
         ),
+        custom_similarity_threshold=normalize_custom_similarity_threshold(
+            raw.get(
+                "custom_similarity_threshold",
+                defaults.custom_similarity_threshold,
+            )
+        ),
         duration_tolerance_s=_normalize_duration_tolerance_s(
             raw.get("duration_tolerance_s", defaults.duration_tolerance_s),
             defaults.duration_tolerance_s,
+        ),
+        scene_aware_sampling=_coerce_bool(
+            raw.get("scene_aware_sampling", defaults.scene_aware_sampling),
+            defaults.scene_aware_sampling,
+        ),
+        audio_fingerprint_enabled=_coerce_bool(
+            raw.get(
+                "audio_fingerprint_enabled",
+                defaults.audio_fingerprint_enabled,
+            ),
+            defaults.audio_fingerprint_enabled,
+        ),
+        cross_resolution_mode=normalize_cross_resolution_mode(
+            raw.get("cross_resolution_mode", defaults.cross_resolution_mode)
         ),
         max_workers=_coerce_int(raw.get("max_workers", defaults.max_workers), 0),
         preview_autoplay=_coerce_bool(
@@ -617,6 +684,9 @@ def _settings_from_raw(raw: dict[str, object], defaults: Settings) -> Settings:
         ),
         ffprobe_exe_path=normalize_executable_override_path(
             raw.get("ffprobe_exe_path", defaults.ffprobe_exe_path)
+        ),
+        fpcalc_exe_path=normalize_executable_override_path(
+            raw.get("fpcalc_exe_path", defaults.fpcalc_exe_path)
         ),
         mediainfo_exe_path=normalize_executable_override_path(
             raw.get("mediainfo_exe_path", defaults.mediainfo_exe_path)
@@ -711,7 +781,11 @@ def default_settings() -> Settings:
         scan_size_mib_min=DEFAULT_SCAN_SIZE_MIB_MIN,
         scan_size_mib_max=DEFAULT_SCAN_SIZE_MIB_MAX,
         similarity_profile="balanced",
+        custom_similarity_threshold=DEFAULT_CUSTOM_SIMILARITY_THRESHOLD,
         duration_tolerance_s=DEFAULT_DURATION_TOLERANCE_S,
+        scene_aware_sampling=False,
+        audio_fingerprint_enabled=False,
+        cross_resolution_mode="off",
         max_workers=default_max_workers(),
         preview_autoplay=False,
         thumbnail_size=DEFAULT_THUMBNAIL_SIZE,
@@ -733,6 +807,7 @@ def default_settings() -> Settings:
         probe_worker_mode="balanced",
         ffmpeg_exe_path="",
         ffprobe_exe_path="",
+        fpcalc_exe_path="",
         mediainfo_exe_path="",
         everything_exe_path="",
         custom_command_f2="",

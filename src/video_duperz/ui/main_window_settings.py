@@ -38,6 +38,8 @@ from ..models import (
 from ..process_priority import normalize_scan_cpu_priority, normalize_scan_io_mode
 from ..scan_sets import (
     build_scan_set_key,
+    normalize_cross_resolution_mode,
+    normalize_custom_similarity_threshold,
     normalize_extensions,
     normalize_roots_for_display,
     normalize_similarity_profile,
@@ -121,8 +123,23 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
         self.extensions_preset_combo.blockSignals(False)
         idx = self.profile_combo.findText(self.settings.similarity_profile)
         self.profile_combo.setCurrentIndex(max(0, idx))
+        self.custom_similarity_threshold_spin.setValue(
+            normalize_custom_similarity_threshold(
+                self.settings.custom_similarity_threshold
+            )
+        )
         self.duration_tolerance_spin.setValue(
             max(0.0, float(self.settings.duration_tolerance_s))
+        )
+        self.scene_aware_sampling_check.setChecked(
+            bool(self.settings.scene_aware_sampling)
+        )
+        self.audio_fingerprint_enabled_check.setChecked(
+            bool(self.settings.audio_fingerprint_enabled)
+        )
+        self._set_combo_by_data(
+            self.cross_resolution_mode_combo,
+            self.settings.cross_resolution_mode,
         )
         probe_backend_index = self.probe_backend_combo.findText(
             self.settings.probe_backend
@@ -133,6 +150,7 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
         self.probe_mode_combo.setCurrentIndex(max(0, probe_index))
         self.ffmpeg_exe_path_edit.setText(self.settings.ffmpeg_exe_path)
         self.ffprobe_exe_path_edit.setText(self.settings.ffprobe_exe_path)
+        self.fpcalc_exe_path_edit.setText(self.settings.fpcalc_exe_path)
         self.mediainfo_exe_path_edit.setText(self.settings.mediainfo_exe_path)
         self._set_combo_by_data(
             self.scan_parent_cpu_priority_combo,
@@ -197,6 +215,7 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
             command_f3=self.settings.custom_command_f3,
             command_f4=self.settings.custom_command_f4,
         )
+        self._update_custom_similarity_controls_visibility()
         self._update_root_buttons_state()
         self._sync_column_toggle_actions()
         self._refresh_sources_physical_drive_view()
@@ -219,9 +238,19 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
             similarity_profile=normalize_similarity_profile(
                 self.profile_combo.currentText()
             ),
+            custom_similarity_threshold=normalize_custom_similarity_threshold(
+                self.custom_similarity_threshold_spin.value()
+            ),
             duration_tolerance_s=max(
                 0.0,
                 float(self.duration_tolerance_spin.value()),
+            ),
+            scene_aware_sampling=bool(self.scene_aware_sampling_check.isChecked()),
+            audio_fingerprint_enabled=bool(
+                self.audio_fingerprint_enabled_check.isChecked()
+            ),
+            cross_resolution_mode=normalize_cross_resolution_mode(
+                self.cross_resolution_mode_combo.currentData()
             ),
             max_workers=self.max_workers_spin.value(),
             preview_autoplay=self.settings.preview_autoplay,
@@ -251,6 +280,9 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
             ),
             ffprobe_exe_path=normalize_executable_override_path(
                 self.ffprobe_exe_path_edit.text()
+            ),
+            fpcalc_exe_path=normalize_executable_override_path(
+                self.fpcalc_exe_path_edit.text()
             ),
             mediainfo_exe_path=normalize_executable_override_path(
                 self.mediainfo_exe_path_edit.text()
@@ -408,10 +440,22 @@ class MainWindowSavedViewsMixin(MainWindowSettingsMixin):
                 continue
             profile = normalize_similarity_profile(payload.similarity_profile)
             extensions = normalize_extensions(list(payload.extensions))
+            custom_similarity_threshold = normalize_custom_similarity_threshold(
+                payload.custom_similarity_threshold
+            )
+            scene_aware_sampling = bool(payload.scene_aware_sampling)
+            audio_fingerprint_enabled = bool(payload.audio_fingerprint_enabled)
+            cross_resolution_mode = normalize_cross_resolution_mode(
+                payload.cross_resolution_mode
+            )
             scan_set_key = str(payload.scan_set_key).strip() or build_scan_set_key(
                 roots=roots,
                 similarity_profile=profile,
                 extensions=extensions,
+                custom_similarity_threshold=custom_similarity_threshold,
+                scene_aware_sampling=scene_aware_sampling,
+                audio_fingerprint_enabled=audio_fingerprint_enabled,
+                cross_resolution_mode=cross_resolution_mode,
             )
             updated_at = str(payload.updated_at).strip() or utc_now_iso()
             normalized[cleaned_name] = SavedScanProfilePayload(
@@ -419,6 +463,10 @@ class MainWindowSavedViewsMixin(MainWindowSettingsMixin):
                 roots=roots,
                 similarity_profile=profile,
                 extensions=extensions,
+                custom_similarity_threshold=custom_similarity_threshold,
+                scene_aware_sampling=scene_aware_sampling,
+                audio_fingerprint_enabled=audio_fingerprint_enabled,
+                cross_resolution_mode=cross_resolution_mode,
                 updated_at=updated_at,
             )
         return normalized

@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import re
 import subprocess
 import sys
 import traceback
@@ -43,8 +44,10 @@ except ImportError:
     cv2 = None  # type: ignore[assignment]
 
 ALGO_VERSION = 1
+SCENE_AWARE_ALGO_VERSION = 2
 FINGERPRINT_DECODER_TIMEOUT_S = 15.0
 _PROBLEMATIC_FORMAT_TIMEOUT_MULTIPLIER = 4.0
+_SCENE_DETECT_THRESHOLD = 0.30
 SAMPLE_PERCENTS = [
     0.05,
     0.13,
@@ -195,6 +198,121 @@ def sample_timestamps(duration_s: float) -> list[float]:
     if duration_s <= 0:
         return [0.0] * len(SAMPLE_PERCENTS)
     return [duration_s * percent for percent in SAMPLE_PERCENTS]
+
+
+def _fixed_sample_timestamps(duration_s: float) -> list[float]:
+    """Return the stable fixed-percentage timestamp plan."""
+    return sample_timestamps(duration_s)
+
+
+def _distributed_scene_timestamps(
+    candidates: list[float],
+    *,
+    sample_count: int,
+) -> list[float] | None:
+    """Choose one evenly distributed subset of scene timestamps."""
+    if len(candidates) < sample_count:
+        return None
+    raw_indices = np.linspace(0, len(candidates) - 1, num=sample_count, dtype=int)
+    indices = [int(index) for index in raw_indices.tolist()]
+    if len(set(indices)) != sample_count:
+        return None
+    return [float(candidates[index]) for index in indices]
+
+
+def _parse_scene_pts_times(stderr_text: str) -> list[float]:
+    """Parse unique ffmpeg showinfo pts_time values from stderr text."""
+    seen: set[float] = set()
+    timestamps: list[float] = []
+    for match in re.finditer(r"pts_time:([0-9]+(?:\.[0-9]+)?)", stderr_text):
+        timestamp_s = float(match.group(1))
+        if timestamp_s in seen:
+            continue
+        seen.add(timestamp_s)
+        timestamps.append(timestamp_s)
+    return timestamps
+
+
+def _scene_change_candidates(
+    path: str,
+    duration_s: float,
+    *,
+    ffmpeg_exe_path: str = "",
+    scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
+    scan_child_io_mode: ScanProcessIoMode = "normal",
+) -> list[float]:
+    """Detect scene-boundary timestamps through ffmpeg showinfo output."""
+    ffmpeg_path = ensure_ffmpeg_available(ffmpeg_exe_path)
+    command = [
+        ffmpeg_path,
+        "-hide_banner",
+        "-v",
+        "info",
+        "-i",
+        path,
+        "-an",
+        "-vf",
+        f"select='gt(scene,{_SCENE_DETECT_THRESHOLD:.2f})',showinfo",
+        "-f",
+        "null",
+        "-",
+    ]
+    kwargs: dict[str, Any] = apply_subprocess_cpu_priority_kwargs(
+        merge_subprocess_kwargs(
+            {
+                "stdin": subprocess.DEVNULL,
+                "stdout": subprocess.DEVNULL,
+                "stderr": subprocess.PIPE,
+                "text": True,
+            },
+            windows_no_window_popen_kwargs(),
+        ),
+        scan_child_cpu_priority,
+    )
+    try:
+        process = subprocess.Popen(command, **kwargs)
+        apply_scan_child_process_io_mode(process, scan_child_io_mode)
+        _stdout_text, stderr_text = process.communicate(
+            timeout=max(5.0, duration_s * 0.5),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if int(process.returncode or 0) != 0:
+        return []
+    return [
+        timestamp_s
+        for timestamp_s in _parse_scene_pts_times(stderr_text)
+        if 0.0 < timestamp_s < max(0.0, float(duration_s))
+    ]
+
+
+def plan_visual_sample_timestamps(
+    path: str,
+    duration_s: float,
+    *,
+    scene_aware_sampling: bool = False,
+    ffmpeg_exe_path: str = "",
+    scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
+    scan_child_io_mode: ScanProcessIoMode = "normal",
+) -> tuple[list[float], int]:
+    """Return the active visual timestamp plan and matching algo version."""
+    fixed_timestamps = _fixed_sample_timestamps(duration_s)
+    if not scene_aware_sampling:
+        return fixed_timestamps, ALGO_VERSION
+    scene_candidates = _scene_change_candidates(
+        path,
+        duration_s,
+        ffmpeg_exe_path=ffmpeg_exe_path,
+        scan_child_cpu_priority=scan_child_cpu_priority,
+        scan_child_io_mode=scan_child_io_mode,
+    )
+    selected = _distributed_scene_timestamps(
+        scene_candidates,
+        sample_count=len(fixed_timestamps),
+    )
+    if selected is None:
+        return fixed_timestamps, SCENE_AWARE_ALGO_VERSION
+    return selected, SCENE_AWARE_ALGO_VERSION
 
 
 def _resize_nearest(gray: np.ndarray, width: int, height: int) -> np.ndarray:
@@ -348,7 +466,12 @@ def _hash_gray_frames(path: str, gray_frames: list[np.ndarray | None]) -> list[i
     return hashes
 
 
-def _opencv_gray_samples(path: str, duration_s: float) -> list[np.ndarray | None]:
+def _opencv_gray_samples(
+    path: str,
+    duration_s: float,
+    *,
+    timestamps: list[float] | None = None,
+) -> list[np.ndarray | None]:
     """Decode sampled grayscale frames through OpenCV."""
     if cv2 is None:
         raise FingerprintError("opencv-python is not installed")
@@ -358,7 +481,7 @@ def _opencv_gray_samples(path: str, duration_s: float) -> list[np.ndarray | None
 
     samples: list[np.ndarray | None] = []
     try:
-        for timestamp_s in sample_timestamps(duration_s):
+        for timestamp_s in (timestamps or _fixed_sample_timestamps(duration_s)):
             cap.set(subprocess_cv_pos_msec(), max(0.0, timestamp_s * 1000.0))
             ok, frame = cap.read()
             if not ok:
@@ -377,7 +500,12 @@ def subprocess_cv_pos_msec() -> int:
     return int(cv2.CAP_PROP_POS_MSEC)
 
 
-def _pyav_gray_samples(path: str, duration_s: float) -> list[np.ndarray | None]:
+def _pyav_gray_samples(
+    path: str,
+    duration_s: float,
+    *,
+    timestamps: list[float] | None = None,
+) -> list[np.ndarray | None]:
     """Decode sampled grayscale frames through PyAV."""
     av_module = _import_av()
     try:
@@ -385,7 +513,7 @@ def _pyav_gray_samples(path: str, duration_s: float) -> list[np.ndarray | None]:
     except Exception as exc:
         raise FingerprintError(f"PyAV failed to open {path}: {exc}") from exc
 
-    targets = sample_timestamps(duration_s)
+    targets = list(timestamps or _fixed_sample_timestamps(duration_s))
     samples: list[np.ndarray | None] = [None] * len(targets)
     try:
         with container:
@@ -481,6 +609,7 @@ def _ffmpeg_gray_samples(
     path: str,
     duration_s: float,
     *,
+    timestamps: list[float] | None = None,
     ffmpeg_exe_path: str = "",
     scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
     scan_child_io_mode: ScanProcessIoMode = "normal",
@@ -495,7 +624,7 @@ def _ffmpeg_gray_samples(
             scan_child_cpu_priority=scan_child_cpu_priority,
             scan_child_io_mode=scan_child_io_mode,
         )
-        for timestamp_s in sample_timestamps(duration_s)
+        for timestamp_s in (timestamps or _fixed_sample_timestamps(duration_s))
     ]
 
 
@@ -504,20 +633,28 @@ def _compute_hashes_for_decoder(
     duration_s: float,
     decoder_backend: FrameDecodeBackendId,
     *,
+    timestamps: list[float] | None = None,
     ffmpeg_exe_path: str = "",
     scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
     scan_child_io_mode: ScanProcessIoMode = "normal",
 ) -> list[int]:
     """Compute hashes through one concrete decoder backend."""
     if decoder_backend == "opencv":
-        return _hash_gray_frames(path, _opencv_gray_samples(path, duration_s))
+        return _hash_gray_frames(
+            path,
+            _opencv_gray_samples(path, duration_s, timestamps=timestamps),
+        )
     if decoder_backend == "pyav":
-        return _hash_gray_frames(path, _pyav_gray_samples(path, duration_s))
+        return _hash_gray_frames(
+            path,
+            _pyav_gray_samples(path, duration_s, timestamps=timestamps),
+        )
     return _hash_gray_frames(
         path,
         _ffmpeg_gray_samples(
             path,
             duration_s,
+            timestamps=timestamps,
             ffmpeg_exe_path=ffmpeg_exe_path,
             scan_child_cpu_priority=scan_child_cpu_priority,
             scan_child_io_mode=scan_child_io_mode,
@@ -580,6 +717,27 @@ def _parse_int_list(value: object) -> list[int] | None:
         elif isinstance(item, str):
             try:
                 parsed.append(int(item))
+            except ValueError:
+                return None
+        else:
+            return None
+    return parsed
+
+
+def _parse_float_list(value: object) -> list[float] | None:
+    """Decode one float list from a JSON-like payload."""
+    if not isinstance(value, list):
+        return None
+    raw_values = cast("list[object]", value)
+    parsed: list[float] = []
+    for item in raw_values:
+        if isinstance(item, bool):
+            parsed.append(float(item))
+        elif isinstance(item, int | float):
+            parsed.append(float(item))
+        elif isinstance(item, str):
+            try:
+                parsed.append(float(item))
             except ValueError:
                 return None
         else:
@@ -706,6 +864,7 @@ def _run_decoder_attempt_subprocess(
     decoder_backend: FrameDecodeBackendId,
     timeout_s: float,
     *,
+    timestamps_s: list[float] | None = None,
     ffmpeg_exe_path: str = "",
     scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
     scan_child_io_mode: ScanProcessIoMode = "normal",
@@ -716,6 +875,7 @@ def _run_decoder_attempt_subprocess(
             "path": path,
             "duration_s": duration_s,
             "decoder_backend": decoder_backend,
+            "timestamps_s": list(timestamps_s or []),
             "ffmpeg_exe_path": ffmpeg_exe_path,
             "scan_child_cpu_priority": scan_child_cpu_priority,
             "scan_child_io_mode": scan_child_io_mode,
@@ -769,6 +929,7 @@ def build_fingerprint_record_with_fallback(
     duration_s: float,
     path: str,
     *,
+    scene_aware_sampling: bool = False,
     attempt_runner: _DecoderAttemptRunner | None = None,
     timeout_s: float = FINGERPRINT_DECODER_TIMEOUT_S,
     ffmpeg_exe_path: str = "",
@@ -789,6 +950,7 @@ def build_fingerprint_record_with_fallback(
             attempt_duration_s,
             decoder_backend,
             attempt_timeout_s,
+            timestamps_s=sample_timestamps_s,
             ffmpeg_exe_path=ffmpeg_exe_path,
             scan_child_cpu_priority=scan_child_cpu_priority,
             scan_child_io_mode=scan_child_io_mode,
@@ -799,6 +961,14 @@ def build_fingerprint_record_with_fallback(
     risky_format_bypass = decoder_sequence[0] != "opencv"
     active_attempt_runner = attempt_runner or _default_attempt_runner
     effective_timeout_s = _decoder_timeout_for_path(path, timeout_s)
+    sample_timestamps_s, algo_version = plan_visual_sample_timestamps(
+        path,
+        duration_s,
+        scene_aware_sampling=scene_aware_sampling,
+        ffmpeg_exe_path=ffmpeg_exe_path,
+        scan_child_cpu_priority=scan_child_cpu_priority,
+        scan_child_io_mode=scan_child_io_mode,
+    )
     for index, decoder_backend in enumerate(decoder_sequence):
         attempt = active_attempt_runner(
             path,
@@ -817,7 +987,7 @@ def build_fingerprint_record_with_fallback(
             continue
         record = FingerprintRecord(
             file_id=file_id,
-            algo_version=ALGO_VERSION,
+            algo_version=algo_version,
             frame_count=len(attempt.hashes),
             hashes=attempt.hashes,
             created_at=utc_now_iso(),
@@ -856,6 +1026,7 @@ def build_fingerprint_record(
         file_id=file_id,
         duration_s=duration_s,
         path=path,
+        scene_aware_sampling=False,
         ffmpeg_exe_path=ffmpeg_exe_path,
         scan_child_cpu_priority=scan_child_cpu_priority,
         scan_child_io_mode=scan_child_io_mode,
@@ -880,6 +1051,8 @@ def run_fingerprint_child_from_stdio() -> int:
         payload_map.get("scan_child_cpu_priority", "") or "normal"
     )
     scan_child_io_mode = str(payload_map.get("scan_child_io_mode", "") or "normal")
+    timestamps_s_raw = payload_map.get("timestamps_s")
+    timestamps_s = _parse_float_list(timestamps_s_raw)
     duration_raw = payload_map.get("duration_s", 0.0)
     duration_s = float(duration_raw) if isinstance(duration_raw, int | float) else 0.0
     try:
@@ -887,6 +1060,7 @@ def run_fingerprint_child_from_stdio() -> int:
             path,
             duration_s,
             decoder_backend,
+            timestamps=timestamps_s,
             ffmpeg_exe_path=ffmpeg_exe_path,
             scan_child_cpu_priority=normalize_scan_cpu_priority(
                 scan_child_cpu_priority,

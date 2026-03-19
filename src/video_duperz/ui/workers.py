@@ -20,7 +20,12 @@ from ..process_priority import normalize_scan_cpu_priority, normalize_scan_io_mo
 from .thumbnails import extract_thumbnail_pair, normalize_frame_pair
 
 if TYPE_CHECKING:
-    from ..models import ProbeBackendId, ScanProcessCpuPriority, ScanProcessIoMode
+    from ..models import (
+        CrossResolutionMode,
+        ProbeBackendId,
+        ScanProcessCpuPriority,
+        ScanProcessIoMode,
+    )
 
 
 class ScanWorkerSignals(QObject):
@@ -43,13 +48,18 @@ class ScanWorker(QRunnable):
         scan_size_mib_min: int,
         scan_size_mib_max: int,
         profile: str,
+        custom_similarity_threshold: float,
         duration_tolerance_s: float,
+        scene_aware_sampling: bool,
+        audio_fingerprint_enabled: bool,
+        cross_resolution_mode: CrossResolutionMode,
         max_workers: int,
         drive_worker_overrides: dict[str, int] | None = None,
         probe_backend: ProbeBackendId = "pyav",
         probe_worker_mode: str = "balanced",
         ffmpeg_exe_path: str = "",
         ffprobe_exe_path: str = "",
+        fpcalc_exe_path: str = "",
         scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
         scan_child_io_mode: ScanProcessIoMode = "normal",
         db_batch_size: int = 512,
@@ -68,7 +78,11 @@ class ScanWorker(QRunnable):
         self._scan_size_mib_min = max(0, int(scan_size_mib_min))
         self._scan_size_mib_max = max(0, int(scan_size_mib_max))
         self._profile = profile
+        self._custom_similarity_threshold = float(custom_similarity_threshold)
         self._duration_tolerance_s = max(0.0, float(duration_tolerance_s))
+        self._scene_aware_sampling = bool(scene_aware_sampling)
+        self._audio_fingerprint_enabled = bool(audio_fingerprint_enabled)
+        self._cross_resolution_mode: CrossResolutionMode = cross_resolution_mode
         self._max_workers = max_workers
         self._drive_worker_overrides = dict(drive_worker_overrides or {})
         self._probe_backend: ProbeBackendId = (
@@ -77,6 +91,7 @@ class ScanWorker(QRunnable):
         self._probe_worker_mode = str(probe_worker_mode or "balanced")
         self._ffmpeg_exe_path = str(ffmpeg_exe_path or "")
         self._ffprobe_exe_path = str(ffprobe_exe_path or "")
+        self._fpcalc_exe_path = str(fpcalc_exe_path or "")
         self._scan_child_cpu_priority: ScanProcessCpuPriority = (
             normalize_scan_cpu_priority(scan_child_cpu_priority)
         )
@@ -112,13 +127,18 @@ class ScanWorker(QRunnable):
                     scan_size_mib_min=self._scan_size_mib_min,
                     scan_size_mib_max=self._scan_size_mib_max,
                     profile=self._profile,
+                    custom_similarity_threshold=self._custom_similarity_threshold,
                     duration_tolerance_s=self._duration_tolerance_s,
+                    scene_aware_sampling=self._scene_aware_sampling,
+                    audio_fingerprint_enabled=self._audio_fingerprint_enabled,
+                    cross_resolution_mode=self._cross_resolution_mode,
                     max_workers=self._max_workers,
                     drive_worker_overrides=self._drive_worker_overrides,
                     probe_backend=self._probe_backend,
                     probe_worker_mode=self._probe_worker_mode,
                     ffmpeg_exe_path=self._ffmpeg_exe_path,
                     ffprobe_exe_path=self._ffprobe_exe_path,
+                    fpcalc_exe_path=self._fpcalc_exe_path,
                     scan_child_cpu_priority=self._scan_child_cpu_priority,
                     scan_child_io_mode=self._scan_child_io_mode,
                     db_batch_size=self._db_batch_size,

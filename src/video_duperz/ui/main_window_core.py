@@ -8,6 +8,7 @@ from PySide6.QtCore import Qt, QThreadPool
 from PySide6.QtGui import QAction, QActionGroup, QKeyEvent, QKeySequence, QMouseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QGridLayout,
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QPushButton,
+    QSlider,
     QSpinBox,
     QTableWidget,
     QTabWidget,
@@ -549,7 +551,7 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
 
     def _build_sources_root_controls(self) -> QHBoxLayout:
         self.roots_list = QListWidget(self.sources_tab)
-        self.roots_list.setMinimumHeight(220)
+        self.roots_list.setMinimumHeight(250)
         self._configure_named_widget(
             self.roots_list,
             object_name="sources_roots_list",
@@ -723,11 +725,41 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             widget_alias="Scan Size MiB Max",
         )
         self.profile_combo = QComboBox(self.sources_tab)
-        self.profile_combo.addItems(["balanced", "conservative", "aggressive"])
+        self.profile_combo.addItems(
+            ["balanced", "conservative", "aggressive", "custom"]
+        )
         self._configure_named_widget(
             self.profile_combo,
             object_name="sources_profile_combo",
             widget_alias="Similarity Profile",
+        )
+        self.profile_combo.currentTextChanged.connect(
+            self._update_custom_similarity_controls_visibility
+        )
+        self.custom_similarity_threshold_slider = QSlider(
+            Qt.Orientation.Horizontal,
+            self.sources_tab,
+        )
+        self.custom_similarity_threshold_slider.setRange(1, 30)
+        self._configure_named_widget(
+            self.custom_similarity_threshold_slider,
+            object_name="sources_custom_similarity_threshold_slider",
+            widget_alias="Custom Similarity Threshold Slider",
+        )
+        self.custom_similarity_threshold_spin = QDoubleSpinBox(self.sources_tab)
+        self.custom_similarity_threshold_spin.setRange(0.01, 0.30)
+        self.custom_similarity_threshold_spin.setDecimals(2)
+        self.custom_similarity_threshold_spin.setSingleStep(0.01)
+        self._configure_named_widget(
+            self.custom_similarity_threshold_spin,
+            object_name="sources_custom_similarity_threshold_spin",
+            widget_alias="Custom Similarity Threshold Spin",
+        )
+        self.custom_similarity_threshold_slider.valueChanged.connect(
+            self._sync_custom_similarity_threshold_from_slider
+        )
+        self.custom_similarity_threshold_spin.valueChanged.connect(
+            self._sync_custom_similarity_threshold_from_spin
         )
         self.duration_tolerance_spin = QDoubleSpinBox(self.sources_tab)
         self.duration_tolerance_spin.setRange(0.0, 30.0)
@@ -738,6 +770,30 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             self.duration_tolerance_spin,
             object_name="sources_duration_tolerance_spin",
             widget_alias="Duration Tolerance Seconds",
+        )
+        self.scene_aware_sampling_check = QCheckBox("Enabled", self.sources_tab)
+        self._configure_named_widget(
+            self.scene_aware_sampling_check,
+            object_name="sources_scene_aware_sampling_check",
+            widget_alias="Scene Aware Sampling",
+        )
+        self.audio_fingerprint_enabled_check = QCheckBox(
+            "Enabled",
+            self.sources_tab,
+        )
+        self._configure_named_widget(
+            self.audio_fingerprint_enabled_check,
+            object_name="sources_audio_fingerprint_enabled_check",
+            widget_alias="Audio Fingerprinting",
+        )
+        self.cross_resolution_mode_combo = QComboBox(self.sources_tab)
+        self.cross_resolution_mode_combo.addItem("Off", "off")
+        self.cross_resolution_mode_combo.addItem("Same aspect", "same_aspect")
+        self.cross_resolution_mode_combo.addItem("Any aspect", "any_aspect")
+        self._configure_named_widget(
+            self.cross_resolution_mode_combo,
+            object_name="sources_cross_resolution_mode_combo",
+            widget_alias="Cross Resolution Mode",
         )
 
         self.max_workers_spin = QSpinBox(self.sources_tab)
@@ -804,6 +860,24 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             lambda: self._browse_executable_path(
                 self.ffprobe_exe_path_edit,
                 "ffprobe",
+            )
+        )
+        self.fpcalc_exe_path_edit = QLineEdit(self.sources_tab)
+        self.fpcalc_exe_path_browse_btn = QPushButton("Browse...", self.sources_tab)
+        self._configure_named_widget(
+            self.fpcalc_exe_path_edit,
+            object_name="sources_fpcalc_exe_path_edit",
+            widget_alias="fpcalc Path Override",
+        )
+        self._configure_named_widget(
+            self.fpcalc_exe_path_browse_btn,
+            object_name="sources_fpcalc_exe_path_browse_btn",
+            widget_alias="Browse fpcalc Path",
+        )
+        self.fpcalc_exe_path_browse_btn.clicked.connect(
+            lambda: self._browse_executable_path(
+                self.fpcalc_exe_path_edit,
+                "fpcalc",
             )
         )
         self.mediainfo_exe_path_edit = QLineEdit(self.sources_tab)
@@ -903,8 +977,23 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             (
                 "Choose how strict duplicate matching should be.\n\n"
                 "Balanced is the everyday default. Conservative reduces false "
-                "positives, while aggressive is more willing to group near-matches."
+                "positives, aggressive is more willing to group near-matches, and "
+                "Custom lets you choose an exact numeric threshold."
             ),
+        )
+        custom_similarity_tooltip = (
+            "Set the exact similarity threshold used when the Custom profile is "
+            "selected.\n\n"
+            "Lower values are stricter and higher values are more permissive. "
+            "This control appears only while the Custom profile is active."
+        )
+        self._set_sources_tooltip(
+            self.custom_similarity_threshold_slider,
+            custom_similarity_tooltip,
+        )
+        self._set_sources_tooltip(
+            self.custom_similarity_threshold_spin,
+            custom_similarity_tooltip,
         )
         self._set_sources_tooltip(
             self.duration_tolerance_spin,
@@ -913,6 +1002,31 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
                 "slightly.\n\n"
                 "Use this for intro/outro trims, tiny remux timestamp drift, or "
                 "near-identical copies with a few seconds added or removed."
+            ),
+        )
+        self._set_sources_tooltip(
+            self.scene_aware_sampling_check,
+            (
+                "Use ffmpeg scene detection to choose fingerprint timestamps from "
+                "scene boundaries instead of fixed percentages.\n\n"
+                "This can improve matching when intros or outros vary in length."
+            ),
+        )
+        self._set_sources_tooltip(
+            self.audio_fingerprint_enabled_check,
+            (
+                "Enable optional audio fingerprint rescue matching.\n\n"
+                "When visual hashes miss a near-identical copy, matching audio can "
+                "still group the pair if duration and aspect checks remain plausible."
+            ),
+        )
+        self._set_sources_tooltip(
+            self.cross_resolution_mode_combo,
+            (
+                "Control how strictly aspect ratio must match before files can be "
+                "compared.\n\n"
+                "Off keeps the original strict gate, Same aspect allows mild crop "
+                "or remux differences, and Any aspect disables the aspect gate."
             ),
         )
         self._set_sources_tooltip(
@@ -983,6 +1097,12 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             "Leave this blank to use ffprobe from PATH. Set it when you want to pin "
             "metadata extraction to a specific ffprobe build."
         )
+        fpcalc_tooltip = (
+            "Optional override path for the fpcalc executable used for audio "
+            "fingerprints.\n\n"
+            "Leave this blank to use fpcalc from PATH. This is only needed when "
+            "audio fingerprinting is enabled."
+        )
         mediainfo_tooltip = (
             "Optional override path for the MediaInfo executable used from the "
             "Results tab.\n\n"
@@ -995,9 +1115,11 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         )
         self._set_sources_tooltip(self.ffmpeg_exe_path_edit, ffmpeg_tooltip)
         self._set_sources_tooltip(self.ffprobe_exe_path_edit, ffprobe_tooltip)
+        self._set_sources_tooltip(self.fpcalc_exe_path_edit, fpcalc_tooltip)
         self._set_sources_tooltip(self.mediainfo_exe_path_edit, mediainfo_tooltip)
         self._set_sources_tooltip(self.ffmpeg_exe_path_browse_btn, browse_tooltip)
         self._set_sources_tooltip(self.ffprobe_exe_path_browse_btn, browse_tooltip)
+        self._set_sources_tooltip(self.fpcalc_exe_path_browse_btn, browse_tooltip)
         self._set_sources_tooltip(self.mediainfo_exe_path_browse_btn, browse_tooltip)
         self._set_sources_tooltip(
             self.thumbnail_size_combo,
@@ -1047,49 +1169,97 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         widget.setToolTip(tooltip)
         widget.setWhatsThis(tooltip)
 
-    def _build_labeled_control_block(
+    def _create_sources_form_table(
         self,
+        *,
+        object_name: str,
+        widget_alias: str,
+    ) -> tuple[QWidget, QGridLayout]:
+        """Build one two-column Sources-tab form container."""
+        table_widget = QWidget(self.sources_tab)
+        self._configure_named_widget(
+            table_widget,
+            object_name=object_name,
+            widget_alias=widget_alias,
+        )
+        table_layout = QGridLayout(table_widget)
+        table_layout.setContentsMargins(0, 0, 0, 0)
+        table_layout.setHorizontalSpacing(12)
+        table_layout.setVerticalSpacing(8)
+        table_layout.setColumnStretch(1, 1)
+        return table_widget, table_layout
+
+    def _add_sources_form_row(
+        self,
+        table_layout: QGridLayout,
+        row: int,
+        table_widget: QWidget,
         label_text: str,
         control: QWidget,
         *,
         tooltip: str,
-    ) -> QWidget:
-        """Build one Sources-tab control block with its label above the control."""
-        row_widget = QWidget(self.sources_tab)
-        row_layout = QVBoxLayout(row_widget)
-        row_layout.setContentsMargins(0, 0, 0, 0)
-        row_layout.setSpacing(4)
-        label = QLabel(label_text, row_widget)
+    ) -> QLabel:
+        """Add one left-label row to a Sources-tab form table."""
+        label = QLabel(label_text, table_widget)
+        label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self._set_sources_tooltip(label, tooltip)
         self._set_sources_tooltip(control, tooltip)
-        row_layout.addWidget(label)
-        row_layout.addWidget(control)
-        return row_widget
+        table_layout.addWidget(label, row, 0)
+        table_layout.addWidget(control, row, 1)
+        return label
 
-    def _build_executable_override_block(
+    def _build_custom_similarity_threshold_control(self) -> QWidget:
+        """Build one inline slider-plus-spin control for the custom threshold."""
+        row = QWidget(self.sources_tab)
+        self._configure_named_widget(
+            row,
+            object_name="sources_custom_similarity_threshold_row",
+            widget_alias="Custom Similarity Threshold Row",
+        )
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        layout.addWidget(self.custom_similarity_threshold_slider, stretch=1)
+        layout.addWidget(self.custom_similarity_threshold_spin)
+        return row
+
+    def _sync_custom_similarity_threshold_from_slider(self, value: int) -> None:
+        """Keep the custom-threshold spin box aligned with the slider."""
+        target = float(max(1, min(30, int(value)))) / 100.0
+        self.custom_similarity_threshold_spin.blockSignals(True)
+        self.custom_similarity_threshold_spin.setValue(target)
+        self.custom_similarity_threshold_spin.blockSignals(False)
+
+    def _sync_custom_similarity_threshold_from_spin(self, value: float) -> None:
+        """Keep the custom-threshold slider aligned with the spin box."""
+        target = max(1, min(30, round(float(value) * 100.0)))
+        self.custom_similarity_threshold_slider.blockSignals(True)
+        self.custom_similarity_threshold_slider.setValue(target)
+        self.custom_similarity_threshold_slider.blockSignals(False)
+
+    def _update_custom_similarity_controls_visibility(self) -> None:
+        """Show the numeric threshold row only while the Custom profile is active."""
+        visible = self.profile_combo.currentText().strip().lower() == "custom"
+        label = getattr(self, "custom_similarity_threshold_label", None)
+        row = getattr(self, "custom_similarity_threshold_row", None)
+        if isinstance(label, QLabel):
+            label.setVisible(visible)
+        if isinstance(row, QWidget):
+            row.setVisible(visible)
+
+    def _build_executable_override_control(
         self,
-        label_text: str,
         path_edit: QLineEdit,
         browse_button: QPushButton,
-        *,
-        tooltip: str,
     ) -> QWidget:
-        """Build one labeled executable override block with a stacked label."""
-        row_widget = QWidget(self.sources_tab)
-        row_layout = QVBoxLayout(row_widget)
-        row_layout.setContentsMargins(0, 0, 0, 0)
-        row_layout.setSpacing(4)
-        label = QLabel(label_text, row_widget)
-        self._set_sources_tooltip(label, tooltip)
-        self._set_sources_tooltip(path_edit, tooltip)
-        row_layout.addWidget(label)
-        path_row = QWidget(row_widget)
+        """Build one inline executable override control row."""
+        path_row = QWidget(self.sources_tab)
         path_row_layout = QHBoxLayout(path_row)
         path_row_layout.setContentsMargins(0, 0, 0, 0)
+        path_row_layout.setSpacing(8)
         path_row_layout.addWidget(path_edit, stretch=1)
         path_row_layout.addWidget(browse_button)
-        row_layout.addWidget(path_row)
-        return row_widget
+        return path_row
 
     def _build_sources_drive_widgets(self) -> None:
         self.sources_drive_summary_label = QLabel(
@@ -1147,7 +1317,7 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             QAbstractItemView.EditTrigger.NoEditTriggers
         )
         self.sources_drive_table.setAlternatingRowColors(True)
-        self.sources_drive_table.setMinimumHeight(280)
+        self.sources_drive_table.setMinimumHeight(250)
         self.sources_drive_table.verticalHeader().setVisible(False)
         drives_header = self.sources_drive_table.horizontalHeader()
         drives_header.setStretchLastSection(False)
@@ -1279,48 +1449,94 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
                 "Use these controls to define scan coverage and duplicate sensitivity."
             ),
         )
-        scan_content_layout.addWidget(
-            self._build_labeled_control_block(
-                "Extensions preset",
-                self.extensions_preset_combo,
-                tooltip=self.extensions_preset_combo.toolTip(),
-            )
+        scan_content_table, scan_content_table_layout = self._create_sources_form_table(
+            object_name="sources_scan_content_form_table",
+            widget_alias="Scan Content Form Table",
         )
-        scan_content_layout.addWidget(
-            self._build_labeled_control_block(
-                "Extensions (comma-separated, no dots required)",
-                self.extensions_edit,
-                tooltip=self.extensions_edit.toolTip(),
-            )
+        self._add_sources_form_row(
+            scan_content_table_layout,
+            0,
+            scan_content_table,
+            "Extensions preset",
+            self.extensions_preset_combo,
+            tooltip=self.extensions_preset_combo.toolTip(),
         )
-        scan_content_layout.addWidget(
-            self._build_labeled_control_block(
-                "Size MiB Min",
-                self.scan_size_mib_min_spin,
-                tooltip=self.scan_size_mib_min_spin.toolTip(),
-            )
+        self._add_sources_form_row(
+            scan_content_table_layout,
+            1,
+            scan_content_table,
+            "Extensions (comma-separated, no dots required)",
+            self.extensions_edit,
+            tooltip=self.extensions_edit.toolTip(),
         )
-        scan_content_layout.addWidget(
-            self._build_labeled_control_block(
-                "Size MiB Max",
-                self.scan_size_mib_max_spin,
-                tooltip=self.scan_size_mib_max_spin.toolTip(),
-            )
+        self._add_sources_form_row(
+            scan_content_table_layout,
+            2,
+            scan_content_table,
+            "Size MiB Min",
+            self.scan_size_mib_min_spin,
+            tooltip=self.scan_size_mib_min_spin.toolTip(),
         )
-        scan_content_layout.addWidget(
-            self._build_labeled_control_block(
-                "Similarity profile",
-                self.profile_combo,
-                tooltip=self.profile_combo.toolTip(),
-            )
+        self._add_sources_form_row(
+            scan_content_table_layout,
+            3,
+            scan_content_table,
+            "Size MiB Max",
+            self.scan_size_mib_max_spin,
+            tooltip=self.scan_size_mib_max_spin.toolTip(),
         )
-        scan_content_layout.addWidget(
-            self._build_labeled_control_block(
-                "Duration tolerance (s)",
-                self.duration_tolerance_spin,
-                tooltip=self.duration_tolerance_spin.toolTip(),
-            )
+        self._add_sources_form_row(
+            scan_content_table_layout,
+            4,
+            scan_content_table,
+            "Similarity profile",
+            self.profile_combo,
+            tooltip=self.profile_combo.toolTip(),
         )
+        self.custom_similarity_threshold_row = (
+            self._build_custom_similarity_threshold_control()
+        )
+        self.custom_similarity_threshold_label = self._add_sources_form_row(
+            scan_content_table_layout,
+            5,
+            scan_content_table,
+            "Custom threshold",
+            self.custom_similarity_threshold_row,
+            tooltip=self.custom_similarity_threshold_spin.toolTip(),
+        )
+        self._add_sources_form_row(
+            scan_content_table_layout,
+            6,
+            scan_content_table,
+            "Duration tolerance (s)",
+            self.duration_tolerance_spin,
+            tooltip=self.duration_tolerance_spin.toolTip(),
+        )
+        self._add_sources_form_row(
+            scan_content_table_layout,
+            7,
+            scan_content_table,
+            "Scene-aware sampling",
+            self.scene_aware_sampling_check,
+            tooltip=self.scene_aware_sampling_check.toolTip(),
+        )
+        self._add_sources_form_row(
+            scan_content_table_layout,
+            8,
+            scan_content_table,
+            "Audio fingerprinting",
+            self.audio_fingerprint_enabled_check,
+            tooltip=self.audio_fingerprint_enabled_check.toolTip(),
+        )
+        self._add_sources_form_row(
+            scan_content_table_layout,
+            9,
+            scan_content_table,
+            "Cross-resolution matching",
+            self.cross_resolution_mode_combo,
+            tooltip=self.cross_resolution_mode_combo.toolTip(),
+        )
+        scan_content_layout.addWidget(scan_content_table)
         scan_content_layout.addStretch(1)
 
         scan_performance_group, scan_performance_layout = (
@@ -1336,6 +1552,13 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
                 ),
             )
         )
+        scan_performance_table, scan_performance_table_layout = (
+            self._create_sources_form_table(
+                object_name="sources_scan_performance_form_table",
+                widget_alias="Scan Performance Form Table",
+            )
+        )
+        scan_performance_row = 0
         for label_text, control in (
             ("Max workers total", self.max_workers_spin),
             ("Probe backend", self.probe_backend_combo),
@@ -1345,13 +1568,16 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             ("Child CPU priority during scan", self.scan_child_cpu_priority_combo),
             ("Child I/O mode during scan", self.scan_child_io_mode_combo),
         ):
-            scan_performance_layout.addWidget(
-                self._build_labeled_control_block(
-                    label_text,
-                    control,
-                    tooltip=control.toolTip(),
-                )
+            self._add_sources_form_row(
+                scan_performance_table_layout,
+                scan_performance_row,
+                scan_performance_table,
+                label_text,
+                control,
+                tooltip=control.toolTip(),
             )
+            scan_performance_row += 1
+        scan_performance_layout.addWidget(scan_performance_table)
         scan_performance_layout.addStretch(1)
 
         tools_group, tools_layout = self._create_sources_group_box(
@@ -1364,37 +1590,63 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
                 "Blank tool-path fields fall back to PATH lookup."
             ),
         )
-        tools_layout.addWidget(
-            self._build_executable_override_block(
-                "ffmpeg executable override",
+        tools_table, tools_table_layout = self._create_sources_form_table(
+            object_name="sources_tool_paths_form_table",
+            widget_alias="Tool Paths Form Table",
+        )
+        self._add_sources_form_row(
+            tools_table_layout,
+            0,
+            tools_table,
+            "ffmpeg executable override",
+            self._build_executable_override_control(
                 self.ffmpeg_exe_path_edit,
                 self.ffmpeg_exe_path_browse_btn,
-                tooltip=self.ffmpeg_exe_path_edit.toolTip(),
-            )
+            ),
+            tooltip=self.ffmpeg_exe_path_edit.toolTip(),
         )
-        tools_layout.addWidget(
-            self._build_executable_override_block(
-                "ffprobe executable override",
+        self._add_sources_form_row(
+            tools_table_layout,
+            1,
+            tools_table,
+            "ffprobe executable override",
+            self._build_executable_override_control(
                 self.ffprobe_exe_path_edit,
                 self.ffprobe_exe_path_browse_btn,
-                tooltip=self.ffprobe_exe_path_edit.toolTip(),
-            )
+            ),
+            tooltip=self.ffprobe_exe_path_edit.toolTip(),
         )
-        tools_layout.addWidget(
-            self._build_executable_override_block(
-                "MediaInfo executable override",
+        self._add_sources_form_row(
+            tools_table_layout,
+            2,
+            tools_table,
+            "fpcalc executable override",
+            self._build_executable_override_control(
+                self.fpcalc_exe_path_edit,
+                self.fpcalc_exe_path_browse_btn,
+            ),
+            tooltip=self.fpcalc_exe_path_edit.toolTip(),
+        )
+        self._add_sources_form_row(
+            tools_table_layout,
+            3,
+            tools_table,
+            "MediaInfo executable override",
+            self._build_executable_override_control(
                 self.mediainfo_exe_path_edit,
                 self.mediainfo_exe_path_browse_btn,
-                tooltip=self.mediainfo_exe_path_edit.toolTip(),
-            )
+            ),
+            tooltip=self.mediainfo_exe_path_edit.toolTip(),
         )
-        tools_layout.addWidget(
-            self._build_labeled_control_block(
-                "Thumbnail preview size",
-                self.thumbnail_size_combo,
-                tooltip=self.thumbnail_size_combo.toolTip(),
-            )
+        self._add_sources_form_row(
+            tools_table_layout,
+            4,
+            tools_table,
+            "Thumbnail preview size",
+            self.thumbnail_size_combo,
+            tooltip=self.thumbnail_size_combo.toolTip(),
         )
+        tools_layout.addWidget(tools_table)
         tools_layout.addStretch(1)
 
         options_container = QWidget(self.sources_tab)
@@ -1425,3 +1677,4 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         layout.addWidget(physical_drives_group, stretch=2)
         layout.addWidget(options_container)
         layout.addLayout(footer_layout)
+        self._update_custom_similarity_controls_visibility()

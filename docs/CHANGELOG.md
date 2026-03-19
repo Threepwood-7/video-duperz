@@ -2,6 +2,10 @@
 
 ## 2026-03-19
 
+- Added opt-in scene-aware visual sampling, cached by its own fingerprint algorithm version so scene-based and fixed-percentage fingerprints can coexist safely.
+- Added optional `fpcalc` audio fingerprinting as a secondary duplicate signal, including cached audio artifacts, non-fatal scan issues when the tool is unavailable, and `Audio` match badges in Results.
+- Added a `Custom` similarity profile with a numeric threshold control in Sources, and threaded that threshold through saved scan profiles, paused-scan reloads, scan-set identity, and matcher decisions.
+- Added cross-resolution duplicate matching modes so users can keep strict aspect gating by default or relax it for near-identical releases with different framing or output sizes.
 - Added duration-difference duplicate matching so near-identical videos can still group when one copy is a few seconds longer or shorter due to trims or timestamp drift.
 - Exposed `duration_tolerance_s` in the Sources tab and persisted it through settings, scan workers, and the runtime matcher pipeline.
 - Switched duration-mismatched duplicate comparisons to an inner-frame hash path so intro/outro drift no longer dominates the median-distance decision.

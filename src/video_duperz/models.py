@@ -10,8 +10,9 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 ActionKind = Literal["keep", "rename", "delete"]
-SimilarityProfile = Literal["balanced", "conservative", "aggressive"]
-MatchReason = Literal["perceptual", "trimmed_match"]
+SimilarityProfile = Literal["balanced", "conservative", "aggressive", "custom"]
+CrossResolutionMode = Literal["off", "same_aspect", "any_aspect"]
+MatchReason = Literal["perceptual", "trimmed_match", "audio_match"]
 KeepRule = Literal["best_quality"]
 ProbeWorkerMode = Literal["balanced", "burst"]
 ProbeBackendId = Literal["ffprobe", "pyav"]
@@ -37,6 +38,8 @@ def utc_now_iso() -> str:
 
 def normalize_match_reason(value: object) -> MatchReason:
     """Normalize persisted match-reason text to a supported literal."""
+    if str(value or "").strip().lower() == "audio_match":
+        return "audio_match"
     if str(value or "").strip().lower() == "trimmed_match":
         return "trimmed_match"
     return "perceptual"
@@ -50,6 +53,10 @@ class SavedScanProfilePayload:
     roots: list[str]
     similarity_profile: SimilarityProfile
     extensions: list[str]
+    custom_similarity_threshold: float = 0.18
+    scene_aware_sampling: bool = False
+    audio_fingerprint_enabled: bool = False
+    cross_resolution_mode: CrossResolutionMode = "off"
     updated_at: str = field(default_factory=utc_now_iso)
 
 
@@ -63,7 +70,11 @@ class Settings:
     scan_size_mib_min: int = 50
     scan_size_mib_max: int = 0
     similarity_profile: SimilarityProfile = "balanced"
+    custom_similarity_threshold: float = 0.18
     duration_tolerance_s: float = 8.0
+    scene_aware_sampling: bool = False
+    audio_fingerprint_enabled: bool = False
+    cross_resolution_mode: CrossResolutionMode = "off"
     max_workers: int = 2
     preview_autoplay: bool = False
     thumbnail_size: str = DEFAULT_THUMBNAIL_SIZE
@@ -89,6 +100,7 @@ class Settings:
     probe_worker_mode: ProbeWorkerMode = "balanced"
     ffmpeg_exe_path: str = ""
     ffprobe_exe_path: str = ""
+    fpcalc_exe_path: str = ""
     mediainfo_exe_path: str = ""
     everything_exe_path: str = ""
     custom_command_f2: str = ""
@@ -301,6 +313,7 @@ class MatchItem:
     subtitle_languages: str
     is_hdr: bool
     hashes: list[int]
+    audio_fingerprint: str = ""
 
 
 @dataclass(slots=True)

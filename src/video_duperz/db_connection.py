@@ -10,6 +10,8 @@ from .config import db_path
 from .db_shared import decode_string_list_json
 from .scan_sets import (
     build_scan_set_key,
+    normalize_cross_resolution_mode,
+    normalize_custom_similarity_threshold,
     normalize_extensions,
     normalize_roots_for_display,
     normalize_similarity_profile,
@@ -18,7 +20,7 @@ from .scan_sets import (
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 
 class DatabaseConnectionMixin:
@@ -117,6 +119,10 @@ class DatabaseConnectionMixin:
               profile TEXT NOT NULL,
               roots_json TEXT NOT NULL,
               extensions_json TEXT NOT NULL DEFAULT '[]',
+              custom_similarity_threshold REAL NOT NULL DEFAULT 0.18,
+              scene_aware_sampling INTEGER NOT NULL DEFAULT 0,
+              audio_fingerprint_enabled INTEGER NOT NULL DEFAULT 0,
+              cross_resolution_mode TEXT NOT NULL DEFAULT 'off',
               probe_backend TEXT NOT NULL DEFAULT 'pyav',
               scan_set_key TEXT NOT NULL DEFAULT '',
               status TEXT NOT NULL
@@ -169,31 +175,44 @@ class DatabaseConnectionMixin:
             CREATE TABLE IF NOT EXISTS fingerprints(
               file_id INTEGER NOT NULL,
               probe_backend TEXT NOT NULL DEFAULT 'pyav',
+              algo_version INTEGER NOT NULL,
               source_size INTEGER NOT NULL,
               source_mtime_ns INTEGER NOT NULL,
-              algo_version INTEGER NOT NULL,
               frame_count INTEGER NOT NULL,
               hash_blob BLOB NOT NULL,
               created_at TEXT NOT NULL,
-              PRIMARY KEY(file_id, probe_backend),
+              PRIMARY KEY(file_id, probe_backend, algo_version),
               FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_fingerprints_algo
               ON fingerprints(algo_version);
             CREATE INDEX IF NOT EXISTS idx_fingerprints_file_backend
-              ON fingerprints(file_id, probe_backend);
+              ON fingerprints(file_id, probe_backend, algo_version);
 
             CREATE TABLE IF NOT EXISTS fingerprint_decoder_provenance(
               file_id INTEGER NOT NULL,
               probe_backend TEXT NOT NULL DEFAULT 'pyav',
+              algo_version INTEGER NOT NULL,
               decoder_backend TEXT NOT NULL,
               attempts_json TEXT NOT NULL DEFAULT '[]',
               created_at TEXT NOT NULL,
-              PRIMARY KEY(file_id, probe_backend),
+              PRIMARY KEY(file_id, probe_backend, algo_version),
               FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_fingerprint_decoder_provenance_file_backend
-              ON fingerprint_decoder_provenance(file_id, probe_backend);
+              ON fingerprint_decoder_provenance(file_id, probe_backend, algo_version);
+
+            CREATE TABLE IF NOT EXISTS audio_fingerprints(
+              file_id INTEGER NOT NULL,
+              source_size INTEGER NOT NULL,
+              source_mtime_ns INTEGER NOT NULL,
+              fingerprint_text TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              PRIMARY KEY(file_id),
+              FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_audio_fingerprints_file
+              ON audio_fingerprints(file_id);
 
             CREATE TABLE IF NOT EXISTS duplicate_groups(
               id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -285,6 +304,7 @@ class DatabaseConnectionMixin:
         self._ensure_video_meta_columns()
         self._ensure_backend_scoped_cache_tables()
         self._ensure_fingerprint_decoder_provenance_table()
+        self._ensure_audio_fingerprint_table()
         self._ensure_duplicate_group_item_columns()
         self._ensure_scan_columns()
         self._ensure_scan_issue_table()
@@ -301,14 +321,33 @@ class DatabaseConnectionMixin:
             CREATE TABLE IF NOT EXISTS fingerprint_decoder_provenance(
               file_id INTEGER NOT NULL,
               probe_backend TEXT NOT NULL DEFAULT 'pyav',
+              algo_version INTEGER NOT NULL,
               decoder_backend TEXT NOT NULL,
               attempts_json TEXT NOT NULL DEFAULT '[]',
               created_at TEXT NOT NULL,
-              PRIMARY KEY(file_id, probe_backend),
+              PRIMARY KEY(file_id, probe_backend, algo_version),
               FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_fingerprint_decoder_provenance_file_backend
-              ON fingerprint_decoder_provenance(file_id, probe_backend);
+              ON fingerprint_decoder_provenance(file_id, probe_backend, algo_version);
+            """
+        )
+
+    def _ensure_audio_fingerprint_table(self) -> None:
+        """Create the persisted audio-fingerprint table when absent."""
+        self.conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS audio_fingerprints(
+              file_id INTEGER NOT NULL,
+              source_size INTEGER NOT NULL,
+              source_mtime_ns INTEGER NOT NULL,
+              fingerprint_text TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              PRIMARY KEY(file_id),
+              FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_audio_fingerprints_file
+              ON audio_fingerprints(file_id);
             """
         )
 
@@ -390,24 +429,25 @@ class DatabaseConnectionMixin:
         if (
             fingerprints_pk.get("file_id") != 1
             or fingerprints_pk.get("probe_backend") != 2
+            or fingerprints_pk.get("algo_version") != 3
         ):
             self.conn.executescript(
                 """
                 CREATE TABLE fingerprints_new(
                   file_id INTEGER NOT NULL,
                   probe_backend TEXT NOT NULL DEFAULT 'pyav',
+                  algo_version INTEGER NOT NULL,
                   source_size INTEGER NOT NULL,
                   source_mtime_ns INTEGER NOT NULL,
-                  algo_version INTEGER NOT NULL,
                   frame_count INTEGER NOT NULL,
                   hash_blob BLOB NOT NULL,
                   created_at TEXT NOT NULL,
-                  PRIMARY KEY(file_id, probe_backend),
+                  PRIMARY KEY(file_id, probe_backend, algo_version),
                   FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
                 );
                 INSERT INTO fingerprints_new(
-                  file_id, probe_backend, source_size, source_mtime_ns,
-                  algo_version, frame_count,
+                  file_id, probe_backend, algo_version, source_size, source_mtime_ns,
+                  frame_count,
                   hash_blob, created_at
                 )
                 SELECT
@@ -416,9 +456,9 @@ class DatabaseConnectionMixin:
                     WHEN TRIM(COALESCE(probe_backend, '')) = '' THEN 'ffprobe'
                     ELSE probe_backend
                   END,
+                  algo_version,
                   source_size,
                   source_mtime_ns,
-                  algo_version,
                   frame_count,
                   hash_blob,
                   created_at
@@ -428,7 +468,52 @@ class DatabaseConnectionMixin:
                 CREATE INDEX idx_fingerprints_algo
                   ON fingerprints(algo_version);
                 CREATE INDEX idx_fingerprints_file_backend
-                  ON fingerprints(file_id, probe_backend);
+                  ON fingerprints(file_id, probe_backend, algo_version);
+                """
+            )
+        provenance_pk = {
+            str(row["name"]): int(row["pk"])
+            for row in self.conn.execute(
+                "PRAGMA table_info(fingerprint_decoder_provenance)"
+            ).fetchall()
+        }
+        if (
+            provenance_pk.get("file_id") != 1
+            or provenance_pk.get("probe_backend") != 2
+            or provenance_pk.get("algo_version") != 3
+        ):
+            self.conn.executescript(
+                """
+                CREATE TABLE fingerprint_decoder_provenance_new(
+                  file_id INTEGER NOT NULL,
+                  probe_backend TEXT NOT NULL DEFAULT 'pyav',
+                  algo_version INTEGER NOT NULL,
+                  decoder_backend TEXT NOT NULL,
+                  attempts_json TEXT NOT NULL DEFAULT '[]',
+                  created_at TEXT NOT NULL,
+                  PRIMARY KEY(file_id, probe_backend, algo_version),
+                  FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+                );
+                INSERT INTO fingerprint_decoder_provenance_new(
+                  file_id, probe_backend, algo_version, decoder_backend,
+                  attempts_json, created_at
+                )
+                SELECT
+                  file_id,
+                  CASE
+                    WHEN TRIM(COALESCE(probe_backend, '')) = '' THEN 'ffprobe'
+                    ELSE probe_backend
+                  END,
+                  1,
+                  decoder_backend,
+                  attempts_json,
+                  created_at
+                FROM fingerprint_decoder_provenance;
+                DROP TABLE fingerprint_decoder_provenance;
+                ALTER TABLE fingerprint_decoder_provenance_new
+                  RENAME TO fingerprint_decoder_provenance;
+                CREATE INDEX idx_fingerprint_decoder_provenance_file_backend
+                  ON fingerprint_decoder_provenance(file_id, probe_backend, algo_version);
                 """
             )
 
@@ -515,6 +600,11 @@ class DatabaseConnectionMixin:
                 "ALTER TABLE fingerprints "
                 "ADD COLUMN probe_backend TEXT NOT NULL DEFAULT 'ffprobe'"
             )
+        if "algo_version" not in fp_columns:
+            self.conn.execute(
+                "ALTER TABLE fingerprints ADD COLUMN algo_version INTEGER NOT NULL "
+                "DEFAULT 1"
+            )
         if "source_size" not in fp_columns:
             self.conn.execute(
                 "ALTER TABLE fingerprints ADD COLUMN source_size INTEGER NOT NULL "
@@ -559,6 +649,26 @@ class DatabaseConnectionMixin:
                 "ALTER TABLE scans ADD COLUMN extensions_json TEXT "
                 "NOT NULL DEFAULT '[]'"
             )
+        if "custom_similarity_threshold" not in columns:
+            self.conn.execute(
+                "ALTER TABLE scans ADD COLUMN custom_similarity_threshold REAL "
+                "NOT NULL DEFAULT 0.18"
+            )
+        if "scene_aware_sampling" not in columns:
+            self.conn.execute(
+                "ALTER TABLE scans ADD COLUMN scene_aware_sampling INTEGER "
+                "NOT NULL DEFAULT 0"
+            )
+        if "audio_fingerprint_enabled" not in columns:
+            self.conn.execute(
+                "ALTER TABLE scans ADD COLUMN audio_fingerprint_enabled INTEGER "
+                "NOT NULL DEFAULT 0"
+            )
+        if "cross_resolution_mode" not in columns:
+            self.conn.execute(
+                "ALTER TABLE scans ADD COLUMN cross_resolution_mode TEXT "
+                "NOT NULL DEFAULT 'off'"
+            )
         if "probe_backend" not in columns:
             self.conn.execute(
                 "ALTER TABLE scans ADD COLUMN probe_backend TEXT NOT NULL "
@@ -571,6 +681,14 @@ class DatabaseConnectionMixin:
         self.conn.execute(
             "UPDATE scans SET probe_backend = 'ffprobe' "
             "WHERE TRIM(COALESCE(probe_backend, '')) = ''"
+        )
+        self.conn.execute(
+            "UPDATE scans SET custom_similarity_threshold = 0.18 "
+            "WHERE custom_similarity_threshold IS NULL"
+        )
+        self.conn.execute(
+            "UPDATE scans SET cross_resolution_mode = 'off' "
+            "WHERE TRIM(COALESCE(cross_resolution_mode, '')) = ''"
         )
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_scans_set_status "
@@ -665,7 +783,9 @@ class DatabaseConnectionMixin:
         """Populate scan-set keys for legacy rows that predate that column."""
         rows = self.conn.execute(
             """
-            SELECT id, roots_json, profile, extensions_json, scan_set_key
+            SELECT id, roots_json, profile, extensions_json,
+                   custom_similarity_threshold, scene_aware_sampling,
+                   audio_fingerprint_enabled, cross_resolution_mode, scan_set_key
             FROM scans
             WHERE scan_set_key = '' OR scan_set_key IS NULL
             """
@@ -680,6 +800,14 @@ class DatabaseConnectionMixin:
                 roots=roots,
                 similarity_profile=profile,
                 extensions=extensions,
+                custom_similarity_threshold=normalize_custom_similarity_threshold(
+                    row["custom_similarity_threshold"]
+                ),
+                scene_aware_sampling=bool(row["scene_aware_sampling"]),
+                audio_fingerprint_enabled=bool(row["audio_fingerprint_enabled"]),
+                cross_resolution_mode=normalize_cross_resolution_mode(
+                    row["cross_resolution_mode"]
+                ),
             )
             self.conn.execute(
                 "UPDATE scans SET scan_set_key = ? WHERE id = ?",

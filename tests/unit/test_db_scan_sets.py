@@ -213,6 +213,73 @@ def test_scan_issue_rows_persist_and_list_for_paused_scans() -> None:
         assert issues[1].message == "worker cap reduced"
 
 
+def test_scan_info_roundtrips_new_detection_settings() -> None:
+    with Database(":memory:") as db:
+        scan_id = db.create_scan(
+            profile="custom",
+            roots=["D:/Videos"],
+            extensions=["mp4"],
+            custom_similarity_threshold=0.22,
+            scene_aware_sampling=True,
+            audio_fingerprint_enabled=True,
+            cross_resolution_mode="same_aspect",
+            probe_backend="ffprobe",
+        )
+
+        scan_info = db.get_scan_info(scan_id)
+
+        assert scan_info["profile"] == "custom"
+        assert scan_info["custom_similarity_threshold"] == 0.22
+        assert scan_info["scene_aware_sampling"] is True
+        assert scan_info["audio_fingerprint_enabled"] is True
+        assert scan_info["cross_resolution_mode"] == "same_aspect"
+        assert scan_info["probe_backend"] == "ffprobe"
+
+
+def test_cached_artifacts_can_include_audio_fingerprints() -> None:
+    with Database(":memory:") as db:
+        scan_id = db.create_scan(
+            profile="balanced",
+            roots=["D:/Videos"],
+            extensions=["mp4"],
+        )
+        file_id = db.upsert_file(
+            path="D:/Videos/a.mp4",
+            size=123,
+            mtime_ns=456,
+            ctime_ns=456,
+            ext="mp4",
+            scan_id=scan_id,
+        )
+        db.save_video_meta(
+            file_id,
+            VideoMeta(
+                duration_s=10.0,
+                width=320,
+                height=240,
+                fps=24.0,
+                codec="h264",
+                bitrate=1000,
+                has_audio=True,
+                audio_codec="aac",
+                audio_bitrate=128000,
+                audio_languages="eng",
+                subtitle_languages="",
+                is_hdr=False,
+            ),
+        )
+        db.save_fingerprint(file_id, algo_version=ALGO_VERSION, hashes=[1, 2, 3])
+        db.save_audio_fingerprints_batch([(file_id, 123, 456, "audio:abc")])
+
+        cached = db.load_cached_artifacts_batch(
+            [{"path": "D:/Videos/a.mp4", "size": 123, "mtime_ns": 456}],
+            algo_version=ALGO_VERSION,
+            include_audio_fingerprint=True,
+        )
+
+        assert cached["D:/Videos/a.mp4"]["audio_fingerprint"] == "audio:abc"
+
+
 def test_failed_file_rows_persist_clear_and_ignore_non_file_issues() -> None:
     with Database(":memory:") as db:
         scan_id = db.create_scan(
@@ -401,7 +468,7 @@ def test_scan_batch_methods_roundtrip() -> None:
         )
         db.save_fingerprints_batch([(file_a, 10, 11, ALGO_VERSION, [1, 2, 3, 4])])
         db.save_fingerprint_provenance_batch(
-            [(file_a, "pyav", '{"decoder_backend":"pyav"}')]
+            [(file_a, ALGO_VERSION, "pyav", '{"decoder_backend":"pyav"}')]
         )
         db.save_probe_errors_batch([(file_b, 20, 22, "probe failed")])
 
@@ -465,7 +532,8 @@ def test_scan_batch_methods_roundtrip() -> None:
             [
                 {"path": "D:/Videos/a.mp4", "size": 10, "mtime_ns": 11},
                 {"path": "D:/Videos/b.mp4", "size": 20, "mtime_ns": 22},
-            ]
+            ],
+            algo_version=ALGO_VERSION,
         )
         assert "D:/Videos/a.mp4" in cached
         assert "meta" in cached["D:/Videos/a.mp4"]

@@ -13,9 +13,10 @@ from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
 from threep_commons.fs_paths import path_key
 
-from .fingerprint import ALGO_VERSION, FingerprintError
+from .fingerprint import FingerprintError
 from .matcher import build_duplicate_groups, find_duplicate_edges
 from .models import (
+    CrossResolutionMode,
     MatchStats,
     ProbeBackendId,
     ScanEnumerationResult,
@@ -90,7 +91,12 @@ class _CacheReuseDecision:
     skip_analysis: bool
 
 
-def _decide_cached_analysis(cache: _CachedArtifacts | None) -> _CacheReuseDecision:
+def _decide_cached_analysis(
+    cache: _CachedArtifacts | None,
+    *,
+    algo_version: int,
+    audio_fingerprint_enabled: bool,
+) -> _CacheReuseDecision:
     """Return whether a file can fully reuse persisted analysis rows."""
     if cache is None:
         return _CacheReuseDecision(cached_meta=None, skip_analysis=False)
@@ -99,7 +105,11 @@ def _decide_cached_analysis(cache: _CachedArtifacts | None) -> _CacheReuseDecisi
     if (
         cached_meta is not None
         and cached_fp is not None
-        and int(cached_fp["algo_version"]) == ALGO_VERSION
+        and int(cached_fp["algo_version"]) == int(algo_version)
+        and (
+            not audio_fingerprint_enabled
+            or bool(str(cache.get("audio_fingerprint", "")).strip())
+        )
     ):
         return _CacheReuseDecision(cached_meta=cached_meta, skip_analysis=True)
     return _CacheReuseDecision(cached_meta=cached_meta, skip_analysis=False)
@@ -213,6 +223,7 @@ def _flush_pending_analysis_batches(
         len(ctx.pending_meta_rows)
         + len(ctx.pending_fp_rows)
         + len(ctx.pending_fp_provenance_rows)
+        + len(ctx.pending_audio_fp_rows)
         + len(ctx.pending_probe_error_rows)
     )
     if pending_total <= 0:
@@ -253,6 +264,15 @@ def _flush_pending_analysis_batches(
             len(chunk),
             chunk,
             probe_backend=ctx.probe_backend,
+        )
+    while ctx.pending_audio_fp_rows:
+        chunk = ctx.pending_audio_fp_rows[: ctx.db_batch_size]
+        del ctx.pending_audio_fp_rows[: len(chunk)]
+        _timed_db_write(
+            ctx,
+            ctx.db.save_audio_fingerprints_batch,
+            len(chunk),
+            chunk,
         )
     while ctx.pending_probe_error_rows:
         chunk = ctx.pending_probe_error_rows[: ctx.db_batch_size]
@@ -452,6 +472,8 @@ def _process_discovered_batch(ctx: _ScanContext, batch: list[VideoRecord]) -> No
     )
     cache_by_path = ctx.db.load_cached_artifacts_batch(
         cache_payload,
+        algo_version=ctx.visual_algo_version,
+        include_audio_fingerprint=ctx.audio_fingerprint_enabled,
         probe_backend=ctx.probe_backend,
     )
     valid.sort(
@@ -486,7 +508,11 @@ def _process_discovered_batch(ctx: _ScanContext, batch: list[VideoRecord]) -> No
             )
             continue
         cache = cache_by_path.get(path)
-        cache_decision = _decide_cached_analysis(cache)
+        cache_decision = _decide_cached_analysis(
+            cache,
+            algo_version=ctx.visual_algo_version,
+            audio_fingerprint_enabled=ctx.audio_fingerprint_enabled,
+        )
         if cache_decision.skip_analysis:
             with ctx.state_lock:
                 lane_state = ensure_lane_state_locked(ctx, lane, source_root)
@@ -581,15 +607,35 @@ def _record_future_success(
             (task.file_id, task.size, task.mtime_ns, output.meta)
         )
     ctx.pending_fp_rows.append(
-        (task.file_id, task.size, task.mtime_ns, ALGO_VERSION, output.hashes)
+        (
+            task.file_id,
+            task.size,
+            task.mtime_ns,
+            int(output.visual_algo_version),
+            output.hashes,
+        )
     )
     ctx.pending_fp_provenance_rows.append(
         (
             task.file_id,
+            int(output.visual_algo_version),
             output.fingerprint_decoder_backend,
             output.fingerprint_provenance_json,
         )
     )
+    if output.audio_fingerprint:
+        ctx.pending_audio_fp_rows.append(
+            (task.file_id, task.size, task.mtime_ns, output.audio_fingerprint)
+        )
+    if output.audio_fingerprint_error:
+        record_issue(
+            ctx,
+            ScanIssue(
+                stage="audio_fingerprint",
+                path=task.path,
+                message=output.audio_fingerprint_error,
+            ),
+        )
     ctx.fingerprinted_files += 1
     with ctx.state_lock:
         lane_state = ensure_lane_state_locked(ctx, task.lane, task.source_root)
@@ -855,7 +901,11 @@ def run_scan_runtime(
     scan_size_mib_min: int = 50,
     scan_size_mib_max: int = 0,
     profile: str = "balanced",
+    custom_similarity_threshold: float = 0.18,
     duration_tolerance_s: float = 8.0,
+    scene_aware_sampling: bool = False,
+    audio_fingerprint_enabled: bool = False,
+    cross_resolution_mode: CrossResolutionMode = "off",
     max_workers: int = 2,
     drive_worker_overrides: dict[str, int] | None = None,
     probe_backend: ProbeBackendId = "pyav",
@@ -888,7 +938,11 @@ def run_scan_runtime(
         scan_size_mib_min,
         scan_size_mib_max,
         profile,
+        custom_similarity_threshold,
         duration_tolerance_s,
+        scene_aware_sampling,
+        audio_fingerprint_enabled,
+        cross_resolution_mode,
         probe_backend,
         max_workers,
         drive_worker_overrides,
