@@ -161,7 +161,7 @@ on the same volume first.
 
 ## 5. Scan Pipeline
 
-### [High] Incremental scan (changed-files-only)
+### [DONE] Incremental scan (changed-files-only)
 On re-scan of a known folder, compare `mtime_ns` and file size against the cached
 `VideoRecord`.  Skip re-probing and re-fingerprinting for unchanged files.  Only process
 new, modified, or deleted entries.  Dramatically reduces re-scan time for large libraries.
