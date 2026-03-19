@@ -14,6 +14,7 @@ from video_duperz.fingerprint import (
     dhash_from_gray,
     ensure_ffmpeg_available,
     fingerprint_child_stdio,
+    inner_median_distance,
     normalized_median_distance,
     run_fingerprint_child_from_stdio,
     sample_timestamps,
@@ -33,6 +34,22 @@ def test_normalized_distance_bounds() -> None:
     c = [0x5555555555555555] * 12
     assert normalized_median_distance(a, b) == 0.0
     assert normalized_median_distance(a, c) > 0.9
+
+
+def test_inner_median_distance_uses_only_inner_frames() -> None:
+    base = [0xAAAAAAAAAAAAAAAA] * 12
+    polluted = base.copy()
+    polluted[0] = 0x5555555555555555
+    polluted[1] = 0x5555555555555555
+    polluted[10] = 0x5555555555555555
+    polluted[11] = 0x5555555555555555
+
+    assert inner_median_distance(base, polluted) == 0.0
+
+
+def test_inner_median_distance_empty_guard() -> None:
+    assert inner_median_distance([], []) == 1.0
+    assert inner_median_distance([1, 2, 3], [1, 2]) == 1.0
 
 
 def test_ffmpeg_gray_samples_use_explicit_override_path(

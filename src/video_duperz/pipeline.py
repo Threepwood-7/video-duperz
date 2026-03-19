@@ -48,6 +48,20 @@ class _AnalyzeOutput:
     fingerprint_provenance_json: str = ""
 
 
+@dataclass(slots=True)
+class _AnalyzeRuntimeOptions:
+    """Active module-level scan analysis options used by the runtime seam."""
+
+    probe_backend: ProbeBackendId = "pyav"
+    ffmpeg_exe_path: str = ""
+    ffprobe_exe_path: str = ""
+    scan_child_cpu_priority: ScanProcessCpuPriority = "normal"
+    scan_child_io_mode: ScanProcessIoMode = "normal"
+
+
+_ANALYZE_RUNTIME_OPTIONS = _AnalyzeRuntimeOptions()
+
+
 def _analyze_file_with_probe(
     path: str,
     cached_meta: VideoMeta | None,
@@ -94,6 +108,53 @@ def _analyze_file_with_probe(
     )
 
 
+def _configure_runtime_analyze_options(
+    probe_backend: ProbeBackendId,
+    *,
+    ffmpeg_exe_path: str = "",
+    ffprobe_exe_path: str = "",
+    scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
+    scan_child_io_mode: ScanProcessIoMode = "normal",
+) -> None:
+    """Persist the active analyze options for the module-level runtime seam."""
+    _ANALYZE_RUNTIME_OPTIONS.probe_backend = (
+        "ffprobe" if probe_backend == "ffprobe" else probe_backend
+    )
+    _ANALYZE_RUNTIME_OPTIONS.ffmpeg_exe_path = str(ffmpeg_exe_path or "")
+    _ANALYZE_RUNTIME_OPTIONS.ffprobe_exe_path = str(ffprobe_exe_path or "")
+    _ANALYZE_RUNTIME_OPTIONS.scan_child_cpu_priority = scan_child_cpu_priority
+    _ANALYZE_RUNTIME_OPTIONS.scan_child_io_mode = scan_child_io_mode
+
+
+def _analyze_file(path: str, cached_meta: VideoMeta | None) -> _AnalyzeOutput:
+    """Probe and fingerprint one file using the configured module-level options."""
+    probe_video_kwargs: dict[str, str] = {}
+    if _ANALYZE_RUNTIME_OPTIONS.ffprobe_exe_path:
+        probe_video_kwargs["ffprobe_exe_path"] = (
+            _ANALYZE_RUNTIME_OPTIONS.ffprobe_exe_path
+        )
+    if _ANALYZE_RUNTIME_OPTIONS.scan_child_cpu_priority != "normal":
+        probe_video_kwargs["scan_child_cpu_priority"] = (
+            _ANALYZE_RUNTIME_OPTIONS.scan_child_cpu_priority
+        )
+    if _ANALYZE_RUNTIME_OPTIONS.scan_child_io_mode != "normal":
+        probe_video_kwargs["scan_child_io_mode"] = (
+            _ANALYZE_RUNTIME_OPTIONS.scan_child_io_mode
+        )
+    return _analyze_file_with_probe(
+        path,
+        cached_meta,
+        probe_video_fn=partial(
+            probe_video,
+            backend=_ANALYZE_RUNTIME_OPTIONS.probe_backend,
+            **probe_video_kwargs,
+        ),
+        ffmpeg_exe_path=_ANALYZE_RUNTIME_OPTIONS.ffmpeg_exe_path,
+        scan_child_cpu_priority=_ANALYZE_RUNTIME_OPTIONS.scan_child_cpu_priority,
+        scan_child_io_mode=_ANALYZE_RUNTIME_OPTIONS.scan_child_io_mode,
+    )
+
+
 def build_analyze_file(
     probe_backend: ProbeBackendId,
     *,
@@ -126,33 +187,14 @@ def _build_runtime_analyze_file(
     scan_child_io_mode: ScanProcessIoMode = "normal",
 ) -> Callable[[str, VideoMeta | None], _AnalyzeOutput]:
     """Build the runtime analyze callable used by the threaded pipeline."""
-    probe_video_kwargs: dict[str, str] = {}
-    if ffprobe_exe_path:
-        probe_video_kwargs["ffprobe_exe_path"] = ffprobe_exe_path
-    probe_video_kwargs["scan_child_cpu_priority"] = scan_child_cpu_priority
-    probe_video_kwargs["scan_child_io_mode"] = scan_child_io_mode
-    target_backend: ProbeBackendId = (
-        "ffprobe" if probe_backend == "ffprobe" else probe_backend
+    _configure_runtime_analyze_options(
+        probe_backend,
+        ffmpeg_exe_path=ffmpeg_exe_path,
+        ffprobe_exe_path=ffprobe_exe_path,
+        scan_child_cpu_priority=scan_child_cpu_priority,
+        scan_child_io_mode=scan_child_io_mode,
     )
-
-    def _analyze_with_runtime_probe(
-        path: str,
-        cached_meta: VideoMeta | None,
-    ) -> _AnalyzeOutput:
-        return _analyze_file_with_probe(
-            path,
-            cached_meta,
-            probe_video_fn=partial(
-                probe_video,
-                backend=target_backend,
-                **probe_video_kwargs,
-            ),
-            ffmpeg_exe_path=ffmpeg_exe_path,
-            scan_child_cpu_priority=scan_child_cpu_priority,
-            scan_child_io_mode=scan_child_io_mode,
-        )
-
-    return _analyze_with_runtime_probe
+    return _analyze_file
 
 
 def run_scan(
@@ -162,6 +204,7 @@ def run_scan(
     scan_size_mib_min: int = 50,
     scan_size_mib_max: int = 0,
     profile: str = "balanced",
+    duration_tolerance_s: float = 8.0,
     max_workers: int = 2,
     drive_worker_overrides: dict[str, int] | None = None,
     probe_backend: ProbeBackendId = "pyav",
@@ -223,6 +266,7 @@ def run_scan(
         scan_size_mib_min=scan_size_mib_min,
         scan_size_mib_max=scan_size_mib_max,
         profile=profile,
+        duration_tolerance_s=duration_tolerance_s,
         max_workers=max_workers,
         drive_worker_overrides=drive_worker_overrides,
         probe_backend=probe_backend,

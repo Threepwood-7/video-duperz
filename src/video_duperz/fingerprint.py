@@ -59,6 +59,7 @@ SAMPLE_PERCENTS = [
     0.85,
     0.93,
 ]
+_INNER_FRAME_SLICE = slice(2, 10)
 _FFMPEG_GRAY_WIDTH = 32
 _FFMPEG_GRAY_HEIGHT = 32
 _FFMPEG_GRAY_BYTES = _FFMPEG_GRAY_WIDTH * _FFMPEG_GRAY_HEIGHT
@@ -234,6 +235,16 @@ def normalized_median_distance(hashes_a: list[int], hashes_b: list[int]) -> floa
     distances = [
         hamming_distance(a, b) for a, b in zip(hashes_a, hashes_b, strict=True)
     ]
+    return float(median(distances)) / 64.0
+
+
+def inner_median_distance(hashes_a: list[int], hashes_b: list[int]) -> float:
+    """Compare two hash sequences using the stable inner-frame window only."""
+    inner_a = hashes_a[_INNER_FRAME_SLICE]
+    inner_b = hashes_b[_INNER_FRAME_SLICE]
+    if len(inner_a) != len(inner_b) or not inner_a:
+        return 1.0
+    distances = [hamming_distance(a, b) for a, b in zip(inner_a, inner_b, strict=True)]
     return float(median(distances)) / 64.0
 
 

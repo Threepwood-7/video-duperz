@@ -18,7 +18,7 @@ from .scan_sets import (
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 
 class DatabaseConnectionMixin:
@@ -211,6 +211,8 @@ class DatabaseConnectionMixin:
               file_id INTEGER NOT NULL,
               similarity_score REAL NOT NULL,
               keep_default INTEGER NOT NULL,
+              match_reason TEXT NOT NULL DEFAULT 'perceptual',
+              match_duration_delta_s REAL NOT NULL DEFAULT 0.0,
               selected_action TEXT NOT NULL,
               PRIMARY KEY(group_id, file_id),
               FOREIGN KEY(group_id) REFERENCES duplicate_groups(id) ON DELETE CASCADE,
@@ -283,6 +285,7 @@ class DatabaseConnectionMixin:
         self._ensure_video_meta_columns()
         self._ensure_backend_scoped_cache_tables()
         self._ensure_fingerprint_decoder_provenance_table()
+        self._ensure_duplicate_group_item_columns()
         self._ensure_scan_columns()
         self._ensure_scan_issue_table()
         self._ensure_scan_failed_files_table()
@@ -572,6 +575,33 @@ class DatabaseConnectionMixin:
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_scans_set_status "
             "ON scans(scan_set_key, status, id DESC)"
+        )
+
+    def _ensure_duplicate_group_item_columns(self) -> None:
+        """Add persisted duplicate-match metadata columns to legacy databases."""
+        columns = {
+            str(row["name"])
+            for row in self.conn.execute(
+                "PRAGMA table_info(duplicate_group_items)"
+            ).fetchall()
+        }
+        if "match_reason" not in columns:
+            self.conn.execute(
+                "ALTER TABLE duplicate_group_items ADD COLUMN match_reason "
+                "TEXT NOT NULL DEFAULT 'perceptual'"
+            )
+        if "match_duration_delta_s" not in columns:
+            self.conn.execute(
+                "ALTER TABLE duplicate_group_items ADD COLUMN "
+                "match_duration_delta_s REAL NOT NULL DEFAULT 0.0"
+            )
+        self.conn.execute(
+            "UPDATE duplicate_group_items SET match_reason = 'perceptual' "
+            "WHERE TRIM(COALESCE(match_reason, '')) = ''"
+        )
+        self.conn.execute(
+            "UPDATE duplicate_group_items SET match_duration_delta_s = 0.0 "
+            "WHERE match_duration_delta_s IS NULL"
         )
 
     def _ensure_scan_issue_table(self) -> None:

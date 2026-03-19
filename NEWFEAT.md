@@ -86,7 +86,7 @@ e.g., rank AV1 above HEVC or demote VP9 below H.264.
 
 ## 3. Duplicate Detection
 
-### [High] Duration-difference matching *(see DURDIFF.md for full plan)*
+### [High][DONE] Duration-difference matching *(see DURDIFF.md for full plan)*
 Detect the same video when one copy differs by a few seconds (intro/outro trimming, re-mux
 timestamp drift).  Key changes: configurable `duration_tolerance_s`, inner-section hash
 comparison (frames 2–9, 21%–77%), and a `"trimmed_match"` result badge.

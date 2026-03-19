@@ -7,12 +7,17 @@ import math
 from collections import defaultdict
 from statistics import median
 
-from .fingerprint import hamming_distance, normalized_median_distance
+from .fingerprint import (
+    hamming_distance,
+    inner_median_distance,
+    normalized_median_distance,
+)
 from .models import (
     DuplicateEdge,
     DuplicateGroup,
     DuplicateItem,
     MatchItem,
+    MatchReason,
     MatchStats,
     utc_now_iso,
 )
@@ -23,6 +28,9 @@ PROFILE_THRESHOLD = {
     "balanced": 0.18,
     "conservative": 0.12,
 }
+_DURATION_BUCKET_WINDOW_S = 5.0
+_INNER_ONLY_THRESHOLD_S = 3.0
+_INNER_MODE_THRESHOLD_FACTOR = 0.90
 
 
 def aspect_bin(width: int, height: int) -> float:
@@ -34,10 +42,11 @@ def aspect_bin(width: int, height: int) -> float:
 
 def duration_bucket(duration_s: float) -> int:
     """Bucket durations into coarse five-second windows for candidate lookup."""
-    return round(max(0.0, float(duration_s)) / 5.0)
+    return round(max(0.0, float(duration_s)) / _DURATION_BUCKET_WINDOW_S)
 
 
 def _prefilter_hamming_median(a: list[int], b: list[int]) -> float:
+    """Estimate pair similarity from start, middle, and end hashes."""
     length = min(len(a), len(b))
     if length <= 0:
         return 64.0
@@ -46,14 +55,33 @@ def _prefilter_hamming_median(a: list[int], b: list[int]) -> float:
     return float(median(distances)) if distances else 64.0
 
 
-def _is_candidate(a: MatchItem, b: MatchItem) -> bool:
-    if abs(a.duration_s - b.duration_s) > 3.0:
+def _prefilter_hamming_inner(a: list[int], b: list[int]) -> float:
+    """Estimate pair similarity from the stable inner hash window only."""
+    inner_a = a[2:10]
+    inner_b = b[2:10]
+    length = min(len(inner_a), len(inner_b))
+    if length <= 0:
+        return 64.0
+    indices = sorted({0, length // 2, length - 1})
+    distances = [hamming_distance(inner_a[idx], inner_b[idx]) for idx in indices]
+    return float(median(distances)) if distances else 64.0
+
+
+def _is_candidate(
+    a: MatchItem,
+    b: MatchItem,
+    *,
+    duration_tolerance_s: float,
+) -> bool:
+    """Return whether one pair should advance to perceptual hash comparison."""
+    if abs(a.duration_s - b.duration_s) > duration_tolerance_s:
         return False
     shortest = min(a.duration_s, b.duration_s)
     longest = max(a.duration_s, b.duration_s)
     if longest <= 0:
         return False
-    if shortest / longest < 0.96:
+    ratio_floor = max(0.70, 1.0 - (duration_tolerance_s / max(1.0, longest)))
+    if shortest / longest < ratio_floor:
         return False
     ra = a.width / a.height if a.height else 0.0
     rb = b.width / b.height if b.height else 0.0
@@ -63,8 +91,34 @@ def _is_candidate(a: MatchItem, b: MatchItem) -> bool:
     return ratio_delta <= 0.2
 
 
+def _neighbor_items(
+    buckets: dict[tuple[int, float], list[MatchItem]],
+    *,
+    duration_bin: int,
+    aspect_ratio_bin: float,
+    duration_tolerance_s: float,
+) -> list[MatchItem]:
+    """Collect items from the current and adjacent duration buckets."""
+    extra_buckets = max(
+        0,
+        math.ceil(duration_tolerance_s / _DURATION_BUCKET_WINDOW_S) - 1,
+    )
+    seen_file_ids: set[int] = set()
+    result: list[MatchItem] = []
+    for offset in range(-extra_buckets, extra_buckets + 1):
+        for item in buckets.get((duration_bin + offset, aspect_ratio_bin), []):
+            if item.file_id in seen_file_ids:
+                continue
+            seen_file_ids.add(item.file_id)
+            result.append(item)
+    return result
+
+
 def find_duplicate_edges(
-    items: list[MatchItem], profile: str = "balanced"
+    items: list[MatchItem],
+    profile: str = "balanced",
+    *,
+    duration_tolerance_s: float = 8.0,
 ) -> tuple[list[DuplicateEdge], MatchStats]:
     """Find likely duplicate pairs by bucketing and comparing match items."""
     threshold = PROFILE_THRESHOLD.get(profile, PROFILE_THRESHOLD["balanced"])
@@ -79,25 +133,60 @@ def find_duplicate_edges(
 
     stats = MatchStats(total_items=len(items), bucket_count=len(buckets))
     edges: list[DuplicateEdge] = []
-    for bucket_items in buckets.values():
+    seen_pairs: set[tuple[int, int]] = set()
+    for (duration_bin, aspect_ratio_bin), _bucket_items in buckets.items():
+        bucket_items = _neighbor_items(
+            buckets,
+            duration_bin=duration_bin,
+            aspect_ratio_bin=aspect_ratio_bin,
+            duration_tolerance_s=duration_tolerance_s,
+        )
         if len(bucket_items) < 2:
             continue
         for a, b in itertools.combinations(bucket_items, 2):
-            stats.candidate_pairs += 1
-            if not _is_candidate(a, b):
+            pair_key = (
+                min(int(a.file_id), int(b.file_id)),
+                max(int(a.file_id), int(b.file_id)),
+            )
+            if pair_key in seen_pairs:
                 continue
+            seen_pairs.add(pair_key)
+            stats.candidate_pairs += 1
+            if not _is_candidate(a, b, duration_tolerance_s=duration_tolerance_s):
+                continue
+            duration_gap_s = abs(a.duration_s - b.duration_s)
+            use_inner = duration_gap_s > _INNER_ONLY_THRESHOLD_S
             stats.prefilter_pairs += 1
-            if _prefilter_hamming_median(a.hashes, b.hashes) > 22.0:
+            if use_inner:
+                stats.inner_mode_pairs += 1
+            prefilter_distance = (
+                _prefilter_hamming_inner(a.hashes, b.hashes)
+                if use_inner
+                else _prefilter_hamming_median(a.hashes, b.hashes)
+            )
+            if prefilter_distance > 22.0:
                 stats.prefilter_rejected_pairs += 1
                 continue
             stats.full_distance_pairs += 1
-            distance = normalized_median_distance(a.hashes, b.hashes)
-            if distance <= threshold:
+            distance = (
+                inner_median_distance(a.hashes, b.hashes)
+                if use_inner
+                else normalized_median_distance(a.hashes, b.hashes)
+            )
+            effective_threshold = (
+                threshold * _INNER_MODE_THRESHOLD_FACTOR if use_inner else threshold
+            )
+            if distance <= effective_threshold:
                 edges.append(
                     DuplicateEdge(
-                        file_a=a.file_id, file_b=b.file_id, score=1.0 - distance
+                        file_a=a.file_id,
+                        file_b=b.file_id,
+                        score=1.0 - distance,
+                        match_reason="trimmed_match" if use_inner else "perceptual",
                     )
                 )
+                if use_inner:
+                    stats.inner_mode_accepted += 1
                 stats.accepted_pairs += 1
     return edges, stats
 
@@ -142,9 +231,12 @@ def build_duplicate_groups(
             unique_components.append(uniq)
 
     score_map: dict[tuple[int, int], float] = {}
+    reason_map: dict[tuple[int, int], MatchReason] = {}
     for edge in edges:
         score_map[(edge.file_a, edge.file_b)] = edge.score
         score_map[(edge.file_b, edge.file_a)] = edge.score
+        reason_map[(edge.file_a, edge.file_b)] = edge.match_reason
+        reason_map[(edge.file_b, edge.file_a)] = edge.match_reason
 
     groups: list[DuplicateGroup] = []
     created_at = utc_now_iso()
@@ -159,12 +251,28 @@ def build_duplicate_groups(
         for item in comp_items:
             total_size += item.size
             pair_scores: list[float] = []
+            item_match_reason: MatchReason = "perceptual"
+            item_match_duration_delta_s = 0.0
             for other in comp_ids:
                 if other == item.file_id:
                     continue
                 score = score_map.get((item.file_id, other))
                 if score is not None:
                     pair_scores.append(score)
+                if reason_map.get((item.file_id, other)) != "trimmed_match":
+                    continue
+                other_item = by_id.get(other)
+                if other_item is None:
+                    continue
+                duration_delta_s = abs(item.duration_s - other_item.duration_s)
+                if item_match_reason != "trimmed_match":
+                    item_match_reason = "trimmed_match"
+                    item_match_duration_delta_s = duration_delta_s
+                    continue
+                item_match_duration_delta_s = min(
+                    item_match_duration_delta_s,
+                    duration_delta_s,
+                )
             similarity = sum(pair_scores) / len(pair_scores) if pair_scores else 1.0
             is_keep = item.file_id == keep_id
             group_items.append(
@@ -186,6 +294,8 @@ def build_duplicate_groups(
                     is_hdr=item.is_hdr,
                     similarity_score=similarity,
                     keep_default=is_keep,
+                    match_reason=item_match_reason,
+                    match_duration_delta_s=item_match_duration_delta_s,
                     selected_action="keep" if is_keep else "rename",
                 )
             )

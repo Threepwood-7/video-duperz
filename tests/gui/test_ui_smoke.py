@@ -59,6 +59,7 @@ from video_duperz.ui.results_view_shared import (
     COL_CHECK,
     COL_FILE_NAME,
     COL_FULL_PATH,
+    COL_MATCH,
     COL_PARENT_DIR,
     COL_SIZE,
 )
@@ -436,7 +437,7 @@ def test_main_window_launches_with_new_results_table(tmp_path: Path) -> None:
 
         assert window.thumbnail_size_combo.count() == 4
         assert window.add_recent_root_btn.text() == "Add Recent Folder"
-        assert window.results_view.results_table.columnCount() == 20
+        assert window.results_view.results_table.columnCount() == 21
         assert window.results_view.results_table.horizontalHeaderItem(2).text() == "="
         assert (
             window.results_view.results_table.horizontalHeaderItem(3).text()
@@ -453,6 +454,10 @@ def test_main_window_launches_with_new_results_table(tmp_path: Path) -> None:
         assert (
             window.results_view.results_table.horizontalHeaderItem(14).text() == "HDR"
         )
+        assert (
+            window.results_view.results_table.horizontalHeaderItem(COL_MATCH).text()
+            == "Match"
+        )
 
         group = DuplicateGroup(
             scan_id=1,
@@ -467,14 +472,24 @@ def test_main_window_launches_with_new_results_table(tmp_path: Path) -> None:
                     240,
                     900,
                     0.98,
+                    duration_s=6.0,
                 ),
             ],
             total_size_bytes=200,
             group_id=42,
         )
+        group.items[1].match_reason = "trimmed_match"
+        group.items[1].match_duration_delta_s = 5.0
         window.results_view.load_groups([group])
         app.processEvents()
         initial_height = window.results_view.results_table.rowHeight(0)
+        assert (
+            window.results_view.results_table.item(0, COL_MATCH).text() == "Perceptual"
+        )
+        assert window.results_view.results_table.item(1, COL_MATCH).text() == "Trimmed"
+        assert "Delta t 5.0s" in (
+            window.results_view.results_table.item(1, COL_MATCH).toolTip()
+        )
 
         for i in range(window.thumbnail_size_combo.count()):
             if str(window.thumbnail_size_combo.itemData(i)) == "160x90":
@@ -582,6 +597,32 @@ def test_sources_root_buttons_labels_order_and_state(tmp_path: Path) -> None:
         window.close()
 
 
+def test_sources_tab_scan_shortcut_button_opens_scan_tab(tmp_path: Path) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        scan_button = window.findChild(QPushButton, "sources_scan_btn")
+        assert scan_button is window.sources_scan_btn
+        assert scan_button.text() == "Scan"
+        assert window.roots_list.minimumHeight() >= 220
+
+        window.tabs.setCurrentWidget(window.sources_tab)
+        app.processEvents()
+        assert window.tabs.currentWidget() is window.sources_tab
+
+        QTest.mouseClick(scan_button, Qt.MouseButton.LeftButton)
+        app.processEvents()
+
+        assert window.tabs.currentWidget() is window.scan_view
+        window.close()
+
+
 def test_recent_folder_history_button_and_persistence(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -634,6 +675,7 @@ def test_sources_tab_defaults_to_broad_extensions_preset(
         assert window.extensions_edit.text() == video_extensions_csv_for_preset("broad")
         assert window.scan_size_mib_min_spin.value() == 50
         assert window.scan_size_mib_max_spin.value() == 0
+        assert window.duration_tolerance_spin.value() == 8.0
 
         window.close()
 
@@ -679,6 +721,39 @@ def test_sources_tab_scan_size_filters_exist_and_persist(
     loaded = load_settings()
     assert loaded.scan_size_mib_min == 120
     assert loaded.scan_size_mib_max == 700
+
+
+def test_sources_tab_duration_tolerance_exists_and_persists(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        assert (
+            window.findChild(QDoubleSpinBox, "sources_duration_tolerance_spin")
+            is window.duration_tolerance_spin
+        )
+        assert window.duration_tolerance_spin.value() == 8.0
+        assert "durations differ slightly" in (
+            window.duration_tolerance_spin.toolTip().lower()
+        )
+
+        window.duration_tolerance_spin.setValue(9.5)
+        app.processEvents()
+        window._persist_settings()
+        window.close()
+
+    loaded = load_settings()
+    assert loaded.duration_tolerance_s == 9.5
 
 
 def test_results_column_widths_persist(tmp_path: Path, monkeypatch) -> None:

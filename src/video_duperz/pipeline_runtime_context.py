@@ -83,6 +83,7 @@ class ScanContext:
     scan_size_mib_min: int
     scan_size_mib_max: int
     profile: str
+    duration_tolerance_s: float
     probe_backend: ProbeBackendId
     drive_worker_overrides: dict[str, int] | None
     cancel_event: Event | None
@@ -306,6 +307,7 @@ def create_context(
     scan_size_mib_min: int,
     scan_size_mib_max: int,
     profile: str,
+    duration_tolerance_s: float,
     probe_backend: ProbeBackendId,
     max_workers: int,
     drive_worker_overrides: dict[str, int] | None,
@@ -376,6 +378,7 @@ def create_context(
         scan_size_mib_min=max(0, int(scan_size_mib_min)),
         scan_size_mib_max=max(0, int(scan_size_mib_max)),
         profile=profile,
+        duration_tolerance_s=max(0.0, float(duration_tolerance_s)),
         probe_backend=probe_backend,
         drive_worker_overrides=drive_worker_overrides,
         cancel_event=cancel_event,

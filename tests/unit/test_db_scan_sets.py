@@ -429,6 +429,8 @@ def test_scan_batch_methods_roundtrip() -> None:
                     is_hdr=False,
                     similarity_score=1.0,
                     keep_default=True,
+                    match_reason="trimmed_match",
+                    match_duration_delta_s=5.0,
                 ),
                 DuplicateItem(
                     file_id=file_b,
@@ -482,6 +484,12 @@ def test_scan_batch_methods_roundtrip() -> None:
         assert provenance_row is not None
         assert str(provenance_row["decoder_backend"]) == "pyav"
         assert str(provenance_row["attempts_json"]) == '{"decoder_backend":"pyav"}'
+        groups = db.load_duplicate_groups(scan_id)
+        assert len(groups) == 1
+        assert groups[0].items[0].match_reason == "trimmed_match"
+        assert groups[0].items[0].match_duration_delta_s == 5.0
+        assert groups[0].items[1].match_reason == "perceptual"
+        assert groups[0].items[1].match_duration_delta_s == 0.0
 
 
 def test_cached_artifacts_are_probe_backend_specific() -> None:

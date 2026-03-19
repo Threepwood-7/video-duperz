@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
 ActionKind = Literal["keep", "rename", "delete"]
 SimilarityProfile = Literal["balanced", "conservative", "aggressive"]
+MatchReason = Literal["perceptual", "trimmed_match"]
 KeepRule = Literal["best_quality"]
 ProbeWorkerMode = Literal["balanced", "burst"]
 ProbeBackendId = Literal["ffprobe", "pyav"]
@@ -34,6 +35,13 @@ def utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def normalize_match_reason(value: object) -> MatchReason:
+    """Normalize persisted match-reason text to a supported literal."""
+    if str(value or "").strip().lower() == "trimmed_match":
+        return "trimmed_match"
+    return "perceptual"
+
+
 @dataclass(slots=True)
 class SavedScanProfilePayload:
     """Saved source/profile/extension selections for quickly reloading scans."""
@@ -55,6 +63,7 @@ class Settings:
     scan_size_mib_min: int = 50
     scan_size_mib_max: int = 0
     similarity_profile: SimilarityProfile = "balanced"
+    duration_tolerance_s: float = 8.0
     max_workers: int = 2
     preview_autoplay: bool = False
     thumbnail_size: str = DEFAULT_THUMBNAIL_SIZE
@@ -253,6 +262,7 @@ class DuplicateEdge:
     file_a: int
     file_b: int
     score: float
+    match_reason: MatchReason = "perceptual"
 
 
 @dataclass(slots=True)
@@ -265,6 +275,8 @@ class MatchStats:
     prefilter_pairs: int = 0
     prefilter_rejected_pairs: int = 0
     full_distance_pairs: int = 0
+    inner_mode_pairs: int = 0
+    inner_mode_accepted: int = 0
     accepted_pairs: int = 0
 
 
@@ -312,6 +324,8 @@ class DuplicateItem:
     is_hdr: bool
     similarity_score: float
     keep_default: bool
+    match_reason: MatchReason = "perceptual"
+    match_duration_delta_s: float = 0.0
     selected_action: ActionKind = "keep"
 
 

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .db_shared import normalize_action_kind, require_lastrowid
-from .models import DuplicateGroup, DuplicateItem, utc_now_iso
+from .models import DuplicateGroup, DuplicateItem, normalize_match_reason, utc_now_iso
 
 if TYPE_CHECKING:
     import sqlite3
@@ -48,12 +48,15 @@ class DatabaseDuplicateGroupMixin:
         self.conn.execute(
             """
             INSERT INTO duplicate_group_items(
-              group_id, file_id, similarity_score, keep_default, selected_action
+              group_id, file_id, similarity_score, keep_default,
+              match_reason, match_duration_delta_s, selected_action
             )
-            VALUES(?, ?, ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(group_id, file_id) DO UPDATE SET
               similarity_score = excluded.similarity_score,
               keep_default = excluded.keep_default,
+              match_reason = excluded.match_reason,
+              match_duration_delta_s = excluded.match_duration_delta_s,
               selected_action = excluded.selected_action
             """,
             (
@@ -61,6 +64,8 @@ class DatabaseDuplicateGroupMixin:
                 item.file_id,
                 item.similarity_score,
                 1 if item.keep_default else 0,
+                item.match_reason,
+                item.match_duration_delta_s,
                 item.selected_action,
             ),
         )
@@ -77,7 +82,7 @@ class DatabaseDuplicateGroupMixin:
             return []
         created_at = utc_now_iso()
         group_ids: list[int] = []
-        item_rows: list[tuple[int, int, float, int, str]] = []
+        item_rows: list[tuple[int, int, float, int, str, float, str]] = []
         for group in groups:
             cursor = self.conn.execute(
                 """
@@ -97,6 +102,8 @@ class DatabaseDuplicateGroupMixin:
                         int(item.file_id),
                         float(item.similarity_score),
                         1 if item.keep_default else 0,
+                        str(item.match_reason),
+                        float(item.match_duration_delta_s),
                         str(item.selected_action),
                     )
                 )
@@ -104,12 +111,15 @@ class DatabaseDuplicateGroupMixin:
             self.conn.executemany(
                 """
                 INSERT INTO duplicate_group_items(
-                  group_id, file_id, similarity_score, keep_default, selected_action
+                  group_id, file_id, similarity_score, keep_default,
+                  match_reason, match_duration_delta_s, selected_action
                 )
-                VALUES(?, ?, ?, ?, ?)
+                VALUES(?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(group_id, file_id) DO UPDATE SET
                   similarity_score = excluded.similarity_score,
                   keep_default = excluded.keep_default,
+                  match_reason = excluded.match_reason,
+                  match_duration_delta_s = excluded.match_duration_delta_s,
                   selected_action = excluded.selected_action
                 """,
                 item_rows,
@@ -214,7 +224,8 @@ class DatabaseDuplicateGroupMixin:
             item_rows = self.conn.execute(
                 """
                 SELECT gi.file_id, gi.similarity_score,
-                       gi.keep_default, gi.selected_action,
+                       gi.keep_default, gi.match_reason,
+                       gi.match_duration_delta_s, gi.selected_action,
                        f.path, f.size, f.mtime_ns, f.ctime_ns,
                        vm.duration_s, vm.width, vm.height, vm.bitrate, vm.codec,
                        vm.audio_codec, vm.audio_bitrate,
@@ -251,6 +262,10 @@ class DatabaseDuplicateGroupMixin:
                     is_hdr=bool(item_row["is_hdr"]),
                     similarity_score=float(item_row["similarity_score"]),
                     keep_default=bool(item_row["keep_default"]),
+                    match_reason=normalize_match_reason(item_row["match_reason"]),
+                    match_duration_delta_s=float(
+                        item_row["match_duration_delta_s"] or 0.0
+                    ),
                     selected_action=normalize_action_kind(item_row["selected_action"]),
                 )
                 for item_row in item_rows

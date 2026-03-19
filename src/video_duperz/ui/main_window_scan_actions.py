@@ -103,6 +103,7 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
             scan_size_mib_min=self.settings.scan_size_mib_min,
             scan_size_mib_max=self.settings.scan_size_mib_max,
             profile=self.settings.similarity_profile,
+            duration_tolerance_s=self.settings.duration_tolerance_s,
             max_workers=self.settings.max_workers,
             drive_worker_overrides=self.settings.drive_worker_overrides,
             probe_backend=self.settings.probe_backend,

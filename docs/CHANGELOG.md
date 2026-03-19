@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-03-19
+
+- Added duration-difference duplicate matching so near-identical videos can still group when one copy is a few seconds longer or shorter due to trims or timestamp drift.
+- Exposed `duration_tolerance_s` in the Sources tab and persisted it through settings, scan workers, and the runtime matcher pipeline.
+- Switched duration-mismatched duplicate comparisons to an inner-frame hash path so intro/outro drift no longer dominates the median-distance decision.
+- Persisted duplicate match reasons in SQLite and added a visible `Match` column in Results, including `Trimmed` labeling with duration-delta tooltip details.
+- Added unit, GUI, runtime, and ffmpeg-backed integration coverage for tolerance threading, trimmed-match persistence, and the new results rendering path.
+
 ## 2026-03-15
 
 - Added guarded fingerprint decoder fallbacks so fingerprinting no longer hangs indefinitely on pathological media files.

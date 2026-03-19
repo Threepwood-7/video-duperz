@@ -9,6 +9,7 @@ from PySide6.QtGui import QAction, QActionGroup, QKeyEvent, QKeySequence, QMouse
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QDoubleSpinBox,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -548,6 +549,7 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
 
     def _build_sources_root_controls(self) -> QHBoxLayout:
         self.roots_list = QListWidget(self.sources_tab)
+        self.roots_list.setMinimumHeight(220)
         self._configure_named_widget(
             self.roots_list,
             object_name="sources_roots_list",
@@ -559,12 +561,16 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         self.add_recent_root_btn = QPushButton("Add Recent Folder", self.sources_tab)
         self.save_scan_set_btn = QPushButton("Save Scan Set", self.sources_tab)
         self.load_saved_scan_btn = QPushButton("Load Saved Scan", self.sources_tab)
+        self.sources_scan_btn = QPushButton("Scan", self.sources_tab)
         self.add_root_btn.clicked.connect(self._add_root)
         self.remove_root_btn.clicked.connect(self._remove_selected_root)
         self.remove_all_roots_btn.clicked.connect(self._remove_all_roots)
         self.add_recent_root_btn.clicked.connect(self._show_recent_roots_menu)
         self.save_scan_set_btn.clicked.connect(self._save_current_scan_set_as)
         self.load_saved_scan_btn.clicked.connect(self._show_saved_scans_menu)
+        self.sources_scan_btn.clicked.connect(
+            lambda: self.tabs.setCurrentWidget(self.scan_view)
+        )
         self.roots_list.currentRowChanged.connect(self._update_root_buttons_state)
         self._configure_named_widget(
             self.add_root_btn,
@@ -595,6 +601,11 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             self.load_saved_scan_btn,
             object_name="sources_load_saved_scan_btn",
             widget_alias="Load Saved Scan",
+        )
+        self._configure_named_widget(
+            self.sources_scan_btn,
+            object_name="sources_scan_btn",
+            widget_alias="Open Scan Tab",
         )
         self._set_sources_tooltip(
             self.roots_list,
@@ -650,6 +661,14 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
                 "Load a previously saved scan set back into the Sources tab.\n\n"
                 "This restores roots, extensions, and similarity profile for a "
                 "known scanning configuration."
+            ),
+        )
+        self._set_sources_tooltip(
+            self.sources_scan_btn,
+            (
+                "Open the Scan tab to review progress controls and start the scan.\n\n"
+                "Use this as a quick handoff after you finish choosing source "
+                "folders and scan options."
             ),
         )
 
@@ -709,6 +728,16 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             self.profile_combo,
             object_name="sources_profile_combo",
             widget_alias="Similarity Profile",
+        )
+        self.duration_tolerance_spin = QDoubleSpinBox(self.sources_tab)
+        self.duration_tolerance_spin.setRange(0.0, 30.0)
+        self.duration_tolerance_spin.setDecimals(1)
+        self.duration_tolerance_spin.setSingleStep(0.5)
+        self.duration_tolerance_spin.setSuffix(" s")
+        self._configure_named_widget(
+            self.duration_tolerance_spin,
+            object_name="sources_duration_tolerance_spin",
+            widget_alias="Duration Tolerance Seconds",
         )
 
         self.max_workers_spin = QSpinBox(self.sources_tab)
@@ -875,6 +904,15 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
                 "Choose how strict duplicate matching should be.\n\n"
                 "Balanced is the everyday default. Conservative reduces false "
                 "positives, while aggressive is more willing to group near-matches."
+            ),
+        )
+        self._set_sources_tooltip(
+            self.duration_tolerance_spin,
+            (
+                "Allow duplicates to match even when their durations differ "
+                "slightly.\n\n"
+                "Use this for intro/outro trims, tiny remux timestamp drift, or "
+                "near-identical copies with a few seconds added or removed."
             ),
         )
         self._set_sources_tooltip(
@@ -1276,6 +1314,13 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
                 tooltip=self.profile_combo.toolTip(),
             )
         )
+        scan_content_layout.addWidget(
+            self._build_labeled_control_block(
+                "Duration tolerance (s)",
+                self.duration_tolerance_spin,
+                tooltip=self.duration_tolerance_spin.toolTip(),
+            )
+        )
         scan_content_layout.addStretch(1)
 
         scan_performance_group, scan_performance_layout = (
@@ -1368,10 +1413,15 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         options_layout.setColumnStretch(0, 1)
         options_layout.setColumnStretch(1, 1)
 
+        footer_layout = QHBoxLayout()
+        footer_layout.setContentsMargins(0, 0, 0, 0)
+        footer_layout.addStretch(1)
+        footer_layout.addWidget(self.sources_scan_btn)
+
         layout = QVBoxLayout(self.sources_tab)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(12)
         layout.addWidget(scan_folders_group, stretch=1)
         layout.addWidget(physical_drives_group, stretch=2)
         layout.addWidget(options_container)
-        layout.addStretch(1)
+        layout.addLayout(footer_layout)

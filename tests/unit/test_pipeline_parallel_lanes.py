@@ -306,7 +306,9 @@ def test_run_scan_pyav_backend_routes_probe_calls(monkeypatch) -> None:
         ),
     )
     monkeypatch.setattr(
-        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
+        pipeline,
+        "find_duplicate_edges",
+        lambda items, profile, **kwargs: ([], MatchStats()),
     )
     monkeypatch.setattr(
         pipeline, "build_duplicate_groups", lambda items, edges, profile: []
@@ -397,7 +399,9 @@ def test_run_scan_probe_parallel_lanes_and_telemetry(monkeypatch) -> None:
         ),
     )
     monkeypatch.setattr(
-        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
+        pipeline,
+        "find_duplicate_edges",
+        lambda items, profile, **kwargs: ([], MatchStats()),
     )
     monkeypatch.setattr(
         pipeline, "build_duplicate_groups", lambda items, edges, profile: []
@@ -522,7 +526,9 @@ def test_run_scan_burst_mode_allows_multiple_workers_per_lane_up_to_caps(
         ),
     )
     monkeypatch.setattr(
-        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
+        pipeline,
+        "find_duplicate_edges",
+        lambda items, profile, **kwargs: ([], MatchStats()),
     )
     monkeypatch.setattr(
         pipeline, "build_duplicate_groups", lambda items, edges, profile: []
@@ -602,7 +608,9 @@ def test_run_scan_reports_worker_capacity_reduction_when_hard_caps_apply(
         ),
     )
     monkeypatch.setattr(
-        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
+        pipeline,
+        "find_duplicate_edges",
+        lambda items, profile, **kwargs: ([], MatchStats()),
     )
     monkeypatch.setattr(
         pipeline, "build_duplicate_groups", lambda items, edges, profile: []
@@ -662,7 +670,9 @@ def test_run_scan_waits_for_enumeration_before_analysis_to_preserve_order(
         pipeline, "ensure_fingerprint_fallback_chain_available", lambda: None
     )
     monkeypatch.setattr(
-        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
+        pipeline,
+        "find_duplicate_edges",
+        lambda items, profile, **kwargs: ([], MatchStats()),
     )
     monkeypatch.setattr(
         pipeline, "build_duplicate_groups", lambda items, edges, profile: []
@@ -735,7 +745,9 @@ def test_run_scan_dispatches_in_lane_local_alpha_order_across_roots(
         pipeline, "enumerate_video_files", lambda **kwargs: (list(files), [])
     )
     monkeypatch.setattr(
-        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
+        pipeline,
+        "find_duplicate_edges",
+        lambda items, profile, **kwargs: ([], MatchStats()),
     )
     monkeypatch.setattr(
         pipeline, "build_duplicate_groups", lambda items, edges, profile: []
@@ -802,7 +814,9 @@ def test_run_scan_completion_can_finish_out_of_order_while_dispatch_stays_sorted
         pipeline, "enumerate_video_files", lambda **kwargs: (list(reversed(files)), [])
     )
     monkeypatch.setattr(
-        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
+        pipeline,
+        "find_duplicate_edges",
+        lambda items, profile, **kwargs: ([], MatchStats()),
     )
     monkeypatch.setattr(
         pipeline, "build_duplicate_groups", lambda items, edges, profile: []
@@ -866,7 +880,9 @@ def test_run_scan_burst_mode_preserves_lane_fifo_order(monkeypatch) -> None:
         pipeline, "enumerate_video_files", lambda **kwargs: (list(reversed(files)), [])
     )
     monkeypatch.setattr(
-        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
+        pipeline,
+        "find_duplicate_edges",
+        lambda items, profile, **kwargs: ([], MatchStats()),
     )
     monkeypatch.setattr(
         pipeline, "build_duplicate_groups", lambda items, edges, profile: []
@@ -919,7 +935,9 @@ def test_run_scan_cancellation_during_streaming_overlap(monkeypatch) -> None:
         pipeline, "ensure_fingerprint_fallback_chain_available", lambda: None
     )
     monkeypatch.setattr(
-        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
+        pipeline,
+        "find_duplicate_edges",
+        lambda items, profile, **kwargs: ([], MatchStats()),
     )
     monkeypatch.setattr(
         pipeline, "build_duplicate_groups", lambda items, edges, profile: []
@@ -989,7 +1007,9 @@ def test_run_scan_pause_and_resume_keeps_same_scan_id(
         ),
     )
     monkeypatch.setattr(
-        pipeline, "find_duplicate_edges", lambda items, profile: ([], MatchStats())
+        pipeline,
+        "find_duplicate_edges",
+        lambda items, profile, **kwargs: ([], MatchStats()),
     )
     monkeypatch.setattr(
         pipeline, "build_duplicate_groups", lambda items, edges, profile: []

@@ -63,6 +63,7 @@ RESULTS_HEADERS = [
     "HDR",
     "Bitrate",
     "Similarity",
+    "Match",
     "Last Modified",
     "Parent Dir",
     "Full Path",
@@ -85,9 +86,10 @@ COL_SUB_LANGS = 13
 COL_HDR = 14
 COL_BITRATE = 15
 COL_SIMILARITY = 16
-COL_LAST_MODIFIED = 17
-COL_PARENT_DIR = 18
-COL_FULL_PATH = 19
+COL_MATCH = 17
+COL_LAST_MODIFIED = 18
+COL_PARENT_DIR = 19
+COL_FULL_PATH = 20
 
 META_ROLE = Qt.ItemDataRole.UserRole
 THUMB_GAP = 6

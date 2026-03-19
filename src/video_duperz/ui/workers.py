@@ -43,6 +43,7 @@ class ScanWorker(QRunnable):
         scan_size_mib_min: int,
         scan_size_mib_max: int,
         profile: str,
+        duration_tolerance_s: float,
         max_workers: int,
         drive_worker_overrides: dict[str, int] | None = None,
         probe_backend: ProbeBackendId = "pyav",
@@ -67,6 +68,7 @@ class ScanWorker(QRunnable):
         self._scan_size_mib_min = max(0, int(scan_size_mib_min))
         self._scan_size_mib_max = max(0, int(scan_size_mib_max))
         self._profile = profile
+        self._duration_tolerance_s = max(0.0, float(duration_tolerance_s))
         self._max_workers = max_workers
         self._drive_worker_overrides = dict(drive_worker_overrides or {})
         self._probe_backend: ProbeBackendId = (
@@ -110,6 +112,7 @@ class ScanWorker(QRunnable):
                     scan_size_mib_min=self._scan_size_mib_min,
                     scan_size_mib_max=self._scan_size_mib_max,
                     profile=self._profile,
+                    duration_tolerance_s=self._duration_tolerance_s,
                     max_workers=self._max_workers,
                     drive_worker_overrides=self._drive_worker_overrides,
                     probe_backend=self._probe_backend,

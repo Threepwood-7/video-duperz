@@ -261,7 +261,11 @@ def completed_result(
         scan_id=ctx.scan_id,
         algo_version=ALGO_VERSION,
     )
-    edges, match_stats = ctx.find_duplicate_edges_fn(items, profile=ctx.profile)
+    edges, match_stats = ctx.find_duplicate_edges_fn(
+        items,
+        profile=ctx.profile,
+        duration_tolerance_s=ctx.duration_tolerance_s,
+    )
     groups = ctx.build_duplicate_groups_fn(
         items=items,
         edges=edges,

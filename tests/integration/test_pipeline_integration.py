@@ -135,6 +135,91 @@ def test_pipeline_detects_reencoded_duplicates(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(not _tools_available(), reason="ffmpeg/ffprobe not available")
+def test_pipeline_detects_trimmed_duration_difference_duplicates(
+    tmp_path: Path,
+) -> None:
+    core = tmp_path / "core.mp4"
+    longer = tmp_path / "longer.mp4"
+    shorter = tmp_path / "shorter.mp4"
+    outro = tmp_path / "outro.mp4"
+
+    _run_ffmpeg(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=320x240:rate=24",
+            "-t",
+            "20",
+            str(core),
+        ]
+    )
+    shutil.copy2(core, shorter)
+    _run_ffmpeg(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=red:s=320x240:r=24",
+            "-t",
+            "5",
+            str(outro),
+        ]
+    )
+    _run_ffmpeg(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(core),
+            "-i",
+            str(outro),
+            "-filter_complex",
+            "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+            "-map",
+            "[v]",
+            str(longer),
+        ]
+    )
+
+    with Database(tmp_path / "app.db") as db:
+        result = run_scan(
+            db=db,
+            roots=[str(tmp_path)],
+            extensions=["mp4"],
+            scan_size_mib_min=0,
+            profile="balanced",
+            duration_tolerance_s=8.0,
+            db_batch_size=512,
+            db_flush_interval_ms=200,
+            enum_queue_max=4096,
+            progress_emit_interval_ms=200,
+            progress_emit_every_files=100,
+        )
+
+        groups = [
+            {Path(item.path).name: item for item in group.items}
+            for group in result.groups
+        ]
+        target_group = next(
+            (
+                group
+                for group in groups
+                if {"longer.mp4", "shorter.mp4"}.issubset(group)
+            ),
+            None,
+        )
+        assert target_group is not None
+        assert target_group["longer.mp4"].match_reason == "trimmed_match"
+        assert target_group["shorter.mp4"].match_reason == "trimmed_match"
+        assert target_group["longer.mp4"].match_duration_delta_s == pytest.approx(5.0)
+
+
+@pytest.mark.skipif(not _tools_available(), reason="ffmpeg/ffprobe not available")
 def test_pipeline_resume_real_duplicate_corpus_skips_unchanged_files(
     tmp_path: Path,
 ) -> None:

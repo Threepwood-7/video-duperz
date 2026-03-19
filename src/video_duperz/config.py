@@ -35,7 +35,7 @@ from .scan_sets import (
     normalize_similarity_profile,
 )
 
-RESULTS_TABLE_COLUMN_COUNT = 20
+RESULTS_TABLE_COLUMN_COUNT = 21
 SOURCES_DRIVE_TABLE_COLUMN_COUNT = 9
 SCAN_LANE_TABLE_COLUMN_COUNT = 13
 SCAN_LOG_TABLE_COLUMN_COUNT = 4
@@ -52,6 +52,7 @@ DEFAULT_SCAN_PROGRESS_EMIT_INTERVAL_MS = 200
 DEFAULT_SCAN_PROGRESS_EMIT_EVERY_FILES = 100
 DEFAULT_SCAN_SIZE_MIB_MIN = 50
 DEFAULT_SCAN_SIZE_MIB_MAX = 0
+DEFAULT_DURATION_TOLERANCE_S = 8.0
 
 
 def _object_list(value: object) -> list[object]:
@@ -89,6 +90,19 @@ def _coerce_int(value: object, default: int) -> int:
     if isinstance(value, str):
         try:
             return int(value)
+        except ValueError:
+            return default
+    return default
+
+
+def _coerce_float(value: object, default: float) -> float:
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
         except ValueError:
             return default
     return default
@@ -301,6 +315,14 @@ def _normalize_int_range(
     return max(minimum, min(maximum, parsed))
 
 
+def _normalize_duration_tolerance_s(
+    value: object,
+    default: float = DEFAULT_DURATION_TOLERANCE_S,
+) -> float:
+    parsed = _coerce_float(value, default)
+    return max(0.0, min(30.0, parsed))
+
+
 def default_max_workers() -> int:
     """Choose a conservative default worker count for desktop scans."""
     cpus = os.cpu_count() or 4
@@ -380,6 +402,10 @@ def _read_qsettings_payload(
         ),
         "similarity_profile": qs.value(
             "similarity_profile", defaults.similarity_profile
+        ),
+        "duration_tolerance_s": qs.value(
+            "duration_tolerance_s",
+            defaults.duration_tolerance_s,
         ),
         "max_workers": qs.value("max_workers", defaults.max_workers),
         "preview_autoplay": _coerce_bool(
@@ -526,6 +552,10 @@ def _settings_from_raw(raw: dict[str, object], defaults: Settings) -> Settings:
         ),
         similarity_profile=normalize_similarity_profile(
             str(raw.get("similarity_profile", defaults.similarity_profile))
+        ),
+        duration_tolerance_s=_normalize_duration_tolerance_s(
+            raw.get("duration_tolerance_s", defaults.duration_tolerance_s),
+            defaults.duration_tolerance_s,
         ),
         max_workers=_coerce_int(raw.get("max_workers", defaults.max_workers), 0),
         preview_autoplay=_coerce_bool(
@@ -681,6 +711,7 @@ def default_settings() -> Settings:
         scan_size_mib_min=DEFAULT_SCAN_SIZE_MIB_MIN,
         scan_size_mib_max=DEFAULT_SCAN_SIZE_MIB_MAX,
         similarity_profile="balanced",
+        duration_tolerance_s=DEFAULT_DURATION_TOLERANCE_S,
         max_workers=default_max_workers(),
         preview_autoplay=False,
         thumbnail_size=DEFAULT_THUMBNAIL_SIZE,

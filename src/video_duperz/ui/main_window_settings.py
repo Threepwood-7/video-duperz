@@ -121,6 +121,9 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
         self.extensions_preset_combo.blockSignals(False)
         idx = self.profile_combo.findText(self.settings.similarity_profile)
         self.profile_combo.setCurrentIndex(max(0, idx))
+        self.duration_tolerance_spin.setValue(
+            max(0.0, float(self.settings.duration_tolerance_s))
+        )
         probe_backend_index = self.probe_backend_combo.findText(
             self.settings.probe_backend
         )
@@ -215,6 +218,10 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
             scan_size_mib_max=max(0, int(self.scan_size_mib_max_spin.value())),
             similarity_profile=normalize_similarity_profile(
                 self.profile_combo.currentText()
+            ),
+            duration_tolerance_s=max(
+                0.0,
+                float(self.duration_tolerance_spin.value()),
             ),
             max_workers=self.max_workers_spin.value(),
             preview_autoplay=self.settings.preview_autoplay,

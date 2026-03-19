@@ -1,5 +1,7 @@
 # Duration-Difference Duplicate Detection — Implementation Plan
 
+Status: [DONE] High-priority implementation landed for phases 1-3. Phase 4 remains deferred.
+
 ## Problem Statement
 
 Two copies of the same video that differ by a few seconds in duration — due to intro/outro
@@ -83,7 +85,7 @@ legitimate pairs may be rejected before full comparison.
 
 ## Implementation Plan
 
-### Phase 1 — Configurable Duration Tolerance
+### Phase 1 — [DONE] Configurable Duration Tolerance
 
 **Goal:** Allow pairs with a larger duration difference to reach hash comparison.
 **Files:** `models.py`, `matcher.py`
@@ -185,7 +187,7 @@ through to that call site so the user setting takes effect.
 
 ---
 
-### Phase 2 — Inner-Section Comparison for Duration-Mismatched Pairs
+### Phase 2 — [DONE] Inner-Section Comparison for Duration-Mismatched Pairs
 
 **Goal:** When a pair passes the duration gate but their durations differ by more than a
 small threshold, compare only the **inner frame hashes** (indices 2–9, covering 21 %–77 %
@@ -295,7 +297,7 @@ class MatchStats:
 
 ---
 
-### Phase 3 — Match Reason Tagging and UI Display
+### Phase 3 — [DONE] Match Reason Tagging and UI Display
 
 **Goal:** Distinguish `"perceptual"` matches (full hash, same-duration pairs) from
 `"trimmed_match"` (inner-hash, duration-offset pairs) in the results so the user can

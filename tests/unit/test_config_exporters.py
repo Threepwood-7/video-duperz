@@ -45,6 +45,7 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     settings.thumbnail_size = "128x72"
     settings.scan_size_mib_min = 75
     settings.scan_size_mib_max = 640
+    settings.duration_tolerance_s = 9.5
     settings.thumbnail_frame_a_pct = 25
     settings.thumbnail_frame_b_pct = 75
     settings.identical_block_mib = 4
@@ -92,6 +93,7 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     assert loaded.thumbnail_size == "128x72"
     assert loaded.scan_size_mib_min == 75
     assert loaded.scan_size_mib_max == 640
+    assert loaded.duration_tolerance_s == 9.5
     assert loaded.thumbnail_frame_a_pct == 25
     assert loaded.thumbnail_frame_b_pct == 75
     assert loaded.identical_block_mib == 4
@@ -168,6 +170,22 @@ def test_settings_invalid_scan_size_filters_fall_back_to_defaults(
     loaded = load_settings()
     assert loaded.scan_size_mib_min == 50
     assert loaded.scan_size_mib_max == 0
+
+
+def test_settings_duration_tolerance_is_clamped(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    settings = default_settings()
+    save_settings(settings)
+
+    path = settings_path()
+    _set_qsettings_value(path, "duration_tolerance_s", 99.0)
+    loaded_high = load_settings()
+    assert loaded_high.duration_tolerance_s == 30.0
+
+    _set_qsettings_value(path, "duration_tolerance_s", -5.0)
+    loaded_low = load_settings()
+    assert loaded_low.duration_tolerance_s == 0.0
 
 
 def test_settings_recent_roots_are_normalized(tmp_path: Path, monkeypatch) -> None:
