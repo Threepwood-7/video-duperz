@@ -19,7 +19,7 @@ from PySide6.QtWidgets import QMessageBox, QTableWidgetItem
 from threep_commons.desktop import open_path_in_default_app, reveal_path_in_file_manager
 
 from ..executable_paths import resolve_executable_path
-from ..quality import bit_depth_bonus, codec_rank
+from ..quality import quality_rank_tuple_from_fields, quality_score_from_fields
 from .results_view_shared import (
     COL_CHECK,
     COL_FULL_PATH,
@@ -90,36 +90,41 @@ class ResultsViewActionMixin(ResultsViewThumbnailMixin):
 
     def _quality_score_for_row(self, meta: RowMeta) -> float:
         """Return the keep-best heuristic score for one rendered row."""
-        return self._quality_score_for_dimensions(
-            meta.width,
-            meta.height,
-            meta.bit_depth,
-            meta.bitrate,
-            meta.codec,
+        return quality_score_from_fields(
+            width=meta.width,
+            height=meta.height,
+            bit_depth=meta.bit_depth,
+            bitrate=meta.bitrate,
+            codec=meta.codec,
+            codec_profile=meta.codec_profile,
+            is_interlaced=meta.is_interlaced,
         )
 
     def _quality_score_for_item(self, item: DuplicateItem) -> float:
         """Return the keep-best heuristic score for one duplicate item."""
-        return self._quality_score_for_dimensions(
-            item.width,
-            item.height,
-            item.bit_depth,
-            item.bitrate,
-            item.codec,
+        return quality_score_from_fields(
+            width=item.width,
+            height=item.height,
+            bit_depth=item.bit_depth,
+            bitrate=item.bitrate,
+            codec=item.codec,
+            codec_profile=item.codec_profile,
+            is_interlaced=item.is_interlaced,
         )
 
     @staticmethod
-    def _quality_score_for_dimensions(
-        width: int,
-        height: int,
-        bit_depth: int,
-        bitrate: int,
-        codec: str,
-    ) -> float:
-        """Score one video using the same heuristic as the keep-best action."""
-        pixels = float(width * height)
-        base_score = 0.65 * pixels + 0.25 * float(bitrate) + 0.10 * codec_rank(codec)
-        return base_score * bit_depth_bonus(bit_depth)
+    def _quality_rank_for_row(meta: RowMeta) -> tuple[float, float, int]:
+        """Return the keep-best sortable tuple for one rendered row."""
+        return quality_rank_tuple_from_fields(
+            width=meta.width,
+            height=meta.height,
+            bit_depth=meta.bit_depth,
+            bitrate=meta.bitrate,
+            codec=meta.codec,
+            codec_profile=meta.codec_profile,
+            codec_level=meta.codec_level,
+            is_interlaced=meta.is_interlaced,
+        )
 
     def apply_keep_strategy(self, strategy: str) -> None:
         """Check every row except the chosen keeper in each visible group."""
@@ -140,7 +145,9 @@ class ResultsViewActionMixin(ResultsViewThumbnailMixin):
                 keeper = sorted(
                     metas,
                     key=lambda pair: (
-                        -self._quality_score_for_row(pair[1]),
+                        -self._quality_rank_for_row(pair[1])[0],
+                        -self._quality_rank_for_row(pair[1])[1],
+                        self._quality_rank_for_row(pair[1])[2],
                         pair[1].mtime_ns,
                         pair[1].path.lower(),
                     ),
@@ -149,7 +156,9 @@ class ResultsViewActionMixin(ResultsViewThumbnailMixin):
                 keeper = sorted(
                     metas,
                     key=lambda pair: (
-                        self._quality_score_for_row(pair[1]),
+                        self._quality_rank_for_row(pair[1])[0],
+                        self._quality_rank_for_row(pair[1])[1],
+                        -self._quality_rank_for_row(pair[1])[2],
                         pair[1].mtime_ns,
                         pair[1].path.lower(),
                     ),

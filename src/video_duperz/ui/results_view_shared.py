@@ -52,13 +52,18 @@ RESULTS_HEADERS = [
     "Thumbnail",
     "File Name",
     "Extension",
+    "Container",
     "Size (Bytes)",
     "Resolution",
     "FPS",
+    "Interlaced",
     "Bit Depth",
     "HDR Format",
     "Duration",
     "Video Codec",
+    "Codec Profile",
+    "Codec Level",
+    "Audio Streams",
     "Audio Codec",
     "Audio Bitrate",
     "Audio Lang(s)",
@@ -77,23 +82,28 @@ COL_IDENTICAL = 2
 COL_THUMB = 3
 COL_FILE_NAME = 4
 COL_EXTENSION = 5
-COL_SIZE = 6
-COL_RESOLUTION = 7
-COL_FPS = 8
-COL_BIT_DEPTH = 9
-COL_HDR_FORMAT = 10
-COL_DURATION = 11
-COL_VIDEO_CODEC = 12
-COL_AUDIO_CODEC = 13
-COL_AUDIO_BITRATE = 14
-COL_AUDIO_LANGS = 15
-COL_SUB_LANGS = 16
-COL_BITRATE = 17
-COL_SIMILARITY = 18
-COL_MATCH = 19
-COL_LAST_MODIFIED = 20
-COL_PARENT_DIR = 21
-COL_FULL_PATH = 22
+COL_CONTAINER = 6
+COL_SIZE = 7
+COL_RESOLUTION = 8
+COL_FPS = 9
+COL_INTERLACED = 10
+COL_BIT_DEPTH = 11
+COL_HDR_FORMAT = 12
+COL_DURATION = 13
+COL_VIDEO_CODEC = 14
+COL_CODEC_PROFILE = 15
+COL_CODEC_LEVEL = 16
+COL_AUDIO_STREAMS = 17
+COL_AUDIO_CODEC = 18
+COL_AUDIO_BITRATE = 19
+COL_AUDIO_LANGS = 20
+COL_SUB_LANGS = 21
+COL_BITRATE = 22
+COL_SIMILARITY = 23
+COL_MATCH = 24
+COL_LAST_MODIFIED = 25
+COL_PARENT_DIR = 26
+COL_FULL_PATH = 27
 
 META_ROLE = Qt.ItemDataRole.UserRole
 THUMB_GAP = 6
@@ -178,6 +188,10 @@ class RowMeta:
     height: int
     bit_depth: int
     codec: str
+    codec_profile: str
+    codec_level: str
+    container: str
+    is_interlaced: bool
     bitrate: int
     similarity: float
     keep_default: bool

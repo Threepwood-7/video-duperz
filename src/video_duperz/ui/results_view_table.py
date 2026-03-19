@@ -14,9 +14,13 @@ from .results_view_shared import (
     COL_AUDIO_BITRATE,
     COL_AUDIO_CODEC,
     COL_AUDIO_LANGS,
+    COL_AUDIO_STREAMS,
     COL_BIT_DEPTH,
     COL_BITRATE,
     COL_CHECK,
+    COL_CODEC_LEVEL,
+    COL_CODEC_PROFILE,
+    COL_CONTAINER,
     COL_DURATION,
     COL_EXTENSION,
     COL_FILE_NAME,
@@ -25,6 +29,7 @@ from .results_view_shared import (
     COL_GROUP_ID,
     COL_HDR_FORMAT,
     COL_IDENTICAL,
+    COL_INTERLACED,
     COL_LAST_MODIFIED,
     COL_MATCH,
     COL_PARENT_DIR,
@@ -140,6 +145,10 @@ class ResultsViewTableMixin(ResultsViewBase):
             height=item.height,
             bit_depth=item.bit_depth,
             codec=item.codec,
+            codec_profile=item.codec_profile,
+            codec_level=item.codec_level,
+            container=item.container,
+            is_interlaced=item.is_interlaced,
             bitrate=item.bitrate,
             similarity=item.similarity_score,
             keep_default=item.keep_default,
@@ -158,6 +167,23 @@ class ResultsViewTableMixin(ResultsViewBase):
         if bit_depth <= 0:
             return ""
         return f"{bit_depth}-bit"
+
+    @staticmethod
+    def _fmt_interlaced(is_interlaced: bool) -> str:
+        """Render one interlaced/progressive flag for the results table."""
+        return "Yes" if is_interlaced else ""
+
+    @staticmethod
+    def _video_codec_tooltip(item: DuplicateItem) -> str:
+        """Return the compact video metadata tooltip shown in codec-related cells."""
+        lines = [
+            f"Codec: {item.codec or 'Unknown'}",
+            f"Profile: {item.codec_profile or 'Unknown'}",
+            f"Level: {item.codec_level or 'Unknown'}",
+            f"Scan Type: {'Interlaced' if item.is_interlaced else 'Progressive'}",
+            f"Container: {item.container or 'Unknown'}",
+        ]
+        return "\n".join(lines)
 
     def _populate_results_row(
         self,
@@ -217,13 +243,20 @@ class ResultsViewTableMixin(ResultsViewBase):
             COL_EXTENSION: QTableWidgetItem(
                 self._normalized_extension_value(item.path)
             ),
+            COL_CONTAINER: QTableWidgetItem(item.container or ""),
             COL_SIZE: QTableWidgetItem(f"{item.size:,}"),
             COL_RESOLUTION: QTableWidgetItem(f"{item.width}x{item.height}"),
             COL_FPS: QTableWidgetItem(self._fmt_fps(item.fps)),
+            COL_INTERLACED: QTableWidgetItem(
+                self._fmt_interlaced(item.is_interlaced)
+            ),
             COL_BIT_DEPTH: QTableWidgetItem(self._fmt_bit_depth(item.bit_depth)),
             COL_HDR_FORMAT: QTableWidgetItem(item.hdr_format),
             COL_DURATION: QTableWidgetItem(f"{item.duration_s:.1f}s"),
             COL_VIDEO_CODEC: QTableWidgetItem(item.codec),
+            COL_CODEC_PROFILE: QTableWidgetItem(item.codec_profile or ""),
+            COL_CODEC_LEVEL: QTableWidgetItem(item.codec_level or ""),
+            COL_AUDIO_STREAMS: QTableWidgetItem(str(item.audio_stream_count)),
             COL_AUDIO_CODEC: QTableWidgetItem(item.audio_codec or ""),
             COL_AUDIO_BITRATE: QTableWidgetItem(str(item.audio_bitrate)),
             COL_AUDIO_LANGS: QTableWidgetItem(item.audio_languages or ""),
@@ -235,7 +268,10 @@ class ResultsViewTableMixin(ResultsViewBase):
             COL_PARENT_DIR: QTableWidgetItem(str(file_path.parent)),
             COL_FULL_PATH: QTableWidgetItem(item.path),
         }
+        codec_tooltip = self._video_codec_tooltip(item)
         for column, table_item in row_items.items():
+            if column in {COL_VIDEO_CODEC, COL_CODEC_PROFILE, COL_CODEC_LEVEL}:
+                table_item.setToolTip(codec_tooltip)
             if column == COL_MATCH:
                 table_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 if item.match_reason == "trimmed_match":
