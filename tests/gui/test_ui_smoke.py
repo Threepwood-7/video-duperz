@@ -4436,7 +4436,7 @@ def test_scan_view_progress_keeps_parallel_worker_tokens(tmp_path: Path) -> None
         window.close()
 
 
-def test_scan_view_progress_uses_padded_counters(tmp_path: Path) -> None:
+def test_scan_view_progress_uses_compact_counters(tmp_path: Path) -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QApplication.instance() or QApplication([])
     with Database(tmp_path / "app.db") as db:
@@ -4458,7 +4458,7 @@ def test_scan_view_progress_uses_padded_counters(tmp_path: Path) -> None:
 
         assert (
             window.scan_view.progress_table.item(0, SCAN_PROGRESS_COL_PROGRESS).text()
-            == "  12 / 1001"
+            == "12/1001"
         )
         window.close()
 
@@ -4955,7 +4955,7 @@ def test_scan_view_renders_lane_snapshots_and_worker_utilization(
         )
         assert lane0_progress_cell is not None
         lane0_progress = _lane_progress_bar(lane0_progress_cell)
-        assert lane0_progress.format() == "1 / 3+ (33%)"
+        assert lane0_progress.format() == "1/3+ (33%)"
         lane0_layout = lane0_progress_cell.layout()
         assert lane0_layout is not None
         assert bool(lane0_layout.alignment() & Qt.AlignmentFlag.AlignVCenter)
@@ -4988,7 +4988,7 @@ def test_scan_view_renders_lane_snapshots_and_worker_utilization(
         lane1_progress = _lane_progress_bar(
             window.scan_view.lane_table.cellWidget(1, SCAN_LANE_COL_PROGRESS)
         )
-        assert lane1_progress.format() == "2 / 2 (100%)"
+        assert lane1_progress.format() == "2/2 (100%)"
         assert (
             window.scan_view.lane_table.item(1, 0).background().color().name().lower()
             == "#f5f5f5"

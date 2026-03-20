@@ -101,7 +101,7 @@ class _LaneProgressCell(QWidget):
         self.progress_bar.setObjectName("scan_lane_progress_bar")
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setRange(0, 0)
-        self.progress_bar.setFormat("0 / 0+ (--%)")
+        self.progress_bar.setFormat("0/0+ (--%)")
         self.progress_bar.setFixedHeight(12)
         self.progress_bar.setStyleSheet(
             """
@@ -318,11 +318,10 @@ class ScanView(QWidget):
         self.cancel_btn.setEnabled(is_running)
 
     def _format_counter(self, current: int, total: int) -> str:
-        """Format one padded file-progress counter."""
+        """Format one compact file-progress counter."""
         display_total = max(1, int(total))
         display_current = max(0, int(current))
-        width = len(str(display_total))
-        return f"{display_current:>{width}} / {display_total}"
+        return f"{display_current}/{display_total}"
 
     def _format_eta(self, progress: ScanProgress) -> str:
         """Format the ETA label from the current analysis throughput."""
@@ -838,7 +837,7 @@ class ScanView(QWidget):
         percent_text = "--%"
         if not snapshot.discovery_complete and discovered <= 0:
             progress_bar.setRange(0, 0)
-            progress_bar.setFormat("0 / 0+ (--%)")
+            progress_bar.setFormat("0/0+ (--%)")
         else:
             display_total = max(1, discovered)
             progress_bar.setRange(0, display_total)
@@ -846,9 +845,7 @@ class ScanView(QWidget):
             suffix = "" if snapshot.discovery_complete else "+"
             percent = int((max(0, min(completed, display_total)) / display_total) * 100)
             percent_text = f"{percent}%"
-            progress_bar.setFormat(
-                f"{completed} / {discovered}{suffix} ({percent_text})"
-            )
+            progress_bar.setFormat(f"{completed}/{discovered}{suffix} ({percent_text})")
         progress_bar.setToolTip(
             "Completed {completed} of {discovered}{suffix} ({percent}) | "
             "cache {cache_hits}, fp-only {fingerprint_only}, reprobe {reprobe}".format(
