@@ -1030,6 +1030,7 @@ def test_sources_tab_duplicate_detection_controls_exist_and_persist(
             QLineEdit,
         )
         assert not window.custom_similarity_threshold_row.isVisible()
+        assert str(window.cross_resolution_mode_combo.currentData()) == "same_aspect"
 
         window.profile_combo.setCurrentText("custom")
         app.processEvents()
@@ -3915,10 +3916,14 @@ def test_sources_tab_scan_priority_controls_exist(tmp_path: Path) -> None:
             window.findChild(QComboBox, "scan_child_io_mode_combo")
             is window.scan_child_io_mode_combo
         )
-        assert str(window.scan_parent_cpu_priority_combo.currentData()) == "normal"
-        assert str(window.scan_parent_io_mode_combo.currentData()) == "normal"
-        assert str(window.scan_child_cpu_priority_combo.currentData()) == "normal"
-        assert str(window.scan_child_io_mode_combo.currentData()) == "normal"
+        assert str(window.scan_parent_cpu_priority_combo.currentData()) == (
+            "below_normal"
+        )
+        assert str(window.scan_parent_io_mode_combo.currentData()) == "background"
+        assert str(window.scan_child_cpu_priority_combo.currentData()) == (
+            "below_normal"
+        )
+        assert str(window.scan_child_io_mode_combo.currentData()) == "background"
         window.close()
 
 
@@ -3956,6 +3961,12 @@ def test_sources_tab_grouped_layout_has_detailed_tooltips(tmp_path: Path) -> Non
         )
         assert "shells out to the ffprobe executable" in (
             window.probe_backend_combo.toolTip().lower()
+        )
+        assert "lower of your cpu core count" in (
+            window.max_workers_spin.toolTip().lower()
+        )
+        assert "detected physical-drive count" in (
+            window.max_workers_spin.toolTip().lower()
         )
         assert "restored after the scan finishes" in (
             window.scan_parent_cpu_priority_combo.toolTip().lower()

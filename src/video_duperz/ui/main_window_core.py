@@ -1043,9 +1043,11 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             self.max_workers_spin,
             (
                 "Set the total worker budget for the scan.\n\n"
-                "Higher values can improve throughput on fast storage, but they can "
-                "also increase disk contention. The physical-drive planner below "
-                "shows how this budget is distributed."
+                "On first launch this starts at the lower of your CPU core count "
+                "and the detected physical-drive count, with a minimum of one "
+                "worker. Higher values can improve throughput on fast storage, "
+                "but they can also increase disk contention. The physical-drive "
+                "planner below shows how this budget is distributed."
             ),
         )
         self._set_sources_tooltip(

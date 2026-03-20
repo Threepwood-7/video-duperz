@@ -150,6 +150,25 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     assert loaded.saved_scan_profiles["My Set"].cross_resolution_mode == "same_aspect"
 
 
+def test_default_settings_use_drive_capped_worker_budget_and_scan_friendly_priorities(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("video_duperz.config.os.cpu_count", lambda: 12)
+    monkeypatch.setattr(
+        "video_duperz.config._detected_physical_drive_count",
+        lambda: 3,
+    )
+
+    settings = default_settings()
+
+    assert settings.cross_resolution_mode == "same_aspect"
+    assert settings.max_workers == 3
+    assert settings.scan_parent_cpu_priority == "below_normal"
+    assert settings.scan_parent_io_mode == "background"
+    assert settings.scan_child_cpu_priority == "below_normal"
+    assert settings.scan_child_io_mode == "background"
+
+
 def test_settings_path_uses_app_name_ini_under_appdata(
     tmp_path: Path, monkeypatch
 ) -> None:

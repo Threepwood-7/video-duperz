@@ -208,7 +208,7 @@ def _normalize_saved_scan_profiles(value: object) -> dict[str, SavedScanProfileP
             False,
         )
         cross_resolution_mode = normalize_cross_resolution_mode(
-            payload_map.get("cross_resolution_mode", "off")
+            payload_map.get("cross_resolution_mode", "same_aspect")
         )
         scan_set_key = str(payload_map.get("scan_set_key", "")).strip()
         if not scan_set_key:
@@ -362,10 +362,41 @@ def _normalize_fingerprint_timeout_s(
     return max(0.1, min(3600.0, parsed))
 
 
+def _detected_physical_drive_count() -> int:
+    """Return the detected local physical-drive count for first-run defaults."""
+    try:
+        from .scanner import list_physical_drives
+
+        drives = list_physical_drives()
+    except Exception:
+        return 0
+
+    disk_tokens = {
+        str(token).strip()
+        for drive in drives
+        for token in drive.disk_tokens
+        if str(token).strip()
+    }
+    if disk_tokens:
+        return len(disk_tokens)
+
+    volume_ids = {
+        str(drive.volume_identity).strip()
+        for drive in drives
+        if str(drive.volume_identity).strip()
+    }
+    if volume_ids:
+        return len(volume_ids)
+    return len(drives)
+
+
 def default_max_workers() -> int:
-    """Choose a conservative default worker count for desktop scans."""
-    cpus = os.cpu_count() or 4
-    return min(6, max(2, cpus - 1))
+    """Choose the first-run worker budget from CPU and drive availability."""
+    cpu_count = max(1, int(os.cpu_count() or 1))
+    drive_count = _detected_physical_drive_count()
+    if drive_count <= 0:
+        return 1
+    return max(1, min(cpu_count, drive_count))
 
 
 def app_data_dir() -> Path:
@@ -803,7 +834,7 @@ def default_settings() -> Settings:
         fingerprint_timeout_s=DEFAULT_FINGERPRINT_TIMEOUT_S,
         scene_aware_sampling=False,
         audio_fingerprint_enabled=False,
-        cross_resolution_mode="off",
+        cross_resolution_mode="same_aspect",
         max_workers=default_max_workers(),
         preview_autoplay=False,
         thumbnail_size=DEFAULT_THUMBNAIL_SIZE,
@@ -831,10 +862,10 @@ def default_settings() -> Settings:
         custom_command_f2="",
         custom_command_f3="",
         custom_command_f4="",
-        scan_parent_cpu_priority="normal",
-        scan_parent_io_mode="normal",
-        scan_child_cpu_priority="normal",
-        scan_child_io_mode="normal",
+        scan_parent_cpu_priority="below_normal",
+        scan_parent_io_mode="background",
+        scan_child_cpu_priority="below_normal",
+        scan_child_io_mode="background",
         scan_db_batch_size=DEFAULT_SCAN_DB_BATCH_SIZE,
         scan_db_flush_interval_ms=DEFAULT_SCAN_DB_FLUSH_INTERVAL_MS,
         scan_enum_queue_max=DEFAULT_SCAN_ENUM_QUEUE_MAX,

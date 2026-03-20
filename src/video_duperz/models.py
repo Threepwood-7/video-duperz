@@ -56,7 +56,7 @@ class SavedScanProfilePayload:
     custom_similarity_threshold: float = 0.18
     scene_aware_sampling: bool = False
     audio_fingerprint_enabled: bool = False
-    cross_resolution_mode: CrossResolutionMode = "off"
+    cross_resolution_mode: CrossResolutionMode = "same_aspect"
     updated_at: str = field(default_factory=utc_now_iso)
 
 
@@ -74,7 +74,7 @@ class Settings:
     duration_tolerance_s: float = 8.0
     scene_aware_sampling: bool = False
     audio_fingerprint_enabled: bool = False
-    cross_resolution_mode: CrossResolutionMode = "off"
+    cross_resolution_mode: CrossResolutionMode = "same_aspect"
     fingerprint_timeout_s: float = 15.0
     max_workers: int = 2
     preview_autoplay: bool = False
@@ -107,10 +107,10 @@ class Settings:
     custom_command_f2: str = ""
     custom_command_f3: str = ""
     custom_command_f4: str = ""
-    scan_parent_cpu_priority: ScanProcessCpuPriority = "normal"
-    scan_parent_io_mode: ScanProcessIoMode = "normal"
-    scan_child_cpu_priority: ScanProcessCpuPriority = "normal"
-    scan_child_io_mode: ScanProcessIoMode = "normal"
+    scan_parent_cpu_priority: ScanProcessCpuPriority = "below_normal"
+    scan_parent_io_mode: ScanProcessIoMode = "background"
+    scan_child_cpu_priority: ScanProcessCpuPriority = "below_normal"
+    scan_child_io_mode: ScanProcessIoMode = "background"
     scan_db_batch_size: int = 512
     scan_db_flush_interval_ms: int = 200
     scan_enum_queue_max: int = 4096
