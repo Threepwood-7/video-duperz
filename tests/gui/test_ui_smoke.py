@@ -466,7 +466,7 @@ def test_main_window_launches_with_new_results_table(tmp_path: Path) -> None:
         app.processEvents()
 
         assert window.thumbnail_size_combo.count() == 4
-        assert window.add_recent_root_btn.text() == "Add Recent Folder"
+        assert window.add_recent_root_btn.text() == "Add &Recent Folder"
         assert window.results_view.results_table.columnCount() == 28
         assert window.results_view.results_table.horizontalHeaderItem(2).text() == "="
         assert (
@@ -610,8 +610,8 @@ def test_sources_root_buttons_labels_order_and_state(tmp_path: Path) -> None:
         window.show()
         app.processEvents()
 
-        assert window.remove_root_btn.text() == "Remove Folder"
-        assert window.remove_all_roots_btn.text() == "Remove All"
+        assert window.remove_root_btn.text() == "&Remove Folder"
+        assert window.remove_all_roots_btn.text() == "Remove &All"
         sources_layout = window.sources_tab.layout()
         assert sources_layout is not None
         scan_folders_group = window.findChild(QGroupBox, "sources_scan_folders_group")
@@ -638,8 +638,8 @@ def test_sources_root_buttons_labels_order_and_state(tmp_path: Path) -> None:
         assert sources_layout.itemAt(0).widget() is scan_folders_group
         assert sources_layout.itemAt(1).widget() is physical_drives_group
         assert sources_layout.itemAt(2).widget() is options_container
-        assert scan_folders_group.title() == "Scan Folders"
-        assert physical_drives_group.title() == "Physical Drives"
+        assert scan_folders_group.title() == "Scan &Folders"
+        assert physical_drives_group.title() == "Physical &Drives"
         content_labels = {
             label.text() for label in scan_content_group.findChildren(QLabel)
         }
@@ -647,14 +647,34 @@ def test_sources_root_buttons_labels_order_and_state(tmp_path: Path) -> None:
             label.text() for label in scan_performance_group.findChildren(QLabel)
         }
         tools_labels = {label.text() for label in tools_group.findChildren(QLabel)}
-        assert "Extensions preset" in content_labels
-        assert "Extensions (comma-separated, no dots required)" in content_labels
-        assert "Similarity profile" in content_labels
-        assert "Max workers total" in performance_labels
-        assert "Parent CPU priority during scan" in performance_labels
-        assert "Child I/O mode during scan" in performance_labels
-        assert "ffmpeg executable override" in tools_labels
-        assert "Thumbnail preview size" in tools_labels
+        assert "&Extensions Preset" in content_labels
+        assert "E&xtensions (Comma-Separated, No Dots Required)" in content_labels
+        assert "Similarity &Profile" in content_labels
+        assert "Thumbnail Preview Si&ze" in content_labels
+        assert "&Max Workers Total" in performance_labels
+        assert "Parent CPU Priority &During Scan" in performance_labels
+        assert "Child I/O Mode Durin&g Scan" in performance_labels
+        assert "ffmpe&g Executable Path" in tools_labels
+        assert "E&verything Executable Path" in tools_labels
+        assert "Thumbnail Preview Si&ze" not in tools_labels
+        label_buddies = {
+            label.text(): label.buddy()
+            for label in (
+                scan_content_group.findChildren(QLabel)
+                + scan_performance_group.findChildren(QLabel)
+                + tools_group.findChildren(QLabel)
+            )
+            if label.buddy() is not None
+        }
+        assert (
+            label_buddies["Custom &Threshold"]
+            is window.custom_similarity_threshold_spin
+        )
+        assert label_buddies["ffmpe&g Executable Path"] is window.ffmpeg_exe_path_edit
+        assert (
+            label_buddies["E&verything Executable Path"]
+            is window.everything_exe_path_edit
+        )
         content_form_table = window.findChild(
             QWidget,
             "sources_scan_content_form_table",
@@ -674,6 +694,12 @@ def test_sources_root_buttons_labels_order_and_state(tmp_path: Path) -> None:
         assert isinstance(performance_form_table.layout(), QGridLayout)
         assert isinstance(tools_form_table.layout(), QGridLayout)
 
+        options_layout = options_container.layout()
+        assert isinstance(options_layout, QGridLayout)
+        assert options_layout.itemAtPosition(0, 0).widget() is scan_content_group
+        assert options_layout.itemAtPosition(0, 1).widget() is scan_performance_group
+        assert options_layout.itemAtPosition(0, 2).widget() is tools_group
+
         scan_folders_layout = scan_folders_group.layout()
         assert scan_folders_layout is not None
         roots_actions_layout = scan_folders_layout.itemAt(1).layout()
@@ -684,12 +710,12 @@ def test_sources_root_buttons_labels_order_and_state(tmp_path: Path) -> None:
             if isinstance(widget, QPushButton):
                 button_texts.append(widget.text())
         assert button_texts[:6] == [
-            "Add Folder",
-            "Remove Folder",
-            "Remove All",
-            "Add Recent Folder",
-            "Save Scan Set",
-            "Load Saved Scan",
+            "&Add Folder",
+            "&Remove Folder",
+            "Remove &All",
+            "Add &Recent Folder",
+            "&Save Scan Set",
+            "&Load Saved Scan",
         ]
 
         window.roots_list.setCurrentRow(-1)
@@ -3098,8 +3124,8 @@ def test_saved_scan_profiles_save_load_and_delete(tmp_path: Path, monkeypatch) -
         window.show()
         app.processEvents()
 
-        assert window.save_scan_set_btn.text() == "Save Scan Set"
-        assert window.load_saved_scan_btn.text() == "Load Saved Scan"
+        assert window.save_scan_set_btn.text() == "&Save Scan Set"
+        assert window.load_saved_scan_btn.text() == "&Load Saved Scan"
         window.profile_combo.setCurrentText("custom")
         window.custom_similarity_threshold_spin.setValue(0.23)
         window.scene_aware_sampling_check.setChecked(True)
@@ -3815,6 +3841,7 @@ def test_sources_tab_drive_workers_and_probe_mode_persist_across_reload(
         window.ffmpeg_exe_path_edit.setText(r"C:\tools\ffmpeg.exe")
         window.ffprobe_exe_path_edit.setText(r"C:\tools\ffprobe.exe")
         window.mediainfo_exe_path_edit.setText(r"C:\tools\mediainfo.exe")
+        window.everything_exe_path_edit.setText(r"C:\tools\Everything.exe")
         app.processEvents()
 
         assert "Requested workers: 6" in window.sources_drive_summary_label.text()
@@ -3832,6 +3859,7 @@ def test_sources_tab_drive_workers_and_probe_mode_persist_across_reload(
     assert loaded.ffmpeg_exe_path == r"C:\tools\ffmpeg.exe"
     assert loaded.ffprobe_exe_path == r"C:\tools\ffprobe.exe"
     assert loaded.mediainfo_exe_path == r"C:\tools\mediainfo.exe"
+    assert loaded.everything_exe_path == r"C:\tools\Everything.exe"
 
     with Database(tmp_path / "app.db") as db:
         reloaded_window = MainWindow(db=db, settings=loaded)
@@ -3856,6 +3884,10 @@ def test_sources_tab_drive_workers_and_probe_mode_persist_across_reload(
         assert reloaded_window.ffprobe_exe_path_edit.text() == r"C:\tools\ffprobe.exe"
         assert (
             reloaded_window.mediainfo_exe_path_edit.text() == r"C:\tools\mediainfo.exe"
+        )
+        assert (
+            reloaded_window.everything_exe_path_edit.text()
+            == r"C:\tools\Everything.exe"
         )
         reloaded_spin_a = reloaded_window.sources_drive_table.cellWidget(0, 6)
         reloaded_spin_b = reloaded_window.sources_drive_table.cellWidget(1, 6)
@@ -3887,6 +3919,34 @@ def test_sources_tab_executable_browse_populates_target_edit(
         app.processEvents()
 
         assert window.ffmpeg_exe_path_edit.text() == r"C:\tools\ffmpeg.exe"
+        window.close()
+
+
+def test_sources_tab_executable_find_populates_target_edit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        monkeypatch.setattr(
+            "video_duperz.ui.main_window_settings.discover_executable_override_path",
+            lambda tool_name, current_value="": (
+                r"C:\tools\Everything.exe"
+                if tool_name == "everything"
+                else r"C:\tools\ffmpeg.exe"
+            ),
+        )
+
+        window.everything_exe_path_find_btn.click()
+        app.processEvents()
+
+        assert window.everything_exe_path_edit.text() == r"C:\tools\Everything.exe"
         window.close()
 
 
@@ -3977,6 +4037,9 @@ def test_sources_tab_grouped_layout_has_detailed_tooltips(tmp_path: Path) -> Non
         assert "leave this blank to use ffmpeg from path" in (
             window.ffmpeg_exe_path_edit.toolTip().lower()
         )
+        assert "leave this blank to use everything from path" in (
+            window.everything_exe_path_edit.toolTip().lower()
+        )
         assert "current scan roots map to local physical drives" in (
             window.sources_drive_summary_label.toolTip().lower()
         )
@@ -3997,6 +4060,18 @@ def test_sources_tab_grouped_layout_has_detailed_tooltips(tmp_path: Path) -> Non
         assert isinstance(content_form_table.layout(), QGridLayout)
         assert isinstance(performance_form_table.layout(), QGridLayout)
         assert isinstance(tools_form_table.layout(), QGridLayout)
+        assert (
+            window.findChild(QLineEdit, "sources_everything_exe_path_edit")
+            is window.everything_exe_path_edit
+        )
+        assert (
+            window.findChild(QPushButton, "sources_everything_exe_path_browse_btn")
+            is window.everything_exe_path_browse_btn
+        )
+        assert (
+            window.findChild(QPushButton, "sources_everything_exe_path_find_btn")
+            is window.everything_exe_path_find_btn
+        )
         sources_layout = window.sources_tab.layout()
         assert sources_layout is not None
         assert sources_layout.stretch(1) > sources_layout.stretch(0)

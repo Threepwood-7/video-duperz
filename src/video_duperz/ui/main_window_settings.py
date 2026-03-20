@@ -27,7 +27,10 @@ from ..config_video_presets import (
     detect_video_extension_preset,
     video_extensions_csv_for_preset,
 )
-from ..executable_paths import normalize_executable_override_path
+from ..executable_paths import (
+    discover_executable_override_path,
+    normalize_executable_override_path,
+)
 from ..models import (
     ProbeBackendId,
     ProbeWorkerMode,
@@ -95,7 +98,20 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
             "Executable (*.exe);;All files (*)",
         )
         if selected_path:
-            target_edit.setText(selected_path)
+            target_edit.setText(normalize_executable_override_path(selected_path))
+
+    def _find_executable_path(
+        self,
+        target_edit: QLineEdit,
+        tool_name: str,
+    ) -> None:
+        """Discover one executable path and copy it into the target edit."""
+        resolved_path = discover_executable_override_path(
+            tool_name,
+            target_edit.text(),
+        )
+        if resolved_path:
+            target_edit.setText(resolved_path)
 
     def _load_settings_to_widgets(self) -> None:
         """Load persisted settings into all source and results controls."""
@@ -155,6 +171,7 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
         self.ffprobe_exe_path_edit.setText(self.settings.ffprobe_exe_path)
         self.fpcalc_exe_path_edit.setText(self.settings.fpcalc_exe_path)
         self.mediainfo_exe_path_edit.setText(self.settings.mediainfo_exe_path)
+        self.everything_exe_path_edit.setText(self.settings.everything_exe_path)
         self._set_combo_by_data(
             self.scan_parent_cpu_priority_combo,
             self.settings.scan_parent_cpu_priority,
@@ -295,7 +312,7 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
                 self.mediainfo_exe_path_edit.text()
             ),
             everything_exe_path=normalize_executable_override_path(
-                self.settings.everything_exe_path
+                self.everything_exe_path_edit.text()
             ),
             custom_command_f2=str(self.settings.custom_command_f2 or "").strip(),
             custom_command_f3=str(self.settings.custom_command_f3 or "").strip(),

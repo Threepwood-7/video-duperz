@@ -14,7 +14,10 @@ from threep_commons.settings import QSettingsValueStore
 
 from .config_video_presets import COMMON_VIDEO_EXTENSIONS
 from .constants import APP_IDENTITY, SETTINGS_APP_NAME
-from .executable_paths import normalize_executable_override_path
+from .executable_paths import (
+    discover_default_executable_settings,
+    normalize_executable_override_path,
+)
 from .models import (
     DEFAULT_THUMBNAIL_SIZE,
     THUMBNAIL_SIZE_CHOICES,
@@ -883,6 +886,22 @@ def load_settings() -> Settings:
         return _settings_from_raw(raw, defaults)
 
     settings = default_settings()
+    discovered_paths = discover_default_executable_settings()
+    settings.ffmpeg_exe_path = normalize_executable_override_path(
+        discovered_paths.get("ffmpeg_exe_path", "")
+    )
+    settings.ffprobe_exe_path = normalize_executable_override_path(
+        discovered_paths.get("ffprobe_exe_path", "")
+    )
+    settings.fpcalc_exe_path = normalize_executable_override_path(
+        discovered_paths.get("fpcalc_exe_path", "")
+    )
+    settings.mediainfo_exe_path = normalize_executable_override_path(
+        discovered_paths.get("mediainfo_exe_path", "")
+    )
+    settings.everything_exe_path = normalize_executable_override_path(
+        discovered_paths.get("everything_exe_path", "")
+    )
     save_settings(settings)
     return settings
 

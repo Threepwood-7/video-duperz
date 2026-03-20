@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 from fractions import Fraction
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -13,6 +14,9 @@ from video_duperz.probe import (
     ensure_probe_backend_available,
     probe_video,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_probe_video_ffprobe_uses_hidden_window_kwargs_and_resolved_executable(
@@ -117,16 +121,19 @@ def test_probe_video_ffprobe_uses_hidden_window_kwargs_and_resolved_executable(
 
 
 def test_ensure_ffprobe_available_uses_path_lookup_when_override_blank(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    ffprobe_path = tmp_path / "ffprobe.exe"
+    ffprobe_path.write_text("", encoding="utf-8")
     monkeypatch.setattr(
-        "video_duperz.executable_paths.shutil.which",
+        "video_duperz.executable_paths.commons_resolve_executable_path",
         lambda tool_name: (
-            r"C:\ffmpeg\bin\ffprobe.exe" if tool_name == "ffprobe" else None
+            ffprobe_path if tool_name == "ffprobe" else None
         ),
     )
 
-    assert ensure_ffprobe_available("") == r"C:\ffmpeg\bin\ffprobe.exe"
+    assert ensure_ffprobe_available("") == str(ffprobe_path)
 
 
 def test_ensure_ffprobe_available_raises_for_invalid_override_path() -> None:

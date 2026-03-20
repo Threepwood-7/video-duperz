@@ -537,6 +537,12 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         tool_name: str,
     ) -> None: ...
 
+    def _find_executable_path(
+        self,
+        target_edit: QLineEdit,
+        tool_name: str,
+    ) -> None: ...
+
     def _build_sources_tab(self) -> None:
         """Build the entire Sources tab and its child controls."""
         roots_actions = self._build_sources_root_controls()
@@ -557,13 +563,13 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             object_name="sources_roots_list",
             widget_alias="Scan Folders List",
         )
-        self.add_root_btn = QPushButton("Add Folder", self.sources_tab)
-        self.remove_root_btn = QPushButton("Remove Folder", self.sources_tab)
-        self.remove_all_roots_btn = QPushButton("Remove All", self.sources_tab)
-        self.add_recent_root_btn = QPushButton("Add Recent Folder", self.sources_tab)
-        self.save_scan_set_btn = QPushButton("Save Scan Set", self.sources_tab)
-        self.load_saved_scan_btn = QPushButton("Load Saved Scan", self.sources_tab)
-        self.sources_scan_btn = QPushButton("Scan", self.sources_tab)
+        self.add_root_btn = QPushButton("&Add Folder", self.sources_tab)
+        self.remove_root_btn = QPushButton("&Remove Folder", self.sources_tab)
+        self.remove_all_roots_btn = QPushButton("Remove &All", self.sources_tab)
+        self.add_recent_root_btn = QPushButton("Add &Recent Folder", self.sources_tab)
+        self.save_scan_set_btn = QPushButton("&Save Scan Set", self.sources_tab)
+        self.load_saved_scan_btn = QPushButton("&Load Saved Scan", self.sources_tab)
+        self.sources_scan_btn = QPushButton("&Scan", self.sources_tab)
         self.add_root_btn.clicked.connect(self._add_root)
         self.remove_root_btn.clicked.connect(self._remove_selected_root)
         self.remove_all_roots_btn.clicked.connect(self._remove_all_roots)
@@ -838,6 +844,7 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         )
         self.ffmpeg_exe_path_edit = QLineEdit(self.sources_tab)
         self.ffmpeg_exe_path_browse_btn = QPushButton("Browse...", self.sources_tab)
+        self.ffmpeg_exe_path_find_btn = QPushButton("Find", self.sources_tab)
         self._configure_named_widget(
             self.ffmpeg_exe_path_edit,
             object_name="sources_ffmpeg_exe_path_edit",
@@ -848,14 +855,26 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             object_name="sources_ffmpeg_exe_path_browse_btn",
             widget_alias="Browse ffmpeg Path",
         )
+        self._configure_named_widget(
+            self.ffmpeg_exe_path_find_btn,
+            object_name="sources_ffmpeg_exe_path_find_btn",
+            widget_alias="Find ffmpeg Path",
+        )
         self.ffmpeg_exe_path_browse_btn.clicked.connect(
             lambda: self._browse_executable_path(
                 self.ffmpeg_exe_path_edit,
                 "ffmpeg",
             )
         )
+        self.ffmpeg_exe_path_find_btn.clicked.connect(
+            lambda: self._find_executable_path(
+                self.ffmpeg_exe_path_edit,
+                "ffmpeg",
+            )
+        )
         self.ffprobe_exe_path_edit = QLineEdit(self.sources_tab)
         self.ffprobe_exe_path_browse_btn = QPushButton("Browse...", self.sources_tab)
+        self.ffprobe_exe_path_find_btn = QPushButton("Find", self.sources_tab)
         self._configure_named_widget(
             self.ffprobe_exe_path_edit,
             object_name="sources_ffprobe_exe_path_edit",
@@ -866,14 +885,26 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             object_name="sources_ffprobe_exe_path_browse_btn",
             widget_alias="Browse ffprobe Path",
         )
+        self._configure_named_widget(
+            self.ffprobe_exe_path_find_btn,
+            object_name="sources_ffprobe_exe_path_find_btn",
+            widget_alias="Find ffprobe Path",
+        )
         self.ffprobe_exe_path_browse_btn.clicked.connect(
             lambda: self._browse_executable_path(
                 self.ffprobe_exe_path_edit,
                 "ffprobe",
             )
         )
+        self.ffprobe_exe_path_find_btn.clicked.connect(
+            lambda: self._find_executable_path(
+                self.ffprobe_exe_path_edit,
+                "ffprobe",
+            )
+        )
         self.fpcalc_exe_path_edit = QLineEdit(self.sources_tab)
         self.fpcalc_exe_path_browse_btn = QPushButton("Browse...", self.sources_tab)
+        self.fpcalc_exe_path_find_btn = QPushButton("Find", self.sources_tab)
         self._configure_named_widget(
             self.fpcalc_exe_path_edit,
             object_name="sources_fpcalc_exe_path_edit",
@@ -884,14 +915,26 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             object_name="sources_fpcalc_exe_path_browse_btn",
             widget_alias="Browse fpcalc Path",
         )
+        self._configure_named_widget(
+            self.fpcalc_exe_path_find_btn,
+            object_name="sources_fpcalc_exe_path_find_btn",
+            widget_alias="Find fpcalc Path",
+        )
         self.fpcalc_exe_path_browse_btn.clicked.connect(
             lambda: self._browse_executable_path(
                 self.fpcalc_exe_path_edit,
                 "fpcalc",
             )
         )
+        self.fpcalc_exe_path_find_btn.clicked.connect(
+            lambda: self._find_executable_path(
+                self.fpcalc_exe_path_edit,
+                "fpcalc",
+            )
+        )
         self.mediainfo_exe_path_edit = QLineEdit(self.sources_tab)
         self.mediainfo_exe_path_browse_btn = QPushButton("Browse...", self.sources_tab)
+        self.mediainfo_exe_path_find_btn = QPushButton("Find", self.sources_tab)
         self._configure_named_widget(
             self.mediainfo_exe_path_edit,
             object_name="sources_mediainfo_exe_path_edit",
@@ -902,10 +945,51 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             object_name="sources_mediainfo_exe_path_browse_btn",
             widget_alias="Browse MediaInfo Path",
         )
+        self._configure_named_widget(
+            self.mediainfo_exe_path_find_btn,
+            object_name="sources_mediainfo_exe_path_find_btn",
+            widget_alias="Find MediaInfo Path",
+        )
         self.mediainfo_exe_path_browse_btn.clicked.connect(
             lambda: self._browse_executable_path(
                 self.mediainfo_exe_path_edit,
                 "mediainfo",
+            )
+        )
+        self.mediainfo_exe_path_find_btn.clicked.connect(
+            lambda: self._find_executable_path(
+                self.mediainfo_exe_path_edit,
+                "mediainfo",
+            )
+        )
+        self.everything_exe_path_edit = QLineEdit(self.sources_tab)
+        self.everything_exe_path_browse_btn = QPushButton("Browse...", self.sources_tab)
+        self.everything_exe_path_find_btn = QPushButton("Find", self.sources_tab)
+        self._configure_named_widget(
+            self.everything_exe_path_edit,
+            object_name="sources_everything_exe_path_edit",
+            widget_alias="Everything Path Override",
+        )
+        self._configure_named_widget(
+            self.everything_exe_path_browse_btn,
+            object_name="sources_everything_exe_path_browse_btn",
+            widget_alias="Browse Everything Path",
+        )
+        self._configure_named_widget(
+            self.everything_exe_path_find_btn,
+            object_name="sources_everything_exe_path_find_btn",
+            widget_alias="Find Everything Path",
+        )
+        self.everything_exe_path_browse_btn.clicked.connect(
+            lambda: self._browse_executable_path(
+                self.everything_exe_path_edit,
+                "Everything",
+            )
+        )
+        self.everything_exe_path_find_btn.clicked.connect(
+            lambda: self._find_executable_path(
+                self.everything_exe_path_edit,
+                "everything",
             )
         )
         self.thumbnail_size_combo = QComboBox(self.sources_tab)
@@ -1129,19 +1213,39 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             "Results tab.\n\n"
             "Leave this blank to use MediaInfo from PATH."
         )
+        everything_tooltip = (
+            "Optional override path for the Everything executable used from the "
+            "Results tab.\n\n"
+            "Leave this blank to use Everything from PATH."
+        )
         browse_tooltip = (
             "Browse for an executable path and copy it into the override field.\n\n"
             "Use this when the tool is not on PATH or when you want to pin a "
             "specific installed binary."
         )
+        find_tooltip = (
+            "Try to discover the executable on this machine and copy the resolved "
+            "path into the field.\n\n"
+            "This keeps a valid existing path, otherwise it searches PATH and "
+            "common install locations."
+        )
         self._set_sources_tooltip(self.ffmpeg_exe_path_edit, ffmpeg_tooltip)
         self._set_sources_tooltip(self.ffprobe_exe_path_edit, ffprobe_tooltip)
         self._set_sources_tooltip(self.fpcalc_exe_path_edit, fpcalc_tooltip)
         self._set_sources_tooltip(self.mediainfo_exe_path_edit, mediainfo_tooltip)
+        self._set_sources_tooltip(self.everything_exe_path_edit, everything_tooltip)
         self._set_sources_tooltip(self.ffmpeg_exe_path_browse_btn, browse_tooltip)
         self._set_sources_tooltip(self.ffprobe_exe_path_browse_btn, browse_tooltip)
         self._set_sources_tooltip(self.fpcalc_exe_path_browse_btn, browse_tooltip)
         self._set_sources_tooltip(self.mediainfo_exe_path_browse_btn, browse_tooltip)
+        self._set_sources_tooltip(
+            self.everything_exe_path_browse_btn, browse_tooltip
+        )
+        self._set_sources_tooltip(self.ffmpeg_exe_path_find_btn, find_tooltip)
+        self._set_sources_tooltip(self.ffprobe_exe_path_find_btn, find_tooltip)
+        self._set_sources_tooltip(self.fpcalc_exe_path_find_btn, find_tooltip)
+        self._set_sources_tooltip(self.mediainfo_exe_path_find_btn, find_tooltip)
+        self._set_sources_tooltip(self.everything_exe_path_find_btn, find_tooltip)
         self._set_sources_tooltip(
             self.thumbnail_size_combo,
             (
@@ -1219,10 +1323,12 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         control: QWidget,
         *,
         tooltip: str,
+        buddy: QWidget | None = None,
     ) -> QLabel:
         """Add one left-label row to a Sources-tab form table."""
         label = QLabel(label_text, table_widget)
         label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        label.setBuddy(buddy or control)
         self._set_sources_tooltip(label, tooltip)
         self._set_sources_tooltip(control, tooltip)
         table_layout.addWidget(label, row, 0)
@@ -1272,6 +1378,7 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         self,
         path_edit: QLineEdit,
         browse_button: QPushButton,
+        find_button: QPushButton,
     ) -> QWidget:
         """Build one inline executable override control row."""
         path_row = QWidget(self.sources_tab)
@@ -1280,6 +1387,7 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         path_row_layout.setSpacing(8)
         path_row_layout.addWidget(path_edit, stretch=1)
         path_row_layout.addWidget(browse_button)
+        path_row_layout.addWidget(find_button)
         return path_row
 
     def _build_sources_drive_widgets(self) -> None:
@@ -1434,7 +1542,7 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
 
     def _build_sources_layout(self, roots_actions: QHBoxLayout) -> None:
         scan_folders_group, scan_folders_layout = self._create_sources_group_box(
-            "Scan Folders",
+            "Scan &Folders",
             object_name="sources_scan_folders_group",
             widget_alias="Scan Folders Group",
             tooltip=(
@@ -1447,7 +1555,7 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         scan_folders_layout.addLayout(roots_actions)
 
         physical_drives_group, physical_drives_layout = self._create_sources_group_box(
-            "Physical Drives",
+            "Physical &Drives",
             object_name="sources_physical_drives_group",
             widget_alias="Physical Drives Group",
             tooltip=(
@@ -1461,13 +1569,14 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         physical_drives_layout.addWidget(self.sources_drive_table, stretch=1)
 
         scan_content_group, scan_content_layout = self._create_sources_group_box(
-            "Scan Content",
+            "Scan &Content",
             object_name="sources_scan_content_group",
             widget_alias="Scan Content Group",
             tooltip=(
-                "Choose what kinds of files are scanned and how strict matching "
-                "should be.\n\n"
-                "Use these controls to define scan coverage and duplicate sensitivity."
+                "Choose what kinds of files are scanned, how strict matching should "
+                "be, and how preview thumbnails should look in Results.\n\n"
+                "Use these controls to define scan coverage, duplicate sensitivity, "
+                "and preview density."
             ),
         )
         scan_content_table, scan_content_table_layout = self._create_sources_form_table(
@@ -1478,7 +1587,7 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             scan_content_table_layout,
             0,
             scan_content_table,
-            "Extensions preset",
+            "&Extensions Preset",
             self.extensions_preset_combo,
             tooltip=self.extensions_preset_combo.toolTip(),
         )
@@ -1486,7 +1595,7 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             scan_content_table_layout,
             1,
             scan_content_table,
-            "Extensions (comma-separated, no dots required)",
+            "E&xtensions (Comma-Separated, No Dots Required)",
             self.extensions_edit,
             tooltip=self.extensions_edit.toolTip(),
         )
@@ -1494,7 +1603,7 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             scan_content_table_layout,
             2,
             scan_content_table,
-            "Size MiB Min",
+            "Size MiB &Min",
             self.scan_size_mib_min_spin,
             tooltip=self.scan_size_mib_min_spin.toolTip(),
         )
@@ -1502,7 +1611,7 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             scan_content_table_layout,
             3,
             scan_content_table,
-            "Size MiB Max",
+            "Size MiB Ma&x",
             self.scan_size_mib_max_spin,
             tooltip=self.scan_size_mib_max_spin.toolTip(),
         )
@@ -1510,7 +1619,7 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             scan_content_table_layout,
             4,
             scan_content_table,
-            "Similarity profile",
+            "Similarity &Profile",
             self.profile_combo,
             tooltip=self.profile_combo.toolTip(),
         )
@@ -1521,15 +1630,16 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             scan_content_table_layout,
             5,
             scan_content_table,
-            "Custom threshold",
+            "Custom &Threshold",
             self.custom_similarity_threshold_row,
             tooltip=self.custom_similarity_threshold_spin.toolTip(),
+            buddy=self.custom_similarity_threshold_spin,
         )
         self._add_sources_form_row(
             scan_content_table_layout,
             6,
             scan_content_table,
-            "Duration tolerance (s)",
+            "Duration T&olerance (s)",
             self.duration_tolerance_spin,
             tooltip=self.duration_tolerance_spin.toolTip(),
         )
@@ -1537,7 +1647,7 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             scan_content_table_layout,
             7,
             scan_content_table,
-            "Scene-aware sampling",
+            "S&cene-Aware Sampling",
             self.scene_aware_sampling_check,
             tooltip=self.scene_aware_sampling_check.toolTip(),
         )
@@ -1545,7 +1655,7 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             scan_content_table_layout,
             8,
             scan_content_table,
-            "Audio fingerprinting",
+            "A&udio Fingerprinting",
             self.audio_fingerprint_enabled_check,
             tooltip=self.audio_fingerprint_enabled_check.toolTip(),
         )
@@ -1553,16 +1663,24 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             scan_content_table_layout,
             9,
             scan_content_table,
-            "Cross-resolution matching",
+            "Cross-&Resolution Matching",
             self.cross_resolution_mode_combo,
             tooltip=self.cross_resolution_mode_combo.toolTip(),
+        )
+        self._add_sources_form_row(
+            scan_content_table_layout,
+            10,
+            scan_content_table,
+            "Thumbnail Preview Si&ze",
+            self.thumbnail_size_combo,
+            tooltip=self.thumbnail_size_combo.toolTip(),
         )
         scan_content_layout.addWidget(scan_content_table)
         scan_content_layout.addStretch(1)
 
         scan_performance_group, scan_performance_layout = (
             self._create_sources_group_box(
-                "Scan Performance",
+                "Scan &Performance",
                 object_name="sources_scan_performance_group",
                 widget_alias="Scan Performance Group",
                 tooltip=(
@@ -1581,20 +1699,23 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         )
         for scan_performance_row, (label_text, control) in enumerate(
             (
-                ("Max workers total", self.max_workers_spin),
-                ("Fingerprint decode timeout", self.fingerprint_timeout_spin),
-                ("Probe backend", self.probe_backend_combo),
-                ("Probe mode", self.probe_mode_combo),
+                ("&Max Workers Total", self.max_workers_spin),
+                ("Fingerprint Decode T&imeout", self.fingerprint_timeout_spin),
+                ("Probe &Backend", self.probe_backend_combo),
+                ("Probe M&ode", self.probe_mode_combo),
                 (
-                    "Parent CPU priority during scan",
+                    "Parent CPU Priority &During Scan",
                     self.scan_parent_cpu_priority_combo,
                 ),
-                ("Parent I/O mode during scan", self.scan_parent_io_mode_combo),
                 (
-                    "Child CPU priority during scan",
+                    "Parent I/O Mode D&uring Scan",
+                    self.scan_parent_io_mode_combo,
+                ),
+                (
+                    "Child CPU Priority Du&ring Scan",
                     self.scan_child_cpu_priority_combo,
                 ),
-                ("Child I/O mode during scan", self.scan_child_io_mode_combo),
+                ("Child I/O Mode Durin&g Scan", self.scan_child_io_mode_combo),
             )
         ):
             self._add_sources_form_row(
@@ -1609,12 +1730,12 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         scan_performance_layout.addStretch(1)
 
         tools_group, tools_layout = self._create_sources_group_box(
-            "Tool Paths & Preview",
+            "Tool &Paths",
             object_name="sources_tool_paths_preview_group",
-            widget_alias="Tool Paths And Preview Group",
+            widget_alias="Tool Paths Group",
             tooltip=(
-                "Override external tool paths when needed and choose how preview "
-                "thumbnails should be shown in Results.\n\n"
+                "Override external tool paths when needed and discover common local "
+                "install locations.\n\n"
                 "Blank tool-path fields fall back to PATH lookup."
             ),
         )
@@ -1626,53 +1747,66 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             tools_table_layout,
             0,
             tools_table,
-            "ffmpeg executable override",
+            "ffmpe&g Executable Path",
             self._build_executable_override_control(
                 self.ffmpeg_exe_path_edit,
                 self.ffmpeg_exe_path_browse_btn,
+                self.ffmpeg_exe_path_find_btn,
             ),
             tooltip=self.ffmpeg_exe_path_edit.toolTip(),
+            buddy=self.ffmpeg_exe_path_edit,
         )
         self._add_sources_form_row(
             tools_table_layout,
             1,
             tools_table,
-            "ffprobe executable override",
+            "ffpro&be Executable Path",
             self._build_executable_override_control(
                 self.ffprobe_exe_path_edit,
                 self.ffprobe_exe_path_browse_btn,
+                self.ffprobe_exe_path_find_btn,
             ),
             tooltip=self.ffprobe_exe_path_edit.toolTip(),
+            buddy=self.ffprobe_exe_path_edit,
         )
         self._add_sources_form_row(
             tools_table_layout,
             2,
             tools_table,
-            "fpcalc executable override",
+            "fpcal&c Executable Path",
             self._build_executable_override_control(
                 self.fpcalc_exe_path_edit,
                 self.fpcalc_exe_path_browse_btn,
+                self.fpcalc_exe_path_find_btn,
             ),
             tooltip=self.fpcalc_exe_path_edit.toolTip(),
+            buddy=self.fpcalc_exe_path_edit,
         )
         self._add_sources_form_row(
             tools_table_layout,
             3,
             tools_table,
-            "MediaInfo executable override",
+            "Media&Info Executable Path",
             self._build_executable_override_control(
                 self.mediainfo_exe_path_edit,
                 self.mediainfo_exe_path_browse_btn,
+                self.mediainfo_exe_path_find_btn,
             ),
             tooltip=self.mediainfo_exe_path_edit.toolTip(),
+            buddy=self.mediainfo_exe_path_edit,
         )
         self._add_sources_form_row(
             tools_table_layout,
             4,
             tools_table,
-            "Thumbnail preview size",
-            self.thumbnail_size_combo,
-            tooltip=self.thumbnail_size_combo.toolTip(),
+            "E&verything Executable Path",
+            self._build_executable_override_control(
+                self.everything_exe_path_edit,
+                self.everything_exe_path_browse_btn,
+                self.everything_exe_path_find_btn,
+            ),
+            tooltip=self.everything_exe_path_edit.toolTip(),
+            buddy=self.everything_exe_path_edit,
         )
         tools_layout.addWidget(tools_table)
         tools_layout.addStretch(1)
@@ -1689,9 +1823,10 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         options_layout.setVerticalSpacing(12)
         options_layout.addWidget(scan_content_group, 0, 0)
         options_layout.addWidget(scan_performance_group, 0, 1)
-        options_layout.addWidget(tools_group, 1, 0, 1, 2)
+        options_layout.addWidget(tools_group, 0, 2)
         options_layout.setColumnStretch(0, 1)
         options_layout.setColumnStretch(1, 1)
+        options_layout.setColumnStretch(2, 1)
 
         footer_layout = QHBoxLayout()
         footer_layout.setContentsMargins(0, 0, 0, 0)

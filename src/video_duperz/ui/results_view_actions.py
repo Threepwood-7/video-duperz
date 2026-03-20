@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import shlex
 import subprocess
 import webbrowser
@@ -18,7 +17,10 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QMessageBox, QTableWidgetItem
 from threep_commons.desktop import open_path_in_default_app, reveal_path_in_file_manager
 
-from ..executable_paths import resolve_executable_path
+from ..executable_paths import (
+    common_executable_candidate_paths,
+    resolve_executable_path,
+)
 from ..quality import quality_rank_tuple_from_fields, quality_score_from_fields
 from .results_view_shared import (
     COL_CHECK,
@@ -53,16 +55,7 @@ class ResultsViewActionMixin(ResultsViewThumbnailMixin):
     @staticmethod
     def _everything_common_paths() -> list[str]:
         """Return the common Windows install locations for Everything.exe."""
-        candidates = [
-            r"C:\Program Files\Everything\Everything.exe",
-            r"C:\Program Files (x86)\Everything\Everything.exe",
-        ]
-        local_appdata = str(os.environ.get("LOCALAPPDATA", "")).strip()
-        if local_appdata:
-            candidates.append(
-                str(Path(local_appdata) / "Programs" / "Everything" / "Everything.exe")
-            )
-        return candidates
+        return common_executable_candidate_paths("everything")
 
     def _group_rows(self) -> dict[int, list[int]]:
         """Group visible row indexes by duplicate group id."""

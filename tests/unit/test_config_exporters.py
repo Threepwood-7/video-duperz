@@ -18,6 +18,7 @@ from video_duperz.config import (
 )
 from video_duperz.constants import SETTINGS_APP_NAME, SETTINGS_ORG_NAME
 from video_duperz.db import Database
+from video_duperz.executable_paths import normalize_executable_override_path
 from video_duperz.exporters import export_scan
 from video_duperz.models import (
     DuplicateItem,
@@ -124,11 +125,21 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     assert loaded.drive_worker_overrides == {"volume:a": 3}
     assert loaded.probe_backend == "pyav"
     assert loaded.probe_worker_mode == "burst"
-    assert loaded.ffmpeg_exe_path == str(Path("~/bin/ffmpeg.exe").expanduser())
-    assert loaded.ffprobe_exe_path == str(Path("~/bin/ffprobe.exe").expanduser())
-    assert loaded.fpcalc_exe_path == str(Path("~/bin/fpcalc.exe").expanduser())
-    assert loaded.mediainfo_exe_path == str(Path("~/bin/mediainfo.exe").expanduser())
-    assert loaded.everything_exe_path == str(Path("~/bin/Everything.exe").expanduser())
+    assert loaded.ffmpeg_exe_path == normalize_executable_override_path(
+        "~/bin/ffmpeg.exe"
+    )
+    assert loaded.ffprobe_exe_path == normalize_executable_override_path(
+        "~/bin/ffprobe.exe"
+    )
+    assert loaded.fpcalc_exe_path == normalize_executable_override_path(
+        "~/bin/fpcalc.exe"
+    )
+    assert loaded.mediainfo_exe_path == normalize_executable_override_path(
+        "~/bin/mediainfo.exe"
+    )
+    assert loaded.everything_exe_path == normalize_executable_override_path(
+        "~/bin/Everything.exe"
+    )
     assert loaded.custom_command_f2 == '"C:/Tools/F2 Runner.exe" --flag'
     assert loaded.custom_command_f3 == '"C:/Tools/F3 Runner.exe"'
     assert loaded.custom_command_f4 == ""
@@ -167,6 +178,65 @@ def test_default_settings_use_drive_capped_worker_budget_and_scan_friendly_prior
     assert settings.scan_parent_io_mode == "background"
     assert settings.scan_child_cpu_priority == "below_normal"
     assert settings.scan_child_io_mode == "background"
+
+
+def test_load_settings_first_run_discovers_visible_tool_paths(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setattr(
+        "video_duperz.config.discover_default_executable_settings",
+        lambda: {
+            "ffmpeg_exe_path": "C:/Tools/ffmpeg/bin/ffmpeg.exe",
+            "ffprobe_exe_path": "C:/Tools/ffmpeg/bin/ffprobe.exe",
+            "fpcalc_exe_path": "C:/Tools/Chromaprint/fpcalc.exe",
+            "mediainfo_exe_path": "C:/Tools/MediaInfo/MediaInfo.exe",
+            "everything_exe_path": "C:/Tools/Everything/Everything.exe",
+        },
+    )
+
+    loaded = load_settings()
+
+    assert loaded.ffmpeg_exe_path == r"C:\Tools\ffmpeg\bin\ffmpeg.exe"
+    assert loaded.ffprobe_exe_path == r"C:\Tools\ffmpeg\bin\ffprobe.exe"
+    assert loaded.fpcalc_exe_path == r"C:\Tools\Chromaprint\fpcalc.exe"
+    assert loaded.mediainfo_exe_path == r"C:\Tools\MediaInfo\MediaInfo.exe"
+    assert loaded.everything_exe_path == r"C:\Tools\Everything\Everything.exe"
+
+    persisted = load_settings()
+    assert persisted.ffmpeg_exe_path == r"C:\Tools\ffmpeg\bin\ffmpeg.exe"
+    assert persisted.everything_exe_path == r"C:\Tools\Everything\Everything.exe"
+
+
+def test_load_settings_keeps_existing_tool_path_values_on_later_loads(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    settings = default_settings()
+    settings.ffmpeg_exe_path = r"C:\Pinned\ffmpeg.exe"
+    settings.ffprobe_exe_path = ""
+    settings.everything_exe_path = r"C:\Pinned\Everything.exe"
+    save_settings(settings)
+    monkeypatch.setattr(
+        "video_duperz.config.discover_default_executable_settings",
+        lambda: {
+            "ffmpeg_exe_path": r"C:\Ignored\ffmpeg.exe",
+            "ffprobe_exe_path": r"C:\Ignored\ffprobe.exe",
+            "fpcalc_exe_path": r"C:\Ignored\fpcalc.exe",
+            "mediainfo_exe_path": r"C:\Ignored\MediaInfo.exe",
+            "everything_exe_path": r"C:\Ignored\Everything.exe",
+        },
+    )
+
+    loaded = load_settings()
+
+    assert loaded.ffmpeg_exe_path == r"C:\Pinned\ffmpeg.exe"
+    assert loaded.ffprobe_exe_path == ""
+    assert loaded.everything_exe_path == r"C:\Pinned\Everything.exe"
 
 
 def test_settings_path_uses_app_name_ini_under_appdata(
@@ -557,7 +627,9 @@ def test_settings_drive_worker_overrides_and_probe_mode_normalization(
     }
     assert loaded.probe_backend == "pyav"
     assert loaded.probe_worker_mode == "balanced"
-    assert loaded.ffmpeg_exe_path == str(Path("~/tools/ffmpeg.exe").expanduser())
+    assert loaded.ffmpeg_exe_path == normalize_executable_override_path(
+        "~/tools/ffmpeg.exe"
+    )
     assert loaded.ffprobe_exe_path == ""
     assert loaded.mediainfo_exe_path == ""
 
