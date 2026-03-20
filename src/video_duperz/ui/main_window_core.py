@@ -236,9 +236,9 @@ class MainWindowBase(QMainWindow):
 
         self._build_sources_tab()
         self._build_menus()
-        self.tabs.addTab(self.sources_tab, "Sources")
-        self.tabs.addTab(self.scan_view, "Scan")
-        self.tabs.addTab(self.results_view, "Results")
+        self.tabs.addTab(self.sources_tab, "&Sources")
+        self.tabs.addTab(self.scan_view, "S&can")
+        self.tabs.addTab(self.results_view, "&Results")
 
         self.scan_view.start_requested.connect(self._start_scan)
         self.scan_view.rescan_requested.connect(self._rescan_scan)
@@ -438,37 +438,37 @@ class MainWindowMenuMixin(MainWindowBase):
         actions_menu.addAction(self.custom_command_f4_action)
 
         actions_menu.addSeparator()
-        self.keep_best_action = QAction("&Select all, keep best", self)
+        self.keep_best_action = QAction("Select All, Keep &Best", self)
         self.keep_best_action.triggered.connect(
             lambda: self.results_view.apply_keep_strategy("best")
         )
         actions_menu.addAction(self.keep_best_action)
 
-        self.keep_worst_action = QAction("Select all, keep &worst", self)
+        self.keep_worst_action = QAction("Select All, Keep &Worst", self)
         self.keep_worst_action.triggered.connect(
             lambda: self.results_view.apply_keep_strategy("worst")
         )
         actions_menu.addAction(self.keep_worst_action)
 
-        self.keep_larger_action = QAction("Select all, keep &larger", self)
+        self.keep_larger_action = QAction("Select All, Keep &Larger", self)
         self.keep_larger_action.triggered.connect(
             lambda: self.results_view.apply_keep_strategy("larger")
         )
         actions_menu.addAction(self.keep_larger_action)
 
-        self.keep_smaller_action = QAction("Select all, keep s&maller", self)
+        self.keep_smaller_action = QAction("Select All, Keep S&maller", self)
         self.keep_smaller_action.triggered.connect(
             lambda: self.results_view.apply_keep_strategy("smaller")
         )
         actions_menu.addAction(self.keep_smaller_action)
 
-        self.keep_newer_action = QAction("Select all, keep &newer", self)
+        self.keep_newer_action = QAction("Select All, Keep &Newer", self)
         self.keep_newer_action.triggered.connect(
             lambda: self.results_view.apply_keep_strategy("newer")
         )
         actions_menu.addAction(self.keep_newer_action)
 
-        self.keep_older_action = QAction("Select all, keep &older", self)
+        self.keep_older_action = QAction("Select All, Keep &Older", self)
         self.keep_older_action.triggered.connect(
             lambda: self.results_view.apply_keep_strategy("older")
         )
@@ -490,13 +490,13 @@ class MainWindowMenuMixin(MainWindowBase):
 
     def _build_tools_menu(self) -> None:
         tools_menu = self.menuBar().addMenu("&Tools")
-        self.edit_ini_action = QAction("Edit &.ini File", self)
+        self.edit_ini_action = QAction("Edit &INI File", self)
         self.edit_ini_action.triggered.connect(self._edit_ini_file)
         tools_menu.addAction(self.edit_ini_action)
 
     def _build_help_menu(self) -> None:
         help_menu = self.menuBar().addMenu("&Help")
-        self.about_action = QAction("&Help", self)
+        self.about_action = QAction("&About Video Duperz", self)
         self.about_action.setShortcut("F1")
         self.about_action.triggered.connect(self._show_about)
         help_menu.addAction(self.about_action)

@@ -25,37 +25,41 @@ A Windows-first PySide6 app for finding perceptual duplicate videos using dhash 
 - **Perceptual duplicate detection** - dhash (difference hash) algorithm with 12 frame samples across video duration
 - **Three similarity profiles** - Conservative (0.12), Balanced (0.18, default), Aggressive (0.24) thresholds
 - **Physical drive-aware scanning** - maps root folders to physical drives and allocates worker threads per drive for optimal I/O
+- **Smarter first-run defaults** - uses `same aspect` cross-resolution matching, background-friendly scan priorities, and a worker budget capped by both CPU cores and detected physical drives
 - **Intelligent pre-filtering** - candidates filtered by duration (+-3s and 0.96 ratio minimum), aspect ratio, and hash prefilter before full distance computation
 - **Quality-based keep decisions** - scores files by resolution (65%), bitrate (25%), and codec quality (10%) to determine which duplicate to keep
 - **Exact match detection** - byte-level identical file detection using configurable block sampling
-- **Live scan monitoring** - real-time progress per lane showing discovered/analyzed files, I/O throughput, cache hit ratios, and active file
+- **Live scan monitoring** - real-time progress per lane showing discovered/analyzed files, lane ETA, I/O throughput, cache hit ratios, and active file
 - **Thumbnail pair caching** - extracts and caches video thumbnails at configurable frame positions
 - **Duplicate group management** - decision-focused UI for bulk actions (keep best, worst, larger, smaller, newer, older)
 - **Structured results filtering** - combine case-insensitive text filters with metadata filters for size, duration, similarity, resolution, codec, and HDR
 - **Scan-time process priority controls** - configure parent-process CPU/background I/O mode and scan-child priority policy for probe and fingerprint subprocesses
+- **Visible tool-path overrides** - browse or auto-find `ffmpeg`, `ffprobe`, `fpcalc`, `MediaInfo`, and `Everything` from the Sources tab, with first-run auto-discovery on Windows
 - **Export to CSV/JSON** - duplicate groups plus tracked symlink/hardlink rows exportable for external analysis
 - **Saved scan profiles** - save and restore source configurations and scan parameters
 - **Saved column views** - preserve result table column layouts and visibility
 
 ## UI Walkthrough
 
-1. Configure sources and scan profiles before indexing.
+The screenshots below are generated from mocked demo data so they stay deterministic and never expose local machine paths or personal folders.
+
+1. Configure scan roots, content rules, performance limits, and tool paths before indexing.
 
    ![Configure sources](docs/images/ui-01-overview.png)
 
-   Sources setup state for defining roots, extension presets, and worker settings.
+   Sources tab with the three-column settings layout for scan content, scan performance, and executable path discovery.
 
-2. Monitor scan progress and throughput across lanes.
+2. Monitor scan progress, per-lane ETA, and scan issues while work is active.
 
    ![Monitor scan progress](docs/images/ui-02-workflow.png)
 
-   Workflow state for active scan progress, queue depth, and processing lanes.
+   Scan tab showing lane status, ETA, throughput, queue depth, and detailed progress logs.
 
-3. Review duplicate groups and choose a cleanup decision.
+3. Review duplicate groups, filter aggressively, and choose a cleanup decision.
 
    ![Review duplicate groups](docs/images/ui-03-details.png)
 
-   Decision-focused duplicate results state for keep/remove/export actions.
+   Results tab with grouped filters, comparison metadata, and keep/remove/export actions.
 
 ## Requirements
 
@@ -182,15 +186,16 @@ Runtime settings are stored via QSettings:
 | File extensions | Preset groups: basic, medium, broad |
 | Similarity profile | balanced / conservative / aggressive |
 | Fingerprint decode timeout | Base per-attempt timeout for guarded frame decoding, configurable from 0.1 to 3600.0 seconds |
-| Max workers | 1-16, with per-drive overrides |
+| Cross-resolution matching | `off`, `same_aspect` (default), or `any_aspect` |
+| Max workers | Range `1-16`, with the first-run default set to `min(cpu cores, detected physical drives)` and optional per-drive overrides |
 | Probe worker mode | balanced / burst |
-| Scan process priority | Parent and child CPU priority plus Normal / Background I/O mode during scans |
+| Scan process priority | Parent and child CPU priority plus Normal / Background I/O mode during scans; first-run default is `Below Normal` CPU and `Background` I/O for both |
 | Thumbnail size | 80x45, 96x54, 128x72, 160x90 |
 | Frame extraction positions | Two percentage points for thumbnail comparison |
 | Identical file matching | Block size (1-64 MiB) and sample positions |
 | Keep rule strategy | Quality scoring (resolution + bitrate + codec) |
 | Batch size / flush intervals | Scan pipeline tuning parameters |
-| Everything path override | Optional `Everything.exe` override used by the Results shortcut |
+| Tool path overrides | Optional Sources-tab overrides for `ffmpeg`, `ffprobe`, `fpcalc`, `MediaInfo`, and `Everything`, each with `Browse...` and `Find` helpers |
 | Custom Results commands | INI-only `custom_command_F2/F3/F4` entries that receive the current file path and parent dir |
 
 ### Export Outputs
@@ -215,6 +220,8 @@ The Sources tab exposes four persisted scan-time priority controls:
 
 Supported CPU choices are `Idle`, `Below Normal`, `Normal`, `Above Normal`, and `High`.
 Supported I/O choices are `Normal` and `Background`.
+
+First-run defaults use `Below Normal` CPU priority and `Background` I/O mode for both parent and child scan work so the app behaves more politely on busy desktops.
 
 The parent settings apply only while a scan is active and are restored when the scan finishes, pauses, fails, or is cancelled. The same parent-scan policy is also applied by the headless `video-duperz scan` command.
 
@@ -248,7 +255,7 @@ Up to 20 recently scanned folders are stored for quick access. Saved scan profil
 | M | Launch MediaInfo for selected file |
 | F2 / F3 / F4 | Run the configured INI custom command with `file_full_path` and `file_parent_dir_path` |
 | Ctrl+Q / Alt+X | Exit application |
-| F1 | Help |
+| F1 | About / Help |
 
 ## Menus
 
@@ -281,16 +288,15 @@ Up to 20 recently scanned folders are stored for quick access. Saved scan profil
 - Open Web Search
 - Launch MediaInfo
 - Run Custom Command F2 / F3 / F4
-- Select all, keep best / worst / larger / smaller / newer / older
+- Select All, Keep Best / Worst / Larger / Smaller / Newer / Older
 - Soft Delete Selected
 - Delete to Recycle Bin
 - Permanently Delete
 
-### INI-Only Results Actions
+### INI-Only Custom Results Actions
 
-The following settings are available only in the INI file:
+The following custom command settings are available only in the INI file:
 
-- `everything_exe_path`
 - `custom_command_F2`
 - `custom_command_F3`
 - `custom_command_F4`
@@ -301,10 +307,10 @@ When `custom_command_F2/F3/F4` are triggered from the Results tab, the app appen
 - `file_parent_dir_path`
 
 **Tools**:
-- Edit .ini File
+- Edit INI File
 
 **Help**:
-- Help (F1)
+- About Video Duperz (F1)
 
 ## Project Structure
 
@@ -342,6 +348,7 @@ video-duperz/
 |       |-- setup_env.py              # Create/verify .venv via uv sync
 |       |-- run_app.py               # Launch app via hatch run
 |       |-- run_app_gui.pyw          # Launch GUI without console window
+|       |-- refresh_readme_screenshots.py # Generate mocked README gallery screenshots
 |       `-- run_tests.py             # Run tests via hatch run test
 |-- docs/
 |   |-- dev-packaging.md

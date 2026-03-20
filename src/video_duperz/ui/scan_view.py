@@ -201,18 +201,18 @@ class ScanView(QWidget):
         self._worker_limit = 0
         self._paused_loaded = False
 
-        self.start_btn = QPushButton("Start Scan", self)
-        self.rescan_btn = QPushButton("Rescan", self)
-        self.pause_btn = QPushButton("Pause Scan", self)
-        self.resume_btn = QPushButton("Resume Scan", self)
+        self.start_btn = QPushButton("&Start Scan", self)
+        self.rescan_btn = QPushButton("&Rescan", self)
+        self.pause_btn = QPushButton("&Pause Scan", self)
+        self.resume_btn = QPushButton("Res&ume Scan", self)
         self.retry_failed_checkbox = QCheckBox(
-            "Retry previously failed files (0)",
+            "Retry Previously Failed &Files (0)",
             self,
         )
         self.retry_failed_checkbox.setChecked(True)
         self.retry_failed_checkbox.setEnabled(False)
         self.retry_failed_checkbox.setVisible(False)
-        self.cancel_btn = QPushButton("Cancel Scan", self)
+        self.cancel_btn = QPushButton("&Cancel Scan", self)
         self._apply_mode("idle")
 
         self.start_btn.clicked.connect(self.start_requested.emit)
@@ -235,11 +235,17 @@ class ScanView(QWidget):
         layout.addWidget(self.eta_label)
         layout.addWidget(self.io_stats_label)
         layout.addLayout(actions)
-        layout.addWidget(QLabel("Parallel Lanes", self))
+        self.parallel_lanes_label = QLabel("Parallel &Lanes", self)
+        self.parallel_lanes_label.setBuddy(self.lane_table)
+        layout.addWidget(self.parallel_lanes_label)
         layout.addWidget(self.lane_table, stretch=1)
-        layout.addWidget(QLabel("Detailed Scan Progress", self))
+        self.detailed_progress_label = QLabel("Detailed Scan &Progress", self)
+        self.detailed_progress_label.setBuddy(self.progress_table)
+        layout.addWidget(self.detailed_progress_label)
         layout.addWidget(self.progress_table, stretch=2)
-        layout.addWidget(QLabel("Scan Issues", self))
+        self.scan_issues_label = QLabel("Scan &Issues", self)
+        self.scan_issues_label.setBuddy(self.issues_table)
+        layout.addWidget(self.scan_issues_label)
         layout.addWidget(self.issues_table, stretch=1)
 
     def _create_log_table(

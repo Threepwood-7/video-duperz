@@ -147,7 +147,7 @@ class ResultsViewBase(QWidget):
             widget_alias="Results Filters",
         )
         basic_card = self._create_filter_card(
-            title="Basic Filters",
+            title="&Basic Filters",
             object_name="results_filter_basic_card",
             widget_alias="Results Basic Filters",
         )
@@ -171,7 +171,12 @@ class ResultsViewBase(QWidget):
             object_name="results_filter_include_name_edit",
             widget_alias="Include Name",
         )
-        text_include_form.addRow("Include Name", self.filter_include_name_edit)
+        self._add_filter_form_row(
+            text_include_form,
+            label_text="Include &Name",
+            control=self.filter_include_name_edit,
+            parent=basic_card,
+        )
 
         self.filter_include_path_edit = QLineEdit(basic_card)
         self.filter_include_path_edit.setPlaceholderText("archive|season")
@@ -181,7 +186,12 @@ class ResultsViewBase(QWidget):
             object_name="results_filter_include_path_edit",
             widget_alias="Include Path",
         )
-        text_include_form.addRow("Include Path", self.filter_include_path_edit)
+        self._add_filter_form_row(
+            text_include_form,
+            label_text="Include &Path",
+            control=self.filter_include_path_edit,
+            parent=basic_card,
+        )
 
         text_exclude_form = QFormLayout()
         text_exclude_form.setFieldGrowthPolicy(
@@ -198,7 +208,12 @@ class ResultsViewBase(QWidget):
             object_name="results_filter_exclude_name_edit",
             widget_alias="Exclude Name",
         )
-        text_exclude_form.addRow("Exclude Name", self.filter_exclude_name_edit)
+        self._add_filter_form_row(
+            text_exclude_form,
+            label_text="Exclude N&ame",
+            control=self.filter_exclude_name_edit,
+            parent=basic_card,
+        )
 
         self.filter_exclude_path_edit = QLineEdit(basic_card)
         self.filter_exclude_path_edit.setPlaceholderText("extras|temp")
@@ -208,7 +223,12 @@ class ResultsViewBase(QWidget):
             object_name="results_filter_exclude_path_edit",
             widget_alias="Exclude Path",
         )
-        text_exclude_form.addRow("Exclude Path", self.filter_exclude_path_edit)
+        self._add_filter_form_row(
+            text_exclude_form,
+            label_text="Exclude P&ath",
+            control=self.filter_exclude_path_edit,
+            parent=basic_card,
+        )
 
         self.filter_text_hint_label = QLabel(
             "Case-insensitive, | means OR.",
@@ -224,7 +244,7 @@ class ResultsViewBase(QWidget):
         basic_layout.addLayout(text_exclude_form, 0, 1)
 
         self.filter_include_match_all_checkbox = QCheckBox(
-            "Must match all",
+            "Must Match A&ll",
             basic_card,
         )
         self._configure_filter_widget(
@@ -238,7 +258,7 @@ class ResultsViewBase(QWidget):
         )
 
         ranges_card = self._create_filter_card(
-            title="Ranges",
+            title="&Ranges",
             object_name="results_filter_ranges_card",
             widget_alias="Results Range Filters",
         )
@@ -247,7 +267,6 @@ class ResultsViewBase(QWidget):
         ranges_grid.setHorizontalSpacing(10)
         ranges_grid.setVerticalSpacing(8)
 
-        ranges_grid.addWidget(QLabel("Size MiB Min", ranges_card), 0, 0)
         self.filter_min_size_spin = self._create_optional_double_spinbox(
             object_name="results_filter_min_size_spin",
             widget_alias="Minimum Size MiB",
@@ -257,9 +276,16 @@ class ResultsViewBase(QWidget):
             step=10.0,
         )
         self.filter_min_size_spin.setMinimumWidth(120)
+        self._add_filter_grid_label(
+            ranges_grid,
+            row=0,
+            column=0,
+            label_text="Size MiB Mi&n",
+            control=self.filter_min_size_spin,
+            parent=ranges_card,
+        )
         ranges_grid.addWidget(self.filter_min_size_spin, 0, 1)
 
-        ranges_grid.addWidget(QLabel("Size MiB Max", ranges_card), 0, 2)
         self.filter_max_size_spin = self._create_optional_double_spinbox(
             object_name="results_filter_max_size_spin",
             widget_alias="Maximum Size MiB",
@@ -269,9 +295,16 @@ class ResultsViewBase(QWidget):
             step=10.0,
         )
         self.filter_max_size_spin.setMinimumWidth(120)
+        self._add_filter_grid_label(
+            ranges_grid,
+            row=0,
+            column=2,
+            label_text="Size MiB Ma&x",
+            control=self.filter_max_size_spin,
+            parent=ranges_card,
+        )
         ranges_grid.addWidget(self.filter_max_size_spin, 0, 3)
 
-        ranges_grid.addWidget(QLabel("Duration s Min", ranges_card), 1, 0)
         self.filter_min_duration_spin = self._create_optional_double_spinbox(
             object_name="results_filter_min_duration_spin",
             widget_alias="Minimum Duration Seconds",
@@ -281,9 +314,16 @@ class ResultsViewBase(QWidget):
             step=10.0,
         )
         self.filter_min_duration_spin.setMinimumWidth(120)
+        self._add_filter_grid_label(
+            ranges_grid,
+            row=1,
+            column=0,
+            label_text="Duration s Mi&n",
+            control=self.filter_min_duration_spin,
+            parent=ranges_card,
+        )
         ranges_grid.addWidget(self.filter_min_duration_spin, 1, 1)
 
-        ranges_grid.addWidget(QLabel("Duration s Max", ranges_card), 1, 2)
         self.filter_max_duration_spin = self._create_optional_double_spinbox(
             object_name="results_filter_max_duration_spin",
             widget_alias="Maximum Duration Seconds",
@@ -293,9 +333,16 @@ class ResultsViewBase(QWidget):
             step=10.0,
         )
         self.filter_max_duration_spin.setMinimumWidth(120)
+        self._add_filter_grid_label(
+            ranges_grid,
+            row=1,
+            column=2,
+            label_text="Duration s Ma&x",
+            control=self.filter_max_duration_spin,
+            parent=ranges_card,
+        )
         ranges_grid.addWidget(self.filter_max_duration_spin, 1, 3)
 
-        ranges_grid.addWidget(QLabel("Similarity Min", ranges_card), 2, 0)
         self.filter_min_similarity_spin = self._create_optional_double_spinbox(
             object_name="results_filter_min_similarity_spin",
             widget_alias="Minimum Similarity",
@@ -305,9 +352,16 @@ class ResultsViewBase(QWidget):
             step=0.01,
         )
         self.filter_min_similarity_spin.setMinimumWidth(120)
+        self._add_filter_grid_label(
+            ranges_grid,
+            row=2,
+            column=0,
+            label_text="Similarity Mi&n",
+            control=self.filter_min_similarity_spin,
+            parent=ranges_card,
+        )
         ranges_grid.addWidget(self.filter_min_similarity_spin, 2, 1)
 
-        ranges_grid.addWidget(QLabel("Width Min", ranges_card), 2, 2)
         self.filter_min_width_spin = self._create_optional_spinbox(
             object_name="results_filter_min_width_spin",
             widget_alias="Minimum Width",
@@ -316,9 +370,16 @@ class ResultsViewBase(QWidget):
             step=10,
         )
         self.filter_min_width_spin.setMinimumWidth(120)
+        self._add_filter_grid_label(
+            ranges_grid,
+            row=2,
+            column=2,
+            label_text="&Width Min",
+            control=self.filter_min_width_spin,
+            parent=ranges_card,
+        )
         ranges_grid.addWidget(self.filter_min_width_spin, 2, 3)
 
-        ranges_grid.addWidget(QLabel("Height Min", ranges_card), 3, 0)
         self.filter_min_height_spin = self._create_optional_spinbox(
             object_name="results_filter_min_height_spin",
             widget_alias="Minimum Height",
@@ -327,10 +388,18 @@ class ResultsViewBase(QWidget):
             step=10,
         )
         self.filter_min_height_spin.setMinimumWidth(120)
+        self._add_filter_grid_label(
+            ranges_grid,
+            row=3,
+            column=0,
+            label_text="&Height Min",
+            control=self.filter_min_height_spin,
+            parent=ranges_card,
+        )
         ranges_grid.addWidget(self.filter_min_height_spin, 3, 1)
 
         attributes_card = self._create_filter_card(
-            title="Attributes",
+            title="&Attributes",
             object_name="results_filter_attributes_card",
             widget_alias="Results Attribute Filters",
         )
@@ -349,7 +418,12 @@ class ResultsViewBase(QWidget):
             widget_alias="Extension Filter",
         )
         self.filter_extension_combo.setMinimumWidth(160)
-        attributes_form.addRow("Extension", self.filter_extension_combo)
+        self._add_filter_form_row(
+            attributes_form,
+            label_text="E&xtension",
+            control=self.filter_extension_combo,
+            parent=attributes_card,
+        )
 
         self.filter_video_codec_combo = QComboBox(attributes_card)
         self._configure_filter_widget(
@@ -358,7 +432,12 @@ class ResultsViewBase(QWidget):
             widget_alias="Video Codec Filter",
         )
         self.filter_video_codec_combo.setMinimumWidth(160)
-        attributes_form.addRow("Video Codec", self.filter_video_codec_combo)
+        self._add_filter_form_row(
+            attributes_form,
+            label_text="Video &Codec",
+            control=self.filter_video_codec_combo,
+            parent=attributes_card,
+        )
 
         self.filter_hdr_combo = QComboBox(attributes_card)
         self._configure_filter_widget(
@@ -369,9 +448,14 @@ class ResultsViewBase(QWidget):
         for label, value in HDR_FILTER_OPTIONS:
             self.filter_hdr_combo.addItem(label, value)
         self.filter_hdr_combo.setMinimumWidth(160)
-        attributes_form.addRow("HDR", self.filter_hdr_combo)
+        self._add_filter_form_row(
+            attributes_form,
+            label_text="H&DR",
+            control=self.filter_hdr_combo,
+            parent=attributes_card,
+        )
 
-        self.clear_filters_button = QPushButton("Clear Filters", basic_card)
+        self.clear_filters_button = QPushButton("C&lear Filters", basic_card)
         self._configure_filter_widget(
             self.clear_filters_button,
             object_name="results_filter_clear_button",
@@ -390,10 +474,10 @@ class ResultsViewBase(QWidget):
         )
 
         self.advanced_filters_toggle = QCheckBox(
-            "Advanced Filters",
+            "Ad&vanced Filters",
             self.filter_toolbar,
         )
-        self.advanced_filters_toggle.setText("Advanced Filters")
+        self.advanced_filters_toggle.setText("Ad&vanced Filters")
         self.advanced_filters_toggle.setChecked(False)
         self._configure_filter_widget(
             self.advanced_filters_toggle,
@@ -587,6 +671,54 @@ class ResultsViewBase(QWidget):
             widget_alias=widget_alias,
         )
         return card
+
+    @staticmethod
+    def _create_filter_label(
+        *,
+        label_text: str,
+        control: QWidget,
+        parent: QWidget,
+    ) -> QLabel:
+        """Create one mnemonic label bound to its primary filter control."""
+        label = QLabel(label_text, parent)
+        label.setBuddy(control)
+        return label
+
+    def _add_filter_form_row(
+        self,
+        form_layout: QFormLayout,
+        *,
+        label_text: str,
+        control: QWidget,
+        parent: QWidget,
+    ) -> QLabel:
+        """Add one labeled filter-form row with a mnemonic buddy."""
+        label = self._create_filter_label(
+            label_text=label_text,
+            control=control,
+            parent=parent,
+        )
+        form_layout.addRow(label, control)
+        return label
+
+    def _add_filter_grid_label(
+        self,
+        grid_layout: QGridLayout,
+        *,
+        row: int,
+        column: int,
+        label_text: str,
+        control: QWidget,
+        parent: QWidget,
+    ) -> QLabel:
+        """Add one mnemonic label to a grid cell and bind it to a control."""
+        label = self._create_filter_label(
+            label_text=label_text,
+            control=control,
+            parent=parent,
+        )
+        grid_layout.addWidget(label, row, column)
+        return label
 
     def _set_advanced_filters_visible(self, visible: bool) -> None:
         """Show or hide the advanced filter section and sync the checkbox state."""

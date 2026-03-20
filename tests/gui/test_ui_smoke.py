@@ -739,6 +739,140 @@ def test_sources_root_buttons_labels_order_and_state(tmp_path: Path) -> None:
         window.close()
 
 
+def test_scan_results_tabs_and_menus_use_consistent_mnemonics(tmp_path: Path) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        assert window.tabs.tabText(0) == "&Sources"
+        assert window.tabs.tabText(1) == "S&can"
+        assert window.tabs.tabText(2) == "&Results"
+
+        assert window.scan_view.start_btn.text() == "&Start Scan"
+        assert window.scan_view.rescan_btn.text() == "&Rescan"
+        assert window.scan_view.pause_btn.text() == "&Pause Scan"
+        assert window.scan_view.resume_btn.text() == "Res&ume Scan"
+        assert window.scan_view.cancel_btn.text() == "&Cancel Scan"
+        assert window.scan_view.retry_failed_checkbox.text() == (
+            "Retry Previously Failed &Files (0)"
+        )
+        assert window.scan_view.parallel_lanes_label.text() == "Parallel &Lanes"
+        assert (
+            window.scan_view.parallel_lanes_label.buddy()
+            is window.scan_view.lane_table
+        )
+        assert window.scan_view.detailed_progress_label.text() == (
+            "Detailed Scan &Progress"
+        )
+        assert (
+            window.scan_view.detailed_progress_label.buddy()
+            is window.scan_view.progress_table
+        )
+        assert window.scan_view.scan_issues_label.text() == "Scan &Issues"
+        assert (
+            window.scan_view.scan_issues_label.buddy()
+            is window.scan_view.issues_table
+        )
+
+        results_groups = {
+            group.objectName(): group
+            for group in window.results_view.findChildren(QGroupBox)
+            if group.objectName().startswith("results_filter_")
+        }
+        assert results_groups["results_filter_basic_card"].title() == "&Basic Filters"
+        assert results_groups["results_filter_ranges_card"].title() == "&Ranges"
+        assert results_groups["results_filter_attributes_card"].title() == "&Attributes"
+        assert window.results_view.filter_include_match_all_checkbox.text() == (
+            "Must Match A&ll"
+        )
+        assert window.results_view.clear_filters_button.text() == "C&lear Filters"
+        assert window.results_view.advanced_filters_toggle.text() == (
+            "Ad&vanced Filters"
+        )
+
+        results_labels = {
+            label.text(): label.buddy()
+            for label in window.results_view.findChildren(QLabel)
+            if label.buddy() is not None
+        }
+        assert (
+            results_labels["Include &Name"]
+            is window.results_view.filter_include_name_edit
+        )
+        assert (
+            results_labels["Include &Path"]
+            is window.results_view.filter_include_path_edit
+        )
+        assert (
+            results_labels["Exclude N&ame"]
+            is window.results_view.filter_exclude_name_edit
+        )
+        assert (
+            results_labels["Exclude P&ath"]
+            is window.results_view.filter_exclude_path_edit
+        )
+        assert (
+            results_labels["Size MiB Mi&n"]
+            is window.results_view.filter_min_size_spin
+        )
+        assert (
+            results_labels["Size MiB Ma&x"]
+            is window.results_view.filter_max_size_spin
+        )
+        assert (
+            results_labels["Duration s Mi&n"]
+            is window.results_view.filter_min_duration_spin
+        )
+        assert (
+            results_labels["Duration s Ma&x"]
+            is window.results_view.filter_max_duration_spin
+        )
+        assert (
+            results_labels["Similarity Mi&n"]
+            is window.results_view.filter_min_similarity_spin
+        )
+        assert (
+            results_labels["&Width Min"] is window.results_view.filter_min_width_spin
+        )
+        assert (
+            results_labels["&Height Min"]
+            is window.results_view.filter_min_height_spin
+        )
+        assert (
+            results_labels["E&xtension"]
+            is window.results_view.filter_extension_combo
+        )
+        assert (
+            results_labels["Video &Codec"]
+            is window.results_view.filter_video_codec_combo
+        )
+        assert results_labels["H&DR"] is window.results_view.filter_hdr_combo
+
+        menu_titles = [action.text() for action in window.menuBar().actions()]
+        assert menu_titles[:6] == [
+            "&File",
+            "&View",
+            "&Sort",
+            "&Actions",
+            "&Tools",
+            "&Help",
+        ]
+        assert window.keep_best_action.text() == "Select All, Keep &Best"
+        assert window.keep_worst_action.text() == "Select All, Keep &Worst"
+        assert window.keep_larger_action.text() == "Select All, Keep &Larger"
+        assert window.keep_smaller_action.text() == "Select All, Keep S&maller"
+        assert window.keep_newer_action.text() == "Select All, Keep &Newer"
+        assert window.keep_older_action.text() == "Select All, Keep &Older"
+        assert window.edit_ini_action.text() == "Edit &INI File"
+        assert window.about_action.text() == "&About Video Duperz"
+
+        window.close()
+
+
 def test_results_thumbnail_tooltip_uses_file_name_and_parent_dir(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -3573,8 +3707,8 @@ def test_file_tools_help_menu_actions(tmp_path: Path, monkeypatch) -> None:
             window.clear_cached_thumbnails_action.text() == "Clear Cached T&humbnails"
         )
         assert window.full_reset_action.text() == "&Full Reset"
-        assert window.edit_ini_action.text() == "Edit &.ini File"
-        assert window.about_action.text() == "&Help"
+        assert window.edit_ini_action.text() == "Edit &INI File"
+        assert window.about_action.text() == "&About Video Duperz"
         shortcuts = {seq.toString() for seq in window.exit_action.shortcuts()}
         assert {"Ctrl+Q", "Alt+X"} <= shortcuts
         tools_menu_action = next(
@@ -3585,7 +3719,7 @@ def test_file_tools_help_menu_actions(tmp_path: Path, monkeypatch) -> None:
         tools_menu = tools_menu_action.menu()
         assert tools_menu is not None
         tools_actions = [action.text() for action in tools_menu.actions()]
-        assert "Edit &.ini File" in tools_actions
+        assert "Edit &INI File" in tools_actions
         assert "List physical drives" not in tools_actions
 
         cache_file = thumbnail_cache_dir() / "dummy.jpg"
