@@ -8,7 +8,7 @@ from typing import Self
 
 from .config import db_path
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 
 _DROP_SCHEMA_SQL = """
@@ -48,20 +48,20 @@ CREATE INDEX idx_scans_set_status ON scans(scan_set_key, status, id DESC);
 CREATE TABLE files(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   path TEXT NOT NULL,
+  normalized_path TEXT NOT NULL,
   size INTEGER NOT NULL,
   mtime_ns INTEGER NOT NULL,
   ctime_ns INTEGER NOT NULL,
   ext TEXT NOT NULL,
   scan_id INTEGER NOT NULL,
   exists_flag INTEGER NOT NULL DEFAULT 1,
-  UNIQUE(scan_id, path),
+  UNIQUE(scan_id, normalized_path),
   FOREIGN KEY(scan_id) REFERENCES scans(id) ON DELETE CASCADE
 );
 CREATE INDEX idx_files_scan_id ON files(scan_id);
 CREATE INDEX idx_files_scan_exists ON files(scan_id, exists_flag);
-CREATE INDEX idx_files_path_stat ON files(path, size, mtime_ns);
-CREATE INDEX idx_files_path_stat_exists ON files(path, size, mtime_ns, exists_flag);
-CREATE INDEX idx_files_path_scan ON files(path, scan_id);
+CREATE INDEX idx_files_cache_lookup
+  ON files(normalized_path, size, mtime_ns, exists_flag, scan_id DESC, id DESC);
 
 CREATE TABLE video_meta(
   file_id INTEGER NOT NULL,

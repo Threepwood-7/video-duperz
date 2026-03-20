@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from threep_commons.fs_paths import path_key
 
 from .db_shared import normalize_action_kind, require_lastrowid
 from .models import DuplicateGroup, DuplicateItem, normalize_match_reason, utc_now_iso
@@ -158,14 +161,17 @@ class DatabaseDuplicateGroupMixin:
         target = Path(new_path)
         stat_result = target.stat()
         ext = target.suffix.lower().lstrip(".")
+        normalized_path = path_key(str(target))
         self.conn.execute(
             """
             UPDATE files
-            SET path = ?, size = ?, mtime_ns = ?, ext = ?, exists_flag = 1
+            SET path = ?, normalized_path = ?, size = ?, mtime_ns = ?, ext = ?,
+                exists_flag = 1
             WHERE id = ?
             """,
             (
                 str(target),
+                normalized_path,
                 int(stat_result.st_size),
                 int(stat_result.st_mtime_ns),
                 ext,
@@ -219,33 +225,39 @@ class DatabaseDuplicateGroupMixin:
             """,
             (scan_id,),
         ).fetchall()
-        groups: list[DuplicateGroup] = []
-        for group_row in group_rows:
-            item_rows = self.conn.execute(
-                """
-                SELECT gi.file_id, gi.similarity_score,
-                       gi.keep_default, gi.match_reason,
-                       gi.match_duration_delta_s, gi.selected_action,
-                       f.path, f.size, f.mtime_ns, f.ctime_ns,
-                       vm.duration_s, vm.width, vm.height, vm.fps,
-                       vm.bit_depth, vm.hdr_format, vm.container,
-                       vm.codec_profile, vm.codec_level, vm.is_interlaced,
-                       vm.bitrate, vm.codec, vm.audio_stream_count,
-                       vm.audio_codec, vm.audio_bitrate,
-                       vm.audio_languages, vm.subtitle_languages
-                FROM duplicate_group_items gi
-                JOIN files f ON f.id = gi.file_id
-                JOIN scans s ON s.id = ?
-                JOIN video_meta vm
-                  ON vm.file_id = f.id AND vm.probe_backend = s.probe_backend
-                WHERE gi.group_id = ? AND f.exists_flag = 1
-                ORDER BY gi.keep_default DESC,
-                         vm.width * vm.height DESC,
-                         vm.bitrate DESC
-                """,
-                (int(group_row["scan_id"]), int(group_row["id"])),
-            ).fetchall()
-            items = [
+        if not group_rows:
+            return []
+
+        item_rows = self.conn.execute(
+            """
+            SELECT g.id AS group_id,
+                   gi.file_id, gi.similarity_score,
+                   gi.keep_default, gi.match_reason,
+                   gi.match_duration_delta_s, gi.selected_action,
+                   f.path, f.size, f.mtime_ns, f.ctime_ns,
+                   vm.duration_s, vm.width, vm.height, vm.fps,
+                   vm.bit_depth, vm.hdr_format, vm.container,
+                   vm.codec_profile, vm.codec_level, vm.is_interlaced,
+                   vm.bitrate, vm.codec, vm.audio_stream_count,
+                   vm.audio_codec, vm.audio_bitrate,
+                   vm.audio_languages, vm.subtitle_languages
+            FROM duplicate_groups g
+            JOIN scans s ON s.id = g.scan_id
+            JOIN duplicate_group_items gi ON gi.group_id = g.id
+            JOIN files f ON f.id = gi.file_id
+            JOIN video_meta vm
+              ON vm.file_id = f.id AND vm.probe_backend = s.probe_backend
+            WHERE g.scan_id = ? AND f.exists_flag = 1
+            ORDER BY g.id,
+                     gi.keep_default DESC,
+                     vm.width * vm.height DESC,
+                     vm.bitrate DESC
+            """,
+            (int(scan_id),),
+        ).fetchall()
+        items_by_group_id: dict[int, list[DuplicateItem]] = defaultdict(list)
+        for item_row in item_rows:
+            items_by_group_id[int(item_row["group_id"])].append(
                 DuplicateItem(
                     file_id=int(item_row["file_id"]),
                     path=str(item_row["path"]),
@@ -277,8 +289,11 @@ class DatabaseDuplicateGroupMixin:
                     ),
                     selected_action=normalize_action_kind(item_row["selected_action"]),
                 )
-                for item_row in item_rows
-            ]
+            )
+
+        groups: list[DuplicateGroup] = []
+        for group_row in group_rows:
+            items = items_by_group_id.get(int(group_row["id"]), [])
             if len(items) < 2:
                 continue
             groups.append(

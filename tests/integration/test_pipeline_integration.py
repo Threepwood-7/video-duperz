@@ -8,6 +8,7 @@ from pathlib import Path
 from threading import Event
 
 import pytest
+from threep_commons.fs_paths import path_key
 
 from video_duperz import pipeline
 from video_duperz.db import Database
@@ -332,14 +333,14 @@ def test_pipeline_incremental_rescan_reuses_completed_baseline(
         first_snapshot = db.load_scan_file_snapshot(first.scan_id)
         second_snapshot = db.load_scan_file_snapshot(second.scan_id)
         assert set(first_snapshot) == {
-            str(root / "same.mp4"),
-            str(root / "mod.mp4"),
-            str(root / "gone.mp4"),
+            path_key(str(root / "same.mp4")),
+            path_key(str(root / "mod.mp4")),
+            path_key(str(root / "gone.mp4")),
         }
         assert set(second_snapshot) == {
-            str(root / "same.mp4"),
-            str(root / "mod.mp4"),
-            str(root / "new.mp4"),
+            path_key(str(root / "same.mp4")),
+            path_key(str(root / "mod.mp4")),
+            path_key(str(root / "new.mp4")),
         }
 
 

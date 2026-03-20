@@ -61,7 +61,7 @@ class DatabaseScanQueryMixin:
                 SELECT 1
                 FROM scan_failed_files sff
                 WHERE sff.scan_id = f.scan_id
-                  AND sff.display_path = f.path COLLATE NOCASE
+                  AND sff.normalized_path = f.normalized_path
               )
             ORDER BY f.path
             """,

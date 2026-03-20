@@ -72,6 +72,7 @@ class ScanFileSnapshotRow(TypedDict):
 
     file_id: int
     path: str
+    normalized_path: str
     size: int
     mtime_ns: int
     ctime_ns: int
@@ -431,20 +432,21 @@ class DatabaseArtifactMixin:
         self,
         scan_id: int,
     ) -> dict[str, ScanFileSnapshotRow]:
-        """Load live file snapshot rows for one completed scan keyed by path."""
+        """Load live file snapshot rows for one completed scan keyed by path key."""
         rows = self.conn.execute(
             """
-            SELECT id, path, size, mtime_ns, ctime_ns, ext
+            SELECT id, path, normalized_path, size, mtime_ns, ctime_ns, ext
             FROM files
             WHERE scan_id = ? AND exists_flag = 1
-            ORDER BY path
+            ORDER BY normalized_path
             """,
             (int(scan_id),),
         ).fetchall()
         return {
-            str(row["path"]): ScanFileSnapshotRow(
+            str(row["normalized_path"]): ScanFileSnapshotRow(
                 file_id=int(row["id"]),
                 path=str(row["path"]),
+                normalized_path=str(row["normalized_path"]),
                 size=int(row["size"]),
                 mtime_ns=int(row["mtime_ns"]),
                 ctime_ns=int(row["ctime_ns"]),
@@ -524,20 +526,25 @@ class DatabaseArtifactMixin:
         """Clone file rows and cached artifacts from one scan into another."""
         if not paths:
             return {}
-        source_paths = sorted(str(path) for path in paths if str(path).strip())
-        if not source_paths:
+        requested_paths_by_key: dict[str, list[str]] = {}
+        for raw_path in sorted(str(path) for path in paths if str(path).strip()):
+            normalized_path = path_key(raw_path)
+            if not normalized_path:
+                continue
+            requested_paths_by_key.setdefault(normalized_path, []).append(raw_path)
+        if not requested_paths_by_key:
             return {}
         source_rows: list[sqlite3.Row] = []
-        for chunk in self._iter_chunks(source_paths):
+        for chunk in self._iter_chunks(sorted(requested_paths_by_key)):
             placeholders = ",".join("?" for _ in chunk)
             source_rows.extend(
                 self.conn.execute(
                     f"""
-                    SELECT id, path, size, mtime_ns, ctime_ns, ext
+                    SELECT id, path, normalized_path, size, mtime_ns, ctime_ns, ext
                     FROM files
                     WHERE scan_id = ? AND exists_flag = 1
-                      AND path IN ({placeholders})
-                    ORDER BY path
+                      AND normalized_path IN ({placeholders})
+                    ORDER BY normalized_path
                     """,
                     (int(source_scan_id), *chunk),
                 ).fetchall()
@@ -547,6 +554,7 @@ class DatabaseArtifactMixin:
         file_payload = [
             (
                 str(row["path"]),
+                str(row["normalized_path"]),
                 int(row["size"]),
                 int(row["mtime_ns"]),
                 int(row["ctime_ns"]),
@@ -557,9 +565,12 @@ class DatabaseArtifactMixin:
         ]
         self.conn.executemany(
             """
-            INSERT INTO files(path, size, mtime_ns, ctime_ns, ext, scan_id, exists_flag)
-            VALUES(?, ?, ?, ?, ?, ?, 1)
-            ON CONFLICT(scan_id, path) DO UPDATE SET
+            INSERT INTO files(
+              path, normalized_path, size, mtime_ns, ctime_ns, ext, scan_id, exists_flag
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?, 1)
+            ON CONFLICT(scan_id, normalized_path) DO UPDATE SET
+              path = excluded.path,
               size = excluded.size,
               mtime_ns = excluded.mtime_ns,
               ctime_ns = excluded.ctime_ns,
@@ -569,12 +580,19 @@ class DatabaseArtifactMixin:
             file_payload,
         )
         inserted = self.conn.execute(
-            "SELECT id, path FROM files WHERE scan_id = ?",
+            """
+            SELECT id, normalized_path
+            FROM files
+            WHERE scan_id = ?
+            """,
             (int(target_scan_id),),
         ).fetchall()
-        target_file_ids = {str(row["path"]): int(row["id"]) for row in inserted}
+        target_file_ids = {
+            str(row["normalized_path"]): int(row["id"]) for row in inserted
+        }
         source_to_target = {
-            int(row["id"]): target_file_ids[str(row["path"])] for row in source_rows
+            int(row["id"]): target_file_ids[str(row["normalized_path"])]
+            for row in source_rows
         }
         source_file_ids = sorted(source_to_target)
         meta_rows: list[sqlite3.Row] = []
@@ -782,9 +800,15 @@ class DatabaseArtifactMixin:
                 ],
             )
         self._commit_if_needed()
-        return {
-            str(row["path"]): source_to_target[int(row["id"])] for row in source_rows
-        }
+        cloned_by_requested_path: dict[str, int] = {}
+        for row in source_rows:
+            normalized_path = str(row["normalized_path"] or "")
+            target_file_id = source_to_target.get(int(row["id"]))
+            if target_file_id is None:
+                continue
+            for raw_path in requested_paths_by_key.get(normalized_path, []):
+                cloned_by_requested_path[raw_path] = target_file_id
+        return cloned_by_requested_path
 
     def upsert_file(
         self,
@@ -816,16 +840,20 @@ class DatabaseArtifactMixin:
         """Insert or update multiple file rows and map paths back to ids."""
         if not files:
             return {}
-        rows: list[tuple[str, int, int, int, str, int]] = []
-        ordered_by_scan: dict[int, list[str]] = {}
+        rows: list[tuple[str, str, int, int, int, str, int]] = []
+        ordered_by_scan: dict[int, list[tuple[str, str]]] = {}
         for file in files:
             path = str(file.get("path", "")).strip()
             if not path:
+                continue
+            normalized_path = path_key(path)
+            if not normalized_path:
                 continue
             scan_id = coerce_int(file.get("scan_id", 0))
             rows.append(
                 (
                     path,
+                    normalized_path,
                     coerce_int(file.get("size", 0)),
                     coerce_int(file.get("mtime_ns", 0)),
                     coerce_int(file.get("ctime_ns", 0)),
@@ -833,14 +861,17 @@ class DatabaseArtifactMixin:
                     scan_id,
                 )
             )
-            ordered_by_scan.setdefault(scan_id, []).append(path)
+            ordered_by_scan.setdefault(scan_id, []).append((path, normalized_path))
         if not rows:
             return {}
         self.conn.executemany(
             """
-            INSERT INTO files(path, size, mtime_ns, ctime_ns, ext, scan_id, exists_flag)
-            VALUES(?, ?, ?, ?, ?, ?, 1)
-            ON CONFLICT(scan_id, path) DO UPDATE SET
+            INSERT INTO files(
+              path, normalized_path, size, mtime_ns, ctime_ns, ext, scan_id, exists_flag
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?, 1)
+            ON CONFLICT(scan_id, normalized_path) DO UPDATE SET
+              path = excluded.path,
               size = excluded.size,
               mtime_ns = excluded.mtime_ns,
               ctime_ns = excluded.ctime_ns,
@@ -850,35 +881,49 @@ class DatabaseArtifactMixin:
             rows,
         )
         path_to_id: dict[str, int] = {}
-        for scan_id, ordered_paths in ordered_by_scan.items():
-            unique_paths = sorted(set(ordered_paths))
+        for scan_id, requested_rows in ordered_by_scan.items():
+            unique_paths = sorted({normalized for _, normalized in requested_rows})
+            normalized_to_id: dict[str, int] = {}
             for chunk in self._iter_chunks(unique_paths):
                 placeholders = ",".join("?" for _ in chunk)
                 fetched = self.conn.execute(
                     f"""
-                    SELECT id, path
+                    SELECT id, normalized_path
                     FROM files
-                    WHERE scan_id = ? AND path IN ({placeholders})
+                    WHERE scan_id = ? AND normalized_path IN ({placeholders})
                     """,
                     (int(scan_id), *chunk),
                 ).fetchall()
                 for row in fetched:
-                    path_to_id[str(row["path"])] = int(row["id"])
+                    normalized_to_id[str(row["normalized_path"])] = int(row["id"])
+            for raw_path, normalized_path in requested_rows:
+                file_id = normalized_to_id.get(normalized_path)
+                if file_id is not None:
+                    path_to_id[raw_path] = file_id
         self._commit_if_needed()
         return path_to_id
 
     def mark_missing_for_scan(self, scan_id: int, present_paths: set[str]) -> None:
         """Mark file rows absent when they were not seen during the current scan."""
+        normalized_present_paths = {
+            normalized_path
+            for path in present_paths
+            if (normalized_path := path_key(path))
+        }
         rows = self.conn.execute(
-            "SELECT path FROM files WHERE scan_id = ?",
+            """
+            SELECT id, normalized_path
+            FROM files
+            WHERE scan_id = ? AND exists_flag = 1
+            """,
             (scan_id,),
         ).fetchall()
         for row in rows:
-            path = row["path"]
-            if path not in present_paths:
+            normalized_path = str(row["normalized_path"] or "")
+            if normalized_path not in normalized_present_paths:
                 self.conn.execute(
-                    "UPDATE files SET exists_flag = 0 WHERE path = ?",
-                    (path,),
+                    "UPDATE files SET exists_flag = 0 WHERE id = ?",
+                    (int(row["id"]),),
                 )
         self._commit_if_needed()
 
@@ -951,7 +996,10 @@ class DatabaseArtifactMixin:
             include_audio_fingerprint=include_audio_fingerprint,
             probe_backend=probe_backend,
         )
-        return cached.get(path)
+        normalized_path = path_key(path)
+        if not normalized_path:
+            return None
+        return cached.get(normalized_path)
 
     def load_cached_artifacts_batch(
         self,
@@ -961,7 +1009,7 @@ class DatabaseArtifactMixin:
         include_audio_fingerprint: bool = False,
         probe_backend: ProbeBackendId = "pyav",
     ) -> dict[str, CachedArtifacts]:
-        """Load cached metadata and fingerprints for matching file stat tuples."""
+        """Load cached metadata and fingerprints keyed by normalized path."""
         if not files:
             return {}
         requested: dict[str, tuple[int, int]] = {}
@@ -969,7 +1017,10 @@ class DatabaseArtifactMixin:
             path = str(file.get("path", "")).strip()
             if not path:
                 continue
-            requested[path] = (
+            normalized_path = path_key(path)
+            if not normalized_path:
+                continue
+            requested[normalized_path] = (
                 coerce_int(file.get("size", 0)),
                 coerce_int(file.get("mtime_ns", 0)),
             )
@@ -977,11 +1028,24 @@ class DatabaseArtifactMixin:
             return {}
 
         out: dict[str, CachedArtifacts] = {}
-        for chunk in self._iter_chunks(sorted(requested)):
-            placeholders = ",".join("?" for _ in chunk)
+        request_rows = [
+            (normalized_path, values[0], values[1])
+            for normalized_path, values in sorted(requested.items())
+        ]
+        chunk_size = 100
+        for offset in range(0, len(request_rows), chunk_size):
+            chunk = request_rows[offset : offset + chunk_size]
+            placeholders = ", ".join("(?, ?, ?)" for _ in chunk)
+            values_clause_params: list[object] = []
+            for normalized_path, size, mtime_ns in chunk:
+                values_clause_params.extend((normalized_path, size, mtime_ns))
             rows = self.conn.execute(
                 f"""
+                WITH requested(normalized_path, size, mtime_ns) AS (
+                  VALUES {placeholders}
+                )
                 SELECT f.id AS file_id, f.path, f.size, f.mtime_ns,
+                       f.normalized_path,
                        vm.probed_at, vm.probe_error,
                        vm.source_size AS meta_source_size,
                        vm.source_mtime_ns AS meta_source_mtime_ns,
@@ -998,7 +1062,12 @@ class DatabaseArtifactMixin:
                        af.source_mtime_ns AS audio_source_mtime_ns,
                        af.fingerprint_text AS audio_fingerprint_text,
                        af.created_at AS audio_created_at
-                FROM files f
+                FROM requested req
+                JOIN files f
+                  ON f.normalized_path = req.normalized_path
+                 AND f.size = req.size
+                 AND f.mtime_ns = req.mtime_ns
+                 AND f.exists_flag = 1
                 LEFT JOIN video_meta vm
                   ON vm.file_id = f.id AND vm.probe_backend = ?
                 LEFT JOIN fingerprints fp
@@ -1006,16 +1075,20 @@ class DatabaseArtifactMixin:
                  AND fp.algo_version = ?
                 LEFT JOIN audio_fingerprints af
                   ON af.file_id = f.id
-                WHERE f.path IN ({placeholders}) AND f.exists_flag = 1
-                ORDER BY f.scan_id DESC, f.id DESC
+                ORDER BY req.normalized_path, f.scan_id DESC, f.id DESC
                 """,
-                (str(probe_backend), str(probe_backend), int(algo_version), *chunk),
+                (
+                    *values_clause_params,
+                    str(probe_backend),
+                    str(probe_backend),
+                    int(algo_version),
+                ),
             ).fetchall()
             for row in rows:
-                path = str(row["path"])
-                if path in out:
+                normalized_path = str(row["normalized_path"] or "")
+                if normalized_path in out:
                     continue
-                expected = requested.get(path)
+                expected = requested.get(normalized_path)
                 if expected is None:
                     continue
                 if (
@@ -1029,7 +1102,7 @@ class DatabaseArtifactMixin:
                     artifacts.pop("audio_fingerprint_created_at", None)
                 if len(artifacts) <= 1:
                     continue
-                out[path] = artifacts
+                out[normalized_path] = artifacts
         return out
 
     def save_video_meta(

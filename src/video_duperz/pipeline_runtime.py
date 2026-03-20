@@ -419,12 +419,13 @@ def _split_incremental_batch(
     modified_files = 0
     for entry in valid:
         file, _lane, _source_root, file_size, path = entry
-        baseline_row = ctx.incremental_baseline_snapshot.get(path)
+        normalized_path = path_key(path)
+        baseline_row = ctx.incremental_baseline_snapshot.get(normalized_path)
         if baseline_row is None:
             analyze_valid.append(entry)
             new_files += 1
             continue
-        seen_baseline_paths.add(path)
+        seen_baseline_paths.add(normalized_path)
         current_mtime_ns = int(getattr(file, "mtime_ns", 0))
         if (
             int(baseline_row["size"]) == file_size
@@ -627,7 +628,7 @@ def _process_discovered_batch(ctx: _ScanContext, batch: list[VideoRecord]) -> No
                 subject_path=path,
             )
             continue
-        cache = cache_by_path.get(path)
+        cache = cache_by_path.get(normalized_path)
         cache_decision = _decide_cached_analysis(
             cache,
             algo_version=ctx.visual_algo_version,
