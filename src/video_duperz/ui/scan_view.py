@@ -39,7 +39,8 @@ SCAN_LANE_COL_DISC_PER_S = 8
 SCAN_LANE_COL_DISC_MIB_PER_S = 9
 SCAN_LANE_COL_ANAL_PER_S = 10
 SCAN_LANE_COL_ANAL_MIB_PER_S = 11
-SCAN_LANE_COL_PROGRESS = 12
+SCAN_LANE_COL_ETA = 12
+SCAN_LANE_COL_PROGRESS = 13
 SCAN_LANE_HEADERS = [
     "Lane",
     "Roots",
@@ -53,6 +54,7 @@ SCAN_LANE_HEADERS = [
     "Disc MiB/s",
     "Anal/s",
     "Anal MiB/s",
+    "ETA",
     "Progress",
 ]
 SCAN_LANE_DEFAULT_WIDTHS = [
@@ -68,6 +70,7 @@ SCAN_LANE_DEFAULT_WIDTHS = [
     86,
     72,
     86,
+    124,
     180,
 ]
 SCAN_LOG_COL_STAGE = 0
@@ -348,6 +351,26 @@ class ScanView(QWidget):
         done_by = datetime.now() + timedelta(seconds=remaining_s)
         return f"ETA: {remaining_text} | Done by {done_by:%H:%M}"
 
+    def _format_lane_eta(self, snapshot: ScanLaneSnapshot) -> str:
+        """Format one lane-local ETA string from the current telemetry snapshot."""
+        if not snapshot.discovery_complete:
+            return "ETA: --"
+        completed = max(0, int(snapshot.completed))
+        discovered = max(0, int(snapshot.discovered))
+        if completed < 3 or discovered <= completed:
+            return "ETA: --"
+        files_per_s = max(0.0, float(snapshot.analyzed_files_per_s))
+        if files_per_s <= 0.0:
+            return "ETA: --"
+        remaining_files = max(0, discovered - completed)
+        if remaining_files <= 0:
+            return "ETA: --"
+        remaining_s = remaining_files / files_per_s
+        remaining_minutes = max(0.0, remaining_s / 60.0)
+        remaining_text = "<1m" if remaining_minutes < 1.0 else f"{round(remaining_minutes)}m"
+        done_by = datetime.now() + timedelta(seconds=remaining_s)
+        return f"ETA: {remaining_text} | {done_by:%H:%M}"
+
     def _progress_row_values(self, progress: ScanProgress) -> tuple[str, str, str, str]:
         """Render one structured detailed-progress row."""
         message = progress.message.strip() or progress.stage
@@ -542,6 +565,11 @@ class ScanView(QWidget):
                 row,
                 SCAN_LANE_COL_ANAL_MIB_PER_S,
                 QTableWidgetItem("0.00"),
+            )
+            self.lane_table.setItem(
+                row,
+                SCAN_LANE_COL_ETA,
+                QTableWidgetItem("ETA: --"),
             )
             self.lane_table.setCellWidget(
                 row,
@@ -823,6 +851,14 @@ class ScanView(QWidget):
             row,
             SCAN_LANE_COL_ANAL_MIB_PER_S,
             QTableWidgetItem(f"{float(snapshot.analyzed_mib_per_s):.2f}"),
+        )
+        lane_eta_text = self._format_lane_eta(snapshot)
+        lane_eta_item = QTableWidgetItem(lane_eta_text)
+        lane_eta_item.setToolTip(lane_eta_text)
+        self.lane_table.setItem(
+            row,
+            SCAN_LANE_COL_ETA,
+            lane_eta_item,
         )
         self._apply_row_background(row, snapshot.state)
 

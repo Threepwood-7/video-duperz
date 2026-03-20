@@ -166,7 +166,7 @@ On re-scan of a known folder, compare `mtime_ns` and file size against the cache
 `VideoRecord`.  Skip re-probing and re-fingerprinting for unchanged files.  Only process
 new, modified, or deleted entries.  Dramatically reduces re-scan time for large libraries.
 
-### [High] Estimated time remaining (ETA)
+### [High][DONE] Estimated time remaining (ETA)
 Derive ETA from `analyzed_files_per_s` and `total_work_files - completed_files` already
 present in `ScanProgress`.  Display in the scan lane table header.
 

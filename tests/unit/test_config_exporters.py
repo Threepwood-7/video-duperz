@@ -369,6 +369,25 @@ def test_settings_old_column_payloads_are_ignored(tmp_path: Path, monkeypatch) -
     assert loaded.results_table_column_visibility == []
 
 
+def test_settings_old_lane_column_width_payloads_are_ignored(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    settings = default_settings()
+    save_settings(settings)
+
+    path = settings_path()
+    _set_qsettings_value(
+        path,
+        "scan_lane_table_column_widths",
+        [90] * (SCAN_LANE_TABLE_COLUMN_COUNT - 1),
+    )
+
+    loaded = load_settings()
+    assert loaded.scan_lane_table_column_widths == []
+
+
 def test_settings_saved_views_normalization(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     monkeypatch.setenv("APPDATA", str(tmp_path))

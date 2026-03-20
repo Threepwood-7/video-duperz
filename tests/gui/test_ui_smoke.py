@@ -82,6 +82,7 @@ from video_duperz.ui.scan_view import (
     SCAN_LANE_COL_ANAL_PER_S,
     SCAN_LANE_COL_DISC_MIB_PER_S,
     SCAN_LANE_COL_DISC_PER_S,
+    SCAN_LANE_COL_ETA,
     SCAN_LANE_COL_PROGRESS,
     SCAN_LANE_HEADERS,
     SCAN_LOG_DEFAULT_WIDTHS,
@@ -4943,12 +4944,13 @@ def test_scan_view_renders_lane_snapshots_and_worker_utilization(
         assert not window.scan_view.worker_progress.isVisible()
         assert window.scan_view.eta_label.text().startswith("ETA: 5m | Done by ")
         assert window.scan_view.lane_table.rowCount() == 2
-        assert window.scan_view.lane_table.columnCount() == 13
+        assert window.scan_view.lane_table.columnCount() == SCAN_LANE_TABLE_COLUMN_COUNT
         assert [
             window.scan_view.lane_table.horizontalHeaderItem(index).text()
             for index in range(window.scan_view.lane_table.columnCount())
         ] == SCAN_LANE_HEADERS
         assert window.scan_view.lane_table.item(0, 2).text() == "running"
+        assert window.scan_view.lane_table.item(0, SCAN_LANE_COL_ETA).text() == "ETA: --"
         lane0_progress_cell = window.scan_view.lane_table.cellWidget(
             0,
             SCAN_LANE_COL_PROGRESS,
@@ -4985,6 +4987,7 @@ def test_scan_view_renders_lane_snapshots_and_worker_utilization(
         )
         assert window.scan_view.lane_table.item(1, 2).text() == "idle"
         assert window.scan_view.lane_table.item(1, 5).text() == "2"
+        assert window.scan_view.lane_table.item(1, SCAN_LANE_COL_ETA).text() == "ETA: --"
         lane1_progress = _lane_progress_bar(
             window.scan_view.lane_table.cellWidget(1, SCAN_LANE_COL_PROGRESS)
         )
@@ -5000,6 +5003,50 @@ def test_scan_view_renders_lane_snapshots_and_worker_utilization(
         assert window.scan_view.rescan_btn.text() == "Rescan"
         assert window.scan_view.pause_btn.text() == "Pause Scan"
         assert window.scan_view.resume_btn.text() == "Resume Scan"
+        window.close()
+
+
+def test_scan_view_renders_lane_eta_when_lane_progress_is_stable(
+    tmp_path: Path,
+) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        window.scan_view.initialize_lane_plan([[str(tmp_path / "lane_alpha")]], worker_limit=1)
+        window.scan_view.update_progress(
+            ScanProgress(
+                stage="probe",
+                current=4,
+                total=34,
+                message="Analyzing lane_alpha",
+                lane_snapshots=[
+                    ScanLaneSnapshot(
+                        lane=0,
+                        roots=[str(tmp_path / "lane_alpha")],
+                        state="running",
+                        discovered=34,
+                        queued=3,
+                        completed=4,
+                        discovery_complete=True,
+                        analyzed=4,
+                        analyzed_files_per_s=0.1,
+                        active_file=str(tmp_path / "lane_alpha" / "clip.mp4"),
+                        workers=1,
+                    )
+                ],
+            )
+        )
+        app.processEvents()
+
+        lane_eta_item = window.scan_view.lane_table.item(0, SCAN_LANE_COL_ETA)
+        assert lane_eta_item is not None
+        assert lane_eta_item.text().startswith("ETA: 5m | ")
         window.close()
 
 

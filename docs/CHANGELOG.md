@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-03-20
+
+- Added a dedicated per-lane `ETA` column to the Scan tab so each worker lane shows its own completion estimate beside the progress bar instead of cramming ETA into the progress cell.
+
 ## 2026-03-19
 
 - Added visible `FPS`, `Bit Depth`, and `HDR Format` metadata columns to Results so near-identical files can be compared on frame rate, bit depth, and HDR type instead of a coarse HDR yes/no flag.
