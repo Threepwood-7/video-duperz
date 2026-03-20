@@ -53,6 +53,7 @@ class ScanWorker(QRunnable):
         scene_aware_sampling: bool,
         audio_fingerprint_enabled: bool,
         cross_resolution_mode: CrossResolutionMode,
+        fingerprint_timeout_s: float,
         max_workers: int,
         drive_worker_overrides: dict[str, int] | None = None,
         probe_backend: ProbeBackendId = "pyav",
@@ -83,6 +84,7 @@ class ScanWorker(QRunnable):
         self._scene_aware_sampling = bool(scene_aware_sampling)
         self._audio_fingerprint_enabled = bool(audio_fingerprint_enabled)
         self._cross_resolution_mode: CrossResolutionMode = cross_resolution_mode
+        self._fingerprint_timeout_s = max(0.1, float(fingerprint_timeout_s))
         self._max_workers = max_workers
         self._drive_worker_overrides = dict(drive_worker_overrides or {})
         self._probe_backend: ProbeBackendId = (
@@ -132,6 +134,7 @@ class ScanWorker(QRunnable):
                     scene_aware_sampling=self._scene_aware_sampling,
                     audio_fingerprint_enabled=self._audio_fingerprint_enabled,
                     cross_resolution_mode=self._cross_resolution_mode,
+                    fingerprint_timeout_s=self._fingerprint_timeout_s,
                     max_workers=self._max_workers,
                     drive_worker_overrides=self._drive_worker_overrides,
                     probe_backend=self._probe_backend,

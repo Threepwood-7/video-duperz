@@ -146,6 +146,9 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
         )
         self.probe_backend_combo.setCurrentIndex(max(0, probe_backend_index))
         self.max_workers_spin.setValue(max(1, int(self.settings.max_workers)))
+        self.fingerprint_timeout_spin.setValue(
+            max(0.1, float(self.settings.fingerprint_timeout_s))
+        )
         probe_index = self.probe_mode_combo.findText(self.settings.probe_worker_mode)
         self.probe_mode_combo.setCurrentIndex(max(0, probe_index))
         self.ffmpeg_exe_path_edit.setText(self.settings.ffmpeg_exe_path)
@@ -251,6 +254,10 @@ class MainWindowSettingsMixin(MainWindowSourceSetupMixin):
             ),
             cross_resolution_mode=normalize_cross_resolution_mode(
                 self.cross_resolution_mode_combo.currentData()
+            ),
+            fingerprint_timeout_s=max(
+                0.1,
+                float(self.fingerprint_timeout_spin.value()),
             ),
             max_workers=self.max_workers_spin.value(),
             preview_autoplay=self.settings.preview_autoplay,

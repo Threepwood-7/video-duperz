@@ -175,7 +175,7 @@ Store a snapshot of group membership from the previous scan.  After re-scan, hig
 groups (appeared since last scan), resolved groups (no longer duplicates), and unchanged
 groups.  Viewable as a separate **Changes** tab.
 
-### [Medium] Configurable frame decode timeout
+### [Medium][DONE] Configurable frame decode timeout
 Expose `fingerprint_timeout_s` (default `15.0`) in `Settings` instead of the hardcoded
 `FINGERPRINT_DECODER_TIMEOUT_S`.  Power users on slow spinning HDDs may need 30–60 s.
 

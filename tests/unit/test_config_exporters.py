@@ -47,6 +47,7 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     settings.scan_size_mib_max = 640
     settings.custom_similarity_threshold = 0.21
     settings.duration_tolerance_s = 9.5
+    settings.fingerprint_timeout_s = 45.5
     settings.scene_aware_sampling = True
     settings.audio_fingerprint_enabled = True
     settings.cross_resolution_mode = "same_aspect"
@@ -104,6 +105,7 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch) -> None:
     assert loaded.scan_size_mib_max == 640
     assert loaded.custom_similarity_threshold == 0.21
     assert loaded.duration_tolerance_s == 9.5
+    assert loaded.fingerprint_timeout_s == 45.5
     assert loaded.scene_aware_sampling is True
     assert loaded.audio_fingerprint_enabled is True
     assert loaded.cross_resolution_mode == "same_aspect"
@@ -205,6 +207,22 @@ def test_settings_duration_tolerance_is_clamped(tmp_path: Path, monkeypatch) -> 
     _set_qsettings_value(path, "duration_tolerance_s", -5.0)
     loaded_low = load_settings()
     assert loaded_low.duration_tolerance_s == 0.0
+
+
+def test_settings_fingerprint_timeout_is_clamped(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    settings = default_settings()
+    save_settings(settings)
+
+    path = settings_path()
+    _set_qsettings_value(path, "fingerprint_timeout_s", 99999.0)
+    loaded_high = load_settings()
+    assert loaded_high.fingerprint_timeout_s == 3600.0
+
+    _set_qsettings_value(path, "fingerprint_timeout_s", -5.0)
+    loaded_low = load_settings()
+    assert loaded_low.fingerprint_timeout_s == 0.1
 
 
 def test_settings_custom_similarity_threshold_is_clamped(

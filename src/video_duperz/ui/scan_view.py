@@ -367,7 +367,9 @@ class ScanView(QWidget):
             return "ETA: --"
         remaining_s = remaining_files / files_per_s
         remaining_minutes = max(0.0, remaining_s / 60.0)
-        remaining_text = "<1m" if remaining_minutes < 1.0 else f"{round(remaining_minutes)}m"
+        remaining_text = (
+            "<1m" if remaining_minutes < 1.0 else f"{round(remaining_minutes)}m"
+        )
         done_by = datetime.now() + timedelta(seconds=remaining_s)
         return f"ETA: {remaining_text} | {done_by:%H:%M}"
 

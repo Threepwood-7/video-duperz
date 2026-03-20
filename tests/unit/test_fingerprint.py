@@ -241,6 +241,30 @@ def test_normal_formats_keep_default_decoder_timeout() -> None:
     assert _decoder_timeout_for_path("D:/Videos/ok.mkv", 15.0) == 15.0
 
 
+def test_normal_formats_pass_configured_timeout_to_attempt_runner() -> None:
+    seen_timeouts: list[float] = []
+
+    def _runner(
+        path: str,
+        duration_s: float,
+        decoder_backend: str,
+        timeout_s: float,
+    ) -> _DecoderAttemptResult:
+        _ = path, duration_s, decoder_backend
+        seen_timeouts.append(timeout_s)
+        return _DecoderAttemptResult(status="success", hashes=[1, 2, 3])
+
+    build_fingerprint_record_with_fallback(
+        file_id=16,
+        duration_s=12.0,
+        path="D:/Videos/steady.mp4",
+        attempt_runner=_runner,
+        timeout_s=45.0,
+    )
+
+    assert seen_timeouts == [45.0]
+
+
 def test_problematic_formats_pass_extended_timeout_to_attempt_runner() -> None:
     seen_timeouts: list[float] = []
 
@@ -259,9 +283,10 @@ def test_problematic_formats_pass_extended_timeout_to_attempt_runner() -> None:
         duration_s=12.0,
         path="D:/Videos/tricky.mpeg",
         attempt_runner=_runner,
+        timeout_s=30.0,
     )
 
-    assert seen_timeouts == [60.0]
+    assert seen_timeouts == [120.0]
 
 
 def test_problematic_mov_formats_use_ffmpeg_first_then_pyav() -> None:

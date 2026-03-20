@@ -806,6 +806,16 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
             object_name="sources_max_workers_spin",
             widget_alias="Max Workers",
         )
+        self.fingerprint_timeout_spin = QDoubleSpinBox(self.sources_tab)
+        self.fingerprint_timeout_spin.setRange(0.1, 3600.0)
+        self.fingerprint_timeout_spin.setDecimals(1)
+        self.fingerprint_timeout_spin.setSingleStep(0.5)
+        self.fingerprint_timeout_spin.setSuffix(" s")
+        self._configure_named_widget(
+            self.fingerprint_timeout_spin,
+            object_name="sources_fingerprint_timeout_spin",
+            widget_alias="Fingerprint Decode Timeout",
+        )
         self.probe_backend_combo = QComboBox(self.sources_tab)
         self.probe_backend_combo.addItems(["pyav", "ffprobe"])
         self._configure_named_widget(
@@ -1036,6 +1046,15 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
                 "Higher values can improve throughput on fast storage, but they can "
                 "also increase disk contention. The physical-drive planner below "
                 "shows how this budget is distributed."
+            ),
+        )
+        self._set_sources_tooltip(
+            self.fingerprint_timeout_spin,
+            (
+                "Set the base timeout for one fingerprint decoder attempt.\n\n"
+                "Increase this for slow disks or stubborn media files that need "
+                "more time to yield sampled frames. Risky legacy formats still "
+                "apply their separate timeout multiplier on top of this base value."
             ),
         )
         self._set_sources_tooltip(
@@ -1561,6 +1580,7 @@ class MainWindowSourceSetupMixin(MainWindowMenuMixin):
         for scan_performance_row, (label_text, control) in enumerate(
             (
                 ("Max workers total", self.max_workers_spin),
+                ("Fingerprint decode timeout", self.fingerprint_timeout_spin),
                 ("Probe backend", self.probe_backend_combo),
                 ("Probe mode", self.probe_mode_combo),
                 (

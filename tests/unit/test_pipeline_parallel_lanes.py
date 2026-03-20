@@ -1980,6 +1980,42 @@ def test_runtime_analyze_reuses_cached_meta_without_calling_probe(monkeypatch) -
     assert probe_calls == []
 
 
+def test_runtime_analyze_threads_fingerprint_timeout_to_builder(
+    monkeypatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_probe_video(path: str, **kwargs: object) -> VideoMeta:
+        _ = kwargs
+        return _analysis_meta()
+
+    def _fake_build_fingerprint_record_with_fallback(
+        **kwargs: object,
+    ) -> SimpleNamespace:
+        captured.update(kwargs)
+        return SimpleNamespace(
+            record=SimpleNamespace(hashes=[1, 2, 3], algo_version=ALGO_VERSION),
+            decoder_backend="opencv",
+            provenance_json="{}",
+        )
+
+    monkeypatch.setattr(pipeline, "probe_video", _fake_probe_video)
+    monkeypatch.setattr(
+        pipeline,
+        "build_fingerprint_record_with_fallback",
+        _fake_build_fingerprint_record_with_fallback,
+    )
+
+    analyze = pipeline._build_runtime_analyze_file(
+        "ffprobe",
+        fingerprint_timeout_s=45.5,
+    )
+    output = analyze("fresh.mp4", None)
+
+    assert output.hashes == [1, 2, 3]
+    assert captured["timeout_s"] == 45.5
+
+
 def test_resume_keeps_duplicate_groups_correct_after_pause(
     tmp_path,
     monkeypatch,

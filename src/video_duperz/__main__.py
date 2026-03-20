@@ -269,6 +269,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
                 scan_size_mib_max=settings.scan_size_mib_max,
                 profile=args.profile,
                 duration_tolerance_s=settings.duration_tolerance_s,
+                fingerprint_timeout_s=settings.fingerprint_timeout_s,
                 max_workers=settings.max_workers,
                 drive_worker_overrides=settings.drive_worker_overrides,
                 probe_backend=settings.probe_backend,

@@ -108,6 +108,7 @@ class MainWindowScanActionMixin(MainWindowProfilesMixin):
             scene_aware_sampling=self.settings.scene_aware_sampling,
             audio_fingerprint_enabled=self.settings.audio_fingerprint_enabled,
             cross_resolution_mode=self.settings.cross_resolution_mode,
+            fingerprint_timeout_s=self.settings.fingerprint_timeout_s,
             max_workers=self.settings.max_workers,
             drive_worker_overrides=self.settings.drive_worker_overrides,
             probe_backend=self.settings.probe_backend,

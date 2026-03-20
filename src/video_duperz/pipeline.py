@@ -65,6 +65,7 @@ class _AnalyzeRuntimeOptions:
     ffmpeg_exe_path: str = ""
     ffprobe_exe_path: str = ""
     fpcalc_exe_path: str = ""
+    fingerprint_timeout_s: float = 15.0
     scene_aware_sampling: bool = False
     audio_fingerprint_enabled: bool = False
     scan_child_cpu_priority: ScanProcessCpuPriority = "normal"
@@ -83,6 +84,7 @@ def _analyze_file_with_probe(
     audio_fingerprint_enabled: bool = False,
     ffmpeg_exe_path: str = "",
     fpcalc_exe_path: str = "",
+    fingerprint_timeout_s: float = 15.0,
     scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
     scan_child_io_mode: ScanProcessIoMode = "normal",
 ) -> _AnalyzeOutput:
@@ -95,25 +97,16 @@ def _analyze_file_with_probe(
         meta = cached_meta
         probe_s = 0.0
     fp_started = time.perf_counter()
-    if ffmpeg_exe_path:
-        fp_result = build_fingerprint_record_with_fallback(
-            file_id=0,
-            duration_s=meta.duration_s,
-            path=path,
-            scene_aware_sampling=scene_aware_sampling,
-            ffmpeg_exe_path=ffmpeg_exe_path,
-            scan_child_cpu_priority=scan_child_cpu_priority,
-            scan_child_io_mode=scan_child_io_mode,
-        )
-    else:
-        fp_result = build_fingerprint_record_with_fallback(
-            file_id=0,
-            duration_s=meta.duration_s,
-            path=path,
-            scene_aware_sampling=scene_aware_sampling,
-            scan_child_cpu_priority=scan_child_cpu_priority,
-            scan_child_io_mode=scan_child_io_mode,
-        )
+    fp_result = build_fingerprint_record_with_fallback(
+        file_id=0,
+        duration_s=meta.duration_s,
+        path=path,
+        scene_aware_sampling=scene_aware_sampling,
+        timeout_s=fingerprint_timeout_s,
+        ffmpeg_exe_path=ffmpeg_exe_path,
+        scan_child_cpu_priority=scan_child_cpu_priority,
+        scan_child_io_mode=scan_child_io_mode,
+    )
     fingerprint_s = max(0.0, time.perf_counter() - fp_started)
     audio_fingerprint = ""
     audio_fingerprint_error = ""
@@ -146,6 +139,7 @@ def _configure_runtime_analyze_options(
     ffmpeg_exe_path: str = "",
     ffprobe_exe_path: str = "",
     fpcalc_exe_path: str = "",
+    fingerprint_timeout_s: float = 15.0,
     scene_aware_sampling: bool = False,
     audio_fingerprint_enabled: bool = False,
     scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
@@ -158,6 +152,9 @@ def _configure_runtime_analyze_options(
     _ANALYZE_RUNTIME_OPTIONS.ffmpeg_exe_path = str(ffmpeg_exe_path or "")
     _ANALYZE_RUNTIME_OPTIONS.ffprobe_exe_path = str(ffprobe_exe_path or "")
     _ANALYZE_RUNTIME_OPTIONS.fpcalc_exe_path = str(fpcalc_exe_path or "")
+    _ANALYZE_RUNTIME_OPTIONS.fingerprint_timeout_s = max(
+        0.1, float(fingerprint_timeout_s)
+    )
     _ANALYZE_RUNTIME_OPTIONS.scene_aware_sampling = bool(scene_aware_sampling)
     _ANALYZE_RUNTIME_OPTIONS.audio_fingerprint_enabled = bool(audio_fingerprint_enabled)
     _ANALYZE_RUNTIME_OPTIONS.scan_child_cpu_priority = scan_child_cpu_priority
@@ -191,6 +188,7 @@ def _analyze_file(path: str, cached_meta: VideoMeta | None) -> _AnalyzeOutput:
         audio_fingerprint_enabled=_ANALYZE_RUNTIME_OPTIONS.audio_fingerprint_enabled,
         ffmpeg_exe_path=_ANALYZE_RUNTIME_OPTIONS.ffmpeg_exe_path,
         fpcalc_exe_path=_ANALYZE_RUNTIME_OPTIONS.fpcalc_exe_path,
+        fingerprint_timeout_s=_ANALYZE_RUNTIME_OPTIONS.fingerprint_timeout_s,
         scan_child_cpu_priority=_ANALYZE_RUNTIME_OPTIONS.scan_child_cpu_priority,
         scan_child_io_mode=_ANALYZE_RUNTIME_OPTIONS.scan_child_io_mode,
     )
@@ -202,6 +200,7 @@ def build_analyze_file(
     ffmpeg_exe_path: str = "",
     ffprobe_exe_path: str = "",
     fpcalc_exe_path: str = "",
+    fingerprint_timeout_s: float = 15.0,
     scene_aware_sampling: bool = False,
     audio_fingerprint_enabled: bool = False,
     scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
@@ -213,6 +212,7 @@ def build_analyze_file(
         ffmpeg_exe_path=ffmpeg_exe_path,
         ffprobe_exe_path=ffprobe_exe_path,
         fpcalc_exe_path=fpcalc_exe_path,
+        fingerprint_timeout_s=fingerprint_timeout_s,
         scene_aware_sampling=scene_aware_sampling,
         audio_fingerprint_enabled=audio_fingerprint_enabled,
         scan_child_cpu_priority=scan_child_cpu_priority,
@@ -231,6 +231,7 @@ def _build_runtime_analyze_file(
     ffmpeg_exe_path: str = "",
     ffprobe_exe_path: str = "",
     fpcalc_exe_path: str = "",
+    fingerprint_timeout_s: float = 15.0,
     scene_aware_sampling: bool = False,
     audio_fingerprint_enabled: bool = False,
     scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
@@ -242,6 +243,7 @@ def _build_runtime_analyze_file(
         ffmpeg_exe_path=ffmpeg_exe_path,
         ffprobe_exe_path=ffprobe_exe_path,
         fpcalc_exe_path=fpcalc_exe_path,
+        fingerprint_timeout_s=fingerprint_timeout_s,
         scene_aware_sampling=scene_aware_sampling,
         audio_fingerprint_enabled=audio_fingerprint_enabled,
         scan_child_cpu_priority=scan_child_cpu_priority,
@@ -269,6 +271,7 @@ def run_scan(
     ffmpeg_exe_path: str = "",
     ffprobe_exe_path: str = "",
     fpcalc_exe_path: str = "",
+    fingerprint_timeout_s: float = 15.0,
     scan_child_cpu_priority: ScanProcessCpuPriority = "normal",
     scan_child_io_mode: ScanProcessIoMode = "normal",
     *,
@@ -304,6 +307,7 @@ def run_scan(
         ffmpeg_exe_path=ffmpeg_exe_path,
         ffprobe_exe_path=ffprobe_exe_path,
         fpcalc_exe_path=fpcalc_exe_path,
+        fingerprint_timeout_s=fingerprint_timeout_s,
         scene_aware_sampling=scene_aware_sampling,
         audio_fingerprint_enabled=audio_enabled_for_run,
         scan_child_cpu_priority=scan_child_cpu_priority,

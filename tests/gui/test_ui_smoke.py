@@ -871,6 +871,39 @@ def test_sources_tab_duration_tolerance_exists_and_persists(
     assert loaded.duration_tolerance_s == 9.5
 
 
+def test_sources_tab_fingerprint_timeout_exists_and_persists(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        settings.scan_roots = [str(tmp_path)]
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        assert (
+            window.findChild(QDoubleSpinBox, "sources_fingerprint_timeout_spin")
+            is window.fingerprint_timeout_spin
+        )
+        assert window.fingerprint_timeout_spin.value() == 15.0
+        assert "fingerprint decoder attempt" in (
+            window.fingerprint_timeout_spin.toolTip().lower()
+        )
+
+        window.fingerprint_timeout_spin.setValue(75.5)
+        app.processEvents()
+        window._persist_settings()
+        window.close()
+
+    loaded = load_settings()
+    assert loaded.fingerprint_timeout_s == 75.5
+
+
 def test_sources_tab_duplicate_detection_controls_exist_and_persist(
     tmp_path: Path,
     monkeypatch,
@@ -4950,7 +4983,9 @@ def test_scan_view_renders_lane_snapshots_and_worker_utilization(
             for index in range(window.scan_view.lane_table.columnCount())
         ] == SCAN_LANE_HEADERS
         assert window.scan_view.lane_table.item(0, 2).text() == "running"
-        assert window.scan_view.lane_table.item(0, SCAN_LANE_COL_ETA).text() == "ETA: --"
+        assert (
+            window.scan_view.lane_table.item(0, SCAN_LANE_COL_ETA).text() == "ETA: --"
+        )
         lane0_progress_cell = window.scan_view.lane_table.cellWidget(
             0,
             SCAN_LANE_COL_PROGRESS,
@@ -4987,7 +5022,9 @@ def test_scan_view_renders_lane_snapshots_and_worker_utilization(
         )
         assert window.scan_view.lane_table.item(1, 2).text() == "idle"
         assert window.scan_view.lane_table.item(1, 5).text() == "2"
-        assert window.scan_view.lane_table.item(1, SCAN_LANE_COL_ETA).text() == "ETA: --"
+        assert (
+            window.scan_view.lane_table.item(1, SCAN_LANE_COL_ETA).text() == "ETA: --"
+        )
         lane1_progress = _lane_progress_bar(
             window.scan_view.lane_table.cellWidget(1, SCAN_LANE_COL_PROGRESS)
         )
@@ -5018,7 +5055,10 @@ def test_scan_view_renders_lane_eta_when_lane_progress_is_stable(
         window.show()
         app.processEvents()
 
-        window.scan_view.initialize_lane_plan([[str(tmp_path / "lane_alpha")]], worker_limit=1)
+        window.scan_view.initialize_lane_plan(
+            [[str(tmp_path / "lane_alpha")]],
+            worker_limit=1,
+        )
         window.scan_view.update_progress(
             ScanProgress(
                 stage="probe",

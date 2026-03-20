@@ -75,6 +75,7 @@ class Settings:
     scene_aware_sampling: bool = False
     audio_fingerprint_enabled: bool = False
     cross_resolution_mode: CrossResolutionMode = "off"
+    fingerprint_timeout_s: float = 15.0
     max_workers: int = 2
     preview_autoplay: bool = False
     thumbnail_size: str = DEFAULT_THUMBNAIL_SIZE

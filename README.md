@@ -181,6 +181,7 @@ Runtime settings are stored via QSettings:
 | Scan roots | Directories to scan for video files |
 | File extensions | Preset groups: basic, medium, broad |
 | Similarity profile | balanced / conservative / aggressive |
+| Fingerprint decode timeout | Base per-attempt timeout for guarded frame decoding, configurable from 0.1 to 3600.0 seconds |
 | Max workers | 1-16, with per-drive overrides |
 | Probe worker mode | balanced / burst |
 | Scan process priority | Parent and child CPU priority plus Normal / Background I/O mode during scans |
@@ -501,9 +502,9 @@ Fingerprinting always ends at the same hash representation, but the frame decode
 |---|---|---|
 | `opencv` | Fingerprint frame decode | Preferred first for normal formats. |
 | `pyav` | Fingerprint frame decode fallback | Used when OpenCV is unavailable or unsuitable. |
-| `ffmpeg` | Fingerprint frame decode fallback or first choice for problematic formats | Also gets a longer guarded timeout for problematic formats. |
+| `ffmpeg` | Fingerprint frame decode fallback or first choice for problematic formats | Uses the configured guarded timeout, with a longer multiplied timeout for problematic formats. |
 
-For problematic formats (`.wmv`, `.asf`, `.avi`, `.mov`, `.mpg`, `.mpeg`, `.flv`), fingerprinting now starts with `ffmpeg` instead of `opencv`, and each decoder attempt gets a `4x` timeout.
+For problematic formats (`.wmv`, `.asf`, `.avi`, `.mov`, `.mpg`, `.mpeg`, `.flv`), fingerprinting now starts with `ffmpeg` instead of `opencv`, and each decoder attempt gets a `4x` multiplier on the configured base timeout. The default base timeout is `15.0 s`.
 
 ### How backend choices affect comparison results
 

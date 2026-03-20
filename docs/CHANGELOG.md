@@ -3,6 +3,7 @@
 ## 2026-03-20
 
 - Added a dedicated per-lane `ETA` column to the Scan tab so each worker lane shows its own completion estimate beside the progress bar instead of cramming ETA into the progress cell.
+- Added configurable `fingerprint_timeout_s` scan tuning, exposed in Scan Performance and threaded through GUI scans, CLI scans, and guarded decoder fallback attempts while preserving risky-format timeout multiplication.
 
 ## 2026-03-19
 

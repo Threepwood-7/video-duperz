@@ -55,6 +55,7 @@ DEFAULT_SCAN_PROGRESS_EMIT_EVERY_FILES = 100
 DEFAULT_SCAN_SIZE_MIB_MIN = 50
 DEFAULT_SCAN_SIZE_MIB_MAX = 0
 DEFAULT_DURATION_TOLERANCE_S = 8.0
+DEFAULT_FINGERPRINT_TIMEOUT_S = 15.0
 DEFAULT_CUSTOM_SIMILARITY_THRESHOLD = 0.18
 
 
@@ -353,6 +354,14 @@ def _normalize_duration_tolerance_s(
     return max(0.0, min(30.0, parsed))
 
 
+def _normalize_fingerprint_timeout_s(
+    value: object,
+    default: float = DEFAULT_FINGERPRINT_TIMEOUT_S,
+) -> float:
+    parsed = _coerce_float(value, default)
+    return max(0.1, min(3600.0, parsed))
+
+
 def default_max_workers() -> int:
     """Choose a conservative default worker count for desktop scans."""
     cpus = os.cpu_count() or 4
@@ -440,6 +449,10 @@ def _read_qsettings_payload(
         "duration_tolerance_s": qs.value(
             "duration_tolerance_s",
             defaults.duration_tolerance_s,
+        ),
+        "fingerprint_timeout_s": qs.value(
+            "fingerprint_timeout_s",
+            defaults.fingerprint_timeout_s,
         ),
         "scene_aware_sampling": _coerce_bool(
             qs.value("scene_aware_sampling"),
@@ -609,6 +622,10 @@ def _settings_from_raw(raw: dict[str, object], defaults: Settings) -> Settings:
         duration_tolerance_s=_normalize_duration_tolerance_s(
             raw.get("duration_tolerance_s", defaults.duration_tolerance_s),
             defaults.duration_tolerance_s,
+        ),
+        fingerprint_timeout_s=_normalize_fingerprint_timeout_s(
+            raw.get("fingerprint_timeout_s", defaults.fingerprint_timeout_s),
+            defaults.fingerprint_timeout_s,
         ),
         scene_aware_sampling=_coerce_bool(
             raw.get("scene_aware_sampling", defaults.scene_aware_sampling),
@@ -783,6 +800,7 @@ def default_settings() -> Settings:
         similarity_profile="balanced",
         custom_similarity_threshold=DEFAULT_CUSTOM_SIMILARITY_THRESHOLD,
         duration_tolerance_s=DEFAULT_DURATION_TOLERANCE_S,
+        fingerprint_timeout_s=DEFAULT_FINGERPRINT_TIMEOUT_S,
         scene_aware_sampling=False,
         audio_fingerprint_enabled=False,
         cross_resolution_mode="off",
