@@ -18,6 +18,7 @@ from video_duperz.db import Database
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QPoint, Qt
+from PySide6.QtGui import QPixmap
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import (
     QApplication,
@@ -72,6 +73,7 @@ from video_duperz.ui.results_view_shared import (
     COL_MATCH,
     COL_PARENT_DIR,
     COL_SIZE,
+    COL_THUMB,
 )
 from video_duperz.ui.scan_view import (
     SCAN_ISSUE_COL_FILE,
@@ -708,6 +710,71 @@ def test_sources_root_buttons_labels_order_and_state(tmp_path: Path) -> None:
         assert window.roots_list.count() == 0
         assert not window.remove_root_btn.isEnabled()
         assert not window.remove_all_roots_btn.isEnabled()
+        window.close()
+
+
+def test_results_thumbnail_tooltip_uses_file_name_and_parent_dir(
+    tmp_path: Path, monkeypatch
+) -> None:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    app = QApplication.instance() or QApplication([])
+    with Database(tmp_path / "app.db") as db:
+        settings = default_settings()
+        window = MainWindow(db=db, settings=settings)
+        window.show()
+        app.processEvents()
+
+        target_dir = tmp_path / "season_01"
+        target_dir.mkdir()
+        video_path = target_dir / "episode_01.mp4"
+        video_path.write_bytes(b"video")
+        copy_path = target_dir / "episode_01_copy.mp4"
+        copy_path.write_bytes(b"video-copy")
+
+        window.results_view._thumbnails_enabled = True
+        monkeypatch.setattr(
+            window.results_view,
+            "_queue_thumbnail",
+            lambda *a, **k: None,
+        )
+        group = DuplicateGroup(
+            scan_id=1,
+            profile="balanced",
+            created_at="now",
+            items=[
+                _dup_item(11, str(video_path), 320, 240, 1000, 1.0),
+                _dup_item(12, str(copy_path), 320, 240, 900, 0.98),
+            ],
+            total_size_bytes=200,
+            group_id=42,
+        )
+
+        window.results_view.load_groups([group])
+        app.processEvents()
+
+        thumb_item = window.results_view.results_table.item(0, COL_THUMB)
+        assert thumb_item is not None
+        assert thumb_item.toolTip() == "episode_01.mp4 | season_01"
+
+        monkeypatch.setattr(
+            window.results_view,
+            "_compose_thumbnail_pair",
+            lambda *a, **k: QPixmap(20, 10),
+        )
+        window.results_view._on_thumbnail_ready(
+            {
+                "worker_id": 77,
+                "token": window.results_view._thumbnail_token,
+                "file_id": 11,
+                "cache_path_a": str(tmp_path / "thumb_a.jpg"),
+                "cache_path_b": str(tmp_path / "thumb_b.jpg"),
+            }
+        )
+        app.processEvents()
+
+        updated_thumb_item = window.results_view.results_table.item(0, COL_THUMB)
+        assert updated_thumb_item is not None
+        assert updated_thumb_item.toolTip() == "episode_01.mp4 | season_01"
         window.close()
 
 

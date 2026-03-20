@@ -26,6 +26,16 @@ from .workers import ThumbnailPairWorker
 class ResultsViewThumbnailMixin(ResultsViewCompareMixin):
     """Thumbnail worker orchestration and row metadata helpers."""
 
+    @staticmethod
+    def _thumbnail_source_tooltip(path: str) -> str:
+        """Return the compact source label shown for thumbnail hover tooltips."""
+        file_path = Path(path)
+        file_name = file_path.name or path
+        parent_name = file_path.parent.name or str(file_path.parent)
+        if not parent_name or parent_name == ".":
+            return file_name
+        return f"{file_name} | {parent_name}"
+
     def _invalidate_thumbnail_token(self) -> None:
         """Rotate the thumbnail token so stale worker results are ignored."""
         self._thumbnail_serial += 1
@@ -106,7 +116,10 @@ class ResultsViewThumbnailMixin(ResultsViewCompareMixin):
 
         item.setText("")
         item.setData(Qt.ItemDataRole.DecorationRole, composed)
-        item.setToolTip(f"{cache_a}\n{cache_b}")
+        meta = self._row_meta(row)
+        item.setToolTip(
+            self._thumbnail_source_tooltip(meta.path) if meta is not None else ""
+        )
         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
     def _on_thumbnail_error(self, payload: Any) -> None:

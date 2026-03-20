@@ -63,6 +63,9 @@ class ResultsViewTableMixin(ResultsViewBase):
 
     def _invalidate_thumbnail_token(self) -> None: ...
 
+    @staticmethod
+    def _thumbnail_source_tooltip(path: str) -> str: ...
+
     def _clear_group_compare_row_state(self) -> None: ...
 
     def _clear_group_compare_pending(self) -> None: ...
@@ -229,6 +232,7 @@ class ResultsViewTableMixin(ResultsViewBase):
             "Loading..." if self._thumbnails_enabled else "N/A"
         )
         thumb_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        thumb_item.setToolTip(self._thumbnail_source_tooltip(item.path))
         self.results_table.setItem(row, COL_THUMB, thumb_item)
 
         file_path = Path(item.path)
